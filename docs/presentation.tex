@@ -1,0 +1,166 @@
+\documentclass{beamer}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetheme{Madrid}
+
+\title{Rethinking Agent-Tool Integration}
+\subtitle{Beyond Middlemen: A Case for Direct, Descriptive Protocols}
+\author{}
+\date{June 2025}
+
+\begin{document}
+
+% Title slide
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{What is the Model Context Protocol (MCP)?}
+  \centering\large\textit{The ``USB-C for AI Agents''}
+  \vfill
+  \begin{itemize}
+    \item A protocol designed to standardize how AI agents communicate with external tools.
+    \vfill
+    \item It acts as a \textbf{translation layer} or \textbf{middleman}. An MCP server ``wraps'' an existing tool (e.g., a REST API) and exposes it in a model-friendly format.
+    \vfill
+    \item \textbf{The Goal:} Allow any agent to connect to any tool without writing custom ``glue code'' for each integration.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{The MCP Interaction Loop}
+  How an agent calls a tool via MCP:
+  \begin{enumerate}
+    \item<1-> The \textbf{Agent (Host)} needs to use a tool.
+    \vfill
+    \item<2-> It sends a request to a dedicated \textbf{MCP Server} that wraps the tool.
+    \vfill
+    \item<3-> The MCP Server translates the request and calls the \textbf{native tool API}.
+    \vfill
+    \item<4-> The Server translates the native response back into the MCP format.
+    \vfill
+    \item<5-> The Agent receives the standardized response.
+  \end{enumerate}
+\end{frame}
+
+% Introduction: Two Philosophies
+\begin{frame}{The Core Question: Middleman or Manual?}
+  How should an agent interact with an external tool?
+  \vfill
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \centering
+      \textbf{The Middleman (MCP)}
+      \begin{itemize}
+        \item Forces all traffic through a new protocol layer.
+        \item Requires writing ``wrappers'' for existing tools.
+        \item Must reinvent solutions for auth, security, etc.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+      \centering
+      \textbf{The Manual (UTCP)}
+      \begin{itemize}
+        \item Describes how to call a tool's \textit{native} interface.
+        \item Gets out of the way.
+        \item Leverages existing, battle-tested infrastructure.
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% Section: The Problem with Middlemen
+\section{The Problem with the Middleman Approach}
+
+\begin{frame}{MCP's Architecture: The Mandatory Middleman}
+  \begin{itemize}
+    \item MCP requires that every tool be placed behind a running MCP server.
+    \item All agent requests are proxied through this server.
+    \item This architecture creates a fundamental problem: it forces developers to \textbf{reinvent the wheel}.
+  \end{itemize}
+  \vfill
+  \begin{beamercolorbox}[sep=1em,wd=\textwidth]{alertblock}
+    Instead of using a tool's native endpoint, you must build and maintain a new service just to translate calls.
+  \end{beamercolorbox}
+\end{frame}
+
+\begin{frame}{Symptom 1: The "Wrapper Tax"}
+  The most immediate cost of the middleman is the ``wrapper tax'':
+  \begin{itemize}
+    \item \textbf{Protocol Mismatch:} A REST API needs a wrapper to speak MCP's HTTP streaming. A CLI tool needs a wrapper to be a live server. This is redundant engineering effort.
+    \item \textbf{Infrastructure Overhead:} Every tool now requires a running process, consuming resources and adding a point of failure.
+    \item \textbf{No Native Integration:} You can't just point to an existing gRPC service, WebSocket, or serverless function. It must be adapted.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Symptom 2: Re-implementing Core Services}
+  Because the middleman isolates the agent from the native tool, it must re-solve problems the native tool already solved:
+  \begin{itemize}
+    \item \textbf{Authentication:} How does the MCP server authenticate to the real API? It needs its own logic, separate from the agent's credentials.
+    \item \textbf{Security & Permissions:} The native tool has roles and permissions. The MCP wrapper must now re-implement or proxy this logic, adding complexity and risk.
+    \item \textbf{Billing & Rate Limiting:} A paid API's billing is tied to its native endpoint. Routing through MCP obscures usage and makes cost tracking difficult.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Symptom 3: Inefficiency and Opacity}
+  Forcing everything through a proxy layer is inherently inefficient:
+  \begin{itemize}
+    \item \textbf{Context Overload:} The agent's context is filled with MCP-specific metadata, not just the essential tool information.
+    \item \textbf{Latency:} Every call involves an extra network hop (Agent -> MCP Server -> Tool).
+    \item \textbf{Unstructured Data:} The middleman often strips rich, structured data from the native tool, passing along plain text that the agent must re-parse.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Symptom 4: Brittle Standard, Slow Evolution}
+  The middleman design makes the protocol itself difficult to evolve:
+  \begin{itemize}
+    \item \textbf{Tightly Coupled Transport:} MCP's logic is tied to its transport (e.g., HTTP streaming). When the standard changes (e.g., SSE to HTTP streaming), it's a \textit{breaking change for everyone}.
+    \vfill
+    \item \textbf{Ecosystem-Wide Rebuild:} 
+    \begin{itemize}
+        \item Client builders must support new and legacy versions.
+        \item Server providers must rebuild and redeploy their wrappers.
+    \end{itemize}
+    \vfill
+    \item \textbf{Result:} This high cost of change creates inertia, slowing down the adoption of improvements and bug fixes for the protocol itself.
+  \end{itemize}
+\end{frame}
+
+% Section: A Better Way
+\section{A Better Way: The "Manual" Protocol}
+
+\begin{frame}{Introducing UTCP: A Manual for Tools}
+  UTCP is designed with a simple philosophy: a tool-calling protocol should be a descriptive manual, not a prescriptive middleman.
+  \begin{tcolorbox}[colback=green!5!white,colframe=green!75!black,title=The UTCP Philosophy]
+    A UTCP definition simply tells an agent: ``Here is a tool. Here is its \textbf{native endpoint} (HTTP, gRPC, CLI, etc.), and here is \textbf{how to call it directly}.''
+  \end{tcolorbox}
+  \vfill
+  \begin{itemize}
+    \item The protocol gets out of the way after discovery.
+    \item The agent communicates directly with the tool.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{How the "Manual" Solves the Core Problem}
+  By telling the agent how to use the native tool, UTCP eliminates the symptoms of the middleman:
+  \begin{itemize}
+    \item<1-> \textbf{No Wrapper Tax:} Just write a simple JSON definition pointing to your existing REST API, gRPC service, or CLI command. No new server needed.
+    \vfill
+    \item<2-> \textbf{Leverage Existing Infrastructure:} Authentication, permissions, and billing are handled by the tool's native endpoint, as they should be. No re-implementation.
+    \vfill
+    \item<3-> \textbf{Efficient & Direct:} The agent calls the tool directly. This means lower latency, less overhead, and access to the tool's native, structured data.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Conclusion: Stop Building Middlemen}
+  \begin{itemize}
+    \item The future of agent-tool integration requires us to move beyond architectures that force developers to build redundant wrappers.
+    \vfill
+    \item We need protocols that embrace the diversity of existing systems, not replace them.
+    \vfill
+    \item UTCP provides a path forward: a lean, descriptive standard that makes it easy to connect agents to any tool, on any platform, using the infrastructure that already exists.
+  \end{itemize}
+\end{frame}
+
+\end{document}

@@ -12,6 +12,7 @@ from utcp.shared.provider import (
     SSEProvider,
     WebRTCProvider,
     MCPProvider,
+    TextProvider,
 )
 
 class ToolInputOutputSchema(BaseModel):
@@ -39,4 +40,5 @@ class Tool(BaseModel):
         SSEProvider,
         WebRTCProvider,
         MCPProvider,
+        TextProvider,
     ]] = None

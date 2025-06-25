@@ -20,6 +20,7 @@ from utcp.shared.provider import (
     SSEProvider,
     WebRTCProvider,
     MCPProvider,
+    TextProvider,
 )
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     "SSEProvider",
     "WebRTCProvider",
     "MCPProvider",
+    "TextProvider",
 ]

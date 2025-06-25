@@ -16,9 +16,10 @@ class UtcpClient:
     async def register_tool_provider(self, provider: Provider) -> List[Tool]:
         if provider.type not in self.transports:
             raise ValueError(f"Unsupported provider type: {provider.type}")
-        tools: Tool = await self.transports[provider.type].register_tool_provider(provider)
-        if not tools.name.startswith(provider.name + "."):
-            tools.name = provider.name + "." + tools.name
+        tools: List[Tool] = await self.transports[provider.type].register_tool_provider(provider)
+        for tool in tools:
+            if not tool.name.startswith(provider.name + "."):
+                tool.name = provider.name + "." + tool.name
         self.tools.extend(tools)
         self.tool_per_provider[provider.name] = (provider, tools)
         return tools

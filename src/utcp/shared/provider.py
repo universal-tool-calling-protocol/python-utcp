@@ -20,6 +20,7 @@ ProviderType: TypeAlias = Literal[
     'udp',  # User Datagram Protocol
     'webrtc',  # Web Real-Time Communication
     'mcp',  # Model Context Protocol
+    'text', # Text file provider
 ]
 
 class Provider(BaseModel):
@@ -147,3 +148,18 @@ class MCPProvider(Provider):
     provider_type: Literal["mcp"] = "mcp"
     config: McpConfig  # The JSON configuration for the MCP server
     auth: Optional[Auth] = None
+
+
+class TextProvider(Provider):
+    """Options specific to text file-based tools.
+    
+    This provider reads tool definitions from a local text file. This is useful
+    when the tool call is included in the startup command, but the result of the
+    tool call produces a file at a static location that can be read from. It can
+    also be used as a UTCP tool provider to specify tools that should be used
+    from different other providers.
+    """
+
+    provider_type: Literal["text"] = "text"
+    file_path: str = Field(..., description="The path to the file containing the tool definitions.")
+    auth: None = None

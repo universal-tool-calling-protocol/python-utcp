@@ -247,6 +247,18 @@ For interoperability with Model Context Protocol (MCP) servers.
 }
 ```
 
+### Text Provider
+
+For loading tool definitions from a local file. This is useful for defining a collection of tools from different providers in a single place.
+
+```json
+{
+  "name": "my_local_tools",
+  "provider_type": "text",
+  "file_path": "/path/to/my/tools.json"
+}
+```
+
 ### Authentication
 
 UTCP supports several authentication methods, which can be configured on a per-provider basis:
