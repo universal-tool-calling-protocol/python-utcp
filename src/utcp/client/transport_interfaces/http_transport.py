@@ -2,7 +2,7 @@ from typing import Dict, Any, List
 import httpx
 import json
 
-from utcp.client.ClientTransportInterface import ClientTransportInterface
+from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.shared.provider import Provider, HttpProvider
 from utcp.shared.tool import Tool
 from utcp.shared.utcp_response import UtcpResponse
@@ -18,10 +18,10 @@ class HttpClientTransport(ClientTransportInterface):
 
     async def register_tool_provider(self, provider: Provider) -> List[Tool]:
         """Discover tools from a REST API provider.
-        
+
         Args:
             provider: Details of the REST provider
-            
+
         Returns:
             List of tool declarations as dictionaries, or None if discovery fails
         """
@@ -59,8 +59,9 @@ class HttpClientTransport(ClientTransportInterface):
             raise ValueError("HttpClientTransport can only be used with HttpProvider")
 
         request_headers = provider.headers.copy() if provider.headers else {}
+        query_params = {}
         body_content = None
-        
+
         remaining_args = arguments.copy()
 
         # Handle header fields
@@ -70,12 +71,12 @@ class HttpClientTransport(ClientTransportInterface):
                     request_headers[field_name] = str(remaining_args.pop(field_name))
 
         # Handle body field
-        if provider.body_field and provider.body_field in remaining_args:
-            body_content = remaining_args.pop(provider.body_field)
+        if provider.query_fields and provider.query_fields in remaining_args:
+            query_params = remaining_args.pop(provider.query_fields)
 
         # The rest of the arguments are query parameters
-        query_params = remaining_args
-        
+        body_content = remaining_args
+
         # Handle authentication
         auth_handler = None
         if provider.auth:
@@ -102,7 +103,7 @@ class HttpClientTransport(ClientTransportInterface):
                     "headers": request_headers,
                     "timeout": 30.0,
                 }
-                
+
                 if auth_handler:
                     request_kwargs["auth"] = auth_handler
 
@@ -117,7 +118,7 @@ class HttpClientTransport(ClientTransportInterface):
                         request_kwargs["data"] = body_content
 
                 response = await client.request(**request_kwargs)
-                
+
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
@@ -140,7 +141,7 @@ class HttpClientTransport(ClientTransportInterface):
                 client_secret=auth_details.client_secret,
                 scope=auth_details.scope,
             )
-        
+
         client = self._oauth_clients[client_id]
 
         try:

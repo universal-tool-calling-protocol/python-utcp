@@ -37,8 +37,8 @@ class HttpProvider(Provider):
     content_type: str = "application/json"
     auth: Optional[Auth] = None
     headers: Optional[Dict[str, str]] = None
-    body_field: Optional[str] = Field(default=None, description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers.")
+    query_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request query.")
 
 class SSEProvider(Provider):
     """Options specific to Server-Sent Events tools"""
@@ -152,7 +152,7 @@ class MCPProvider(Provider):
 
 class TextProvider(Provider):
     """Options specific to text file-based tools.
-    
+
     This provider reads tool definitions from a local text file. This is useful
     when the tool call is included in the startup command, but the result of the
     tool call produces a file at a static location that can be read from. It can
