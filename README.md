@@ -276,3 +276,10 @@ A UTCP client is responsible for:
 3.  **Deregistering Tool Providers**: The client can disconnect from a provider, removing its tools from the available list.
 
 Tool names are namespaced with their provider's name (e.g., `my_api.get_weather`) to avoid conflicts.
+
+## Build
+1. Create a virtual environment (e.g. `conda create --name utcp python=3.10`) and enable it (`conda activate utcp`)
+2. Install required libraries (`pip install -r requirements.txt`)
+3. `python -m pip install --upgrade pip`
+4. `python -m build`
+5. `pip install dist/utcp-<version>.tar.gz` (e.g. `pip install dist/utcp-1.0.0.tar.gz`)
