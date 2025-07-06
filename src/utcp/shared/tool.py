@@ -28,6 +28,7 @@ class Tool(BaseModel):
     inputs: ToolInputOutputSchema = Field(default_factory=ToolInputOutputSchema)
     outputs: ToolInputOutputSchema = Field(default_factory=ToolInputOutputSchema)
     tags: List[str] = []
+    average_response_size: Optional[int] = None
     provider: Optional[Union[
         HttpProvider,
         CliProvider,
