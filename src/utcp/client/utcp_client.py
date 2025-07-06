@@ -1,7 +1,8 @@
 import re
 import os
+import json
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Tuple, Union
+from typing import Dict, Any, List, Union, Optional
 from utcp.shared.provider import Provider
 from utcp.shared.tool import Tool
 from utcp.client.client_transport_interface import ClientTransportInterface
@@ -31,24 +32,108 @@ class UtcpClient(UtcpClientInterface):
         "http": HttpClientTransport()
     }
 
-    def __init__(self, config: Union[Dict[str, Any], UtcpClientConfig] = None, tool_repository: UtcpToolRepository = InMemToolRepository()):
+    def __init__(self, tool_repository: UtcpToolRepository = InMemToolRepository()):
+        """
+        Use 'create' class method to create a new instance instead, as it supports loading UtcpClientConfig.
+        """
         self.tool_repository = tool_repository
+        self.config = UtcpClientConfig()
+
+    @classmethod
+    async def create(cls, config: Optional[Union[Dict[str, Any], UtcpClientConfig]] = None, tool_repository: UtcpToolRepository = InMemToolRepository()) -> 'UtcpClient':
+        client = cls(tool_repository)
+        await client.load_providers(config.providers_file_path)
         # Handle None by creating default config
         if config is None:
-            self.config = UtcpClientConfig()
+            client.config = UtcpClientConfig()
         # Convert dict to UtcpClientConfig if needed
         elif isinstance(config, dict):
-            self.config = UtcpClientConfig.model_validate(config)
+            client.config = UtcpClientConfig.model_validate(config)
         # Use provided UtcpClientConfig directly
         else:
-            self.config = config
+            client.config = config
             
         # Process variables if they exist
-        if self.config.variables:
-            config_without_vars = self.config.model_copy()
+        if client.config.variables:
+            config_without_vars = client.config.model_copy()
             config_without_vars.variables = None
-            self.config.variables = self._replace_vars_in_obj(self.config.variables, config_without_vars)
+            client.config.variables = client._replace_vars_in_obj(client.config.variables, config_without_vars)
+        return client
 
+    async def load_providers(self, providers_file_path: str) -> List[Provider]:
+        """Load providers from the file specified in the configuration.
+
+        Returns:
+            List of registered Provider objects.
+
+        Raises:
+            FileNotFoundError: If the providers file doesn't exist.
+            ValueError: If the providers file contains invalid JSON.
+            UtcpVariableNotFound: If a variable referenced in the provider configuration is not found.
+        """
+        if not providers_file_path:
+            return []
+        
+        try:
+            with open(providers_file_path, 'r') as f:
+                providers_data = json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Providers file not found: {providers_file_path}")
+        except json.JSONDecodeError:
+            raise ValueError(f"Invalid JSON in providers file: {providers_file_path}")
+        
+        # Import all provider types
+        from utcp.shared.provider import Provider, HttpProvider, CliProvider, SSEProvider, \
+            StreamableHttpProvider, WebSocketProvider, GRPCProvider, GraphQLProvider, \
+            TCPProvider, UDPProvider, WebRTCProvider, MCPProvider, TextProvider
+            
+        provider_classes = {
+            'http': HttpProvider,
+            'cli': CliProvider,
+            'sse': SSEProvider,
+            'http_stream': StreamableHttpProvider,
+            'websocket': WebSocketProvider,
+            'grpc': GRPCProvider,
+            'graphql': GraphQLProvider,
+            'tcp': TCPProvider,
+            'udp': UDPProvider,
+            'webrtc': WebRTCProvider,
+            'mcp': MCPProvider,
+            'text': TextProvider
+        }
+        
+        if not isinstance(providers_data, list):
+            raise ValueError(f"Providers file must contain a JSON array at the root level: {providers_file_path}")
+        
+        registered_providers = []
+        for provider_data in providers_data:
+            try:
+                # Determine provider type from provider_type field
+                provider_type = provider_data.get('provider_type')
+                if not provider_type:
+                    print(f"Warning: Provider entry is missing required 'provider_type' field, skipping: {provider_data}")
+                    continue
+                
+                provider_class = provider_classes.get(provider_type)
+                if not provider_class:
+                    print(f"Warning: Unsupported provider type: {provider_type}, skipping")
+                    continue
+                
+                # Create provider object with Pydantic validation
+                provider = provider_class.model_validate(provider_data)
+                
+                # Apply variable substitution and register provider
+                provider = self._substitute_provider_variables(provider)
+                tools = await self.register_tool_provider(provider)
+                registered_providers.append(provider)
+                print(f"Successfully registered provider '{provider.name}' with {len(tools)} tools")
+            except Exception as e:
+                # Log the error but continue with other providers
+                provider_name = provider_data.get('name', 'unknown')
+                print(f"Error registering provider '{provider_name}': {str(e)}")
+                
+        return registered_providers
+            
     def _get_variable(self, key: str, config: UtcpClientConfig) -> str:
         if config.variables and key in config.variables:
             return config.variables[key]
