@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional, Union, Literal
 from utcp.shared.provider import HttpProvider
 from utcp.shared.tool import Tool
-from utcp.shared.utcp_response import UtcpResponse
+from utcp.shared.utcp_manual import UtcpManual
 
 app = FastAPI()
 
@@ -11,9 +11,9 @@ __version__ = "1.0.0"
 
 # === Endpoints ===
 
-@app.get("/utcp", response_model=UtcpResponse)
+@app.get("/utcp", response_model=UtcpManual)
 def get_utcp():
-    return UtcpResponse(
+    return UtcpManual(
         version=__version__,
         tools=[test_tool]
     )

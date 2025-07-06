@@ -16,9 +16,9 @@ UTCP is defined by a set of core data models that describe tools, how to connect
 
 ### Tool Discovery
 
-A UTCP-compliant tool provider must expose an endpoint (e.g., an HTTP URL) that, when queried, returns a `UtcpResponse` object. This response contains a list of all the tools available from that provider.
+A UTCP-compliant tool provider must expose an endpoint (e.g., an HTTP URL) that, when queried, returns a `UtcpManual` object. This response contains a list of all the tools available from that provider.
 
-#### `UtcpResponse` Model
+#### `UtcpManual` Model
 
 ```json
 {

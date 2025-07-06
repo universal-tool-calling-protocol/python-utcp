@@ -1,20 +1,38 @@
 import re
 import os
-from typing import Dict, Any, List, Tuple, Optional, Union
+from abc import ABC, abstractmethod
+from typing import Dict, Any, List, Tuple, Union
 from utcp.shared.provider import Provider
 from utcp.shared.tool import Tool
 from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.client.transport_interfaces.http_transport import HttpClientTransport
 from utcp.client.utcp_client_config import UtcpClientConfig, UtcpVariableNotFound
+from utcp.client.utcp_tool_repository import UtcpToolRepository
+from utcp.client.tool_repositories.in_mem_tool_repository import InMemToolRepository
 
-class UtcpClient:
+class UtcpClientInterface(ABC):
+    """
+    Interface for a UTCP client.
+    """
+    @abstractmethod
+    def register_tool_provider(self, provider: Provider) -> List[Tool]:
+        pass
+    
+    @abstractmethod
+    def deregister_tool_provider(self, provider_name: str) -> None:
+        pass
+    
+    @abstractmethod
+    def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
+        pass
+
+class UtcpClient(UtcpClientInterface):
     transports: Dict[str, ClientTransportInterface] = {
         "http": HttpClientTransport()
     }
-    tools: List[Tool] = []
-    tool_per_provider: Dict[str, Tuple[Provider, List[Tool]]] = {}
 
-    def __init__(self, config: Union[Dict[str, Any], UtcpClientConfig] = None):
+    def __init__(self, config: Union[Dict[str, Any], UtcpClientConfig] = None, tool_repository: UtcpToolRepository = InMemToolRepository()):
+        self.tool_repository = tool_repository
         # Handle None by creating default config
         if config is None:
             self.config = UtcpClientConfig()
@@ -86,8 +104,7 @@ class UtcpClient:
         for tool in tools:
             if not tool.name.startswith(provider.name + "."):
                 tool.name = provider.name + "." + tool.name
-        self.tools.extend(tools)
-        self.tool_per_provider[provider.name] = (provider, tools)
+        await self.tool_repository.save_provider_with_tools(provider, tools)
         return tools
 
     async def deregister_tool_provider(self, provider_name: str) -> None:
@@ -100,9 +117,11 @@ class UtcpClient:
         Raises:
             ValueError: If the provider is not found.
         """
-        if provider_name not in self.tool_per_provider:
+        provider = await self.tool_repository.get_provider(provider_name)
+        if provider is None:
             raise ValueError(f"Provider not found: {provider_name}")
-        await self.transports[self.tool_per_provider[provider_name][0].provider_type].deregister_tool_provider(self.tool_per_provider[provider_name][0])
+        await self.transports[provider.provider_type].deregister_tool_provider(provider)
+        await self.tool_repository.remove_provider(provider_name)
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """
@@ -120,9 +139,10 @@ class UtcpClient:
             UtcpVariableNotFound: If a variable is not found in the environment or in the configuration.
         """
         provider_name = tool_name.split(".")[0]
-        if provider_name not in self.tool_per_provider:
+        provider = await self.tool_repository.get_provider(provider_name)
+        if provider is None:
             raise ValueError(f"Provider not found: {provider_name}")
-        provider, tools = self.tool_per_provider[provider_name]
+        tools = await self.tool_repository.get_tools_by_provider(provider_name)
         tool = next((t for t in tools if t.name == tool_name), None)
         if tool is None:
             raise ValueError(f"Tool not found: {tool_name}")
