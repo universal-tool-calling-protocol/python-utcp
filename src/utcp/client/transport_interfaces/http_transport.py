@@ -5,7 +5,7 @@ import json
 from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.shared.provider import Provider, HttpProvider
 from utcp.shared.tool import Tool
-from utcp.shared.utcp_response import UtcpResponse
+from utcp.shared.utcp_manual import UtcpManual
 from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
 from typing import Optional, Callable
 from authlib.integrations.httpx_client import AsyncOAuth2Client
@@ -35,8 +35,8 @@ class HttpClientTransport(ClientTransportInterface):
                 try:
                     response = await client.get(url, timeout=10.0)
                     response.raise_for_status()  # Raise exception for 4XX/5XX responses
-                    utcp_response = UtcpResponse(**response.json())
-                    return utcp_response.tools
+                    utcp_manual = UtcpManual(**response.json())
+                    return utcp_manual.tools
                 except httpx.HTTPStatusError as e:
                     self._log(f"Error connecting to REST provider '{provider.name}': {e}", error=True)
                     if hasattr(e, 'response') and e.response is not None:

@@ -6,7 +6,7 @@ from utcp.version import __version__
 """
 The response returned by a tool provider when queried for available tools (e.g. through the /utcp endpoint)
 """
-class UtcpResponse(BaseModel):
+class UtcpManual(BaseModel):
     version: str = __version__
     tools: List[Tool]
     

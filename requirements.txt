@@ -1,3 +1,5 @@
 httpx
 pydantic
 authlib
+python-dotenv
+build

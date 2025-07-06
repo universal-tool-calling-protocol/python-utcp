@@ -2,4 +2,4 @@ fastapi[standard]
 uvicorn
 httpx
 pydantic
-
+authlib

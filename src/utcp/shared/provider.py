@@ -32,7 +32,7 @@ class HttpProvider(Provider):
     """Options specific to HTTP tools"""
 
     provider_type: Literal["http"] = "http"
-    http_method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"] = "POST"
+    http_method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"] = "GET"
     url: str
     content_type: str = "application/json"
     auth: Optional[Auth] = None
