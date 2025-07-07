@@ -28,7 +28,7 @@ async def main():
 
     # Call one of the tools
     tool_to_call = (await client.tool_repository.get_tools())[0].name
-    args = {"value": "test"}
+    args = {"body": {"value": "test"}}
 
     result = await client.call_tool(tool_to_call, args)
     print(f"\nTool call result for '{tool_to_call}':")

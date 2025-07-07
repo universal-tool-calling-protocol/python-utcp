@@ -59,7 +59,6 @@ class HttpClientTransport(ClientTransportInterface):
             raise ValueError("HttpClientTransport can only be used with HttpProvider")
 
         request_headers = provider.headers.copy() if provider.headers else {}
-        query_params = {}
         body_content = None
 
         remaining_args = arguments.copy()
@@ -71,11 +70,11 @@ class HttpClientTransport(ClientTransportInterface):
                     request_headers[field_name] = str(remaining_args.pop(field_name))
 
         # Handle body field
-        if provider.query_fields and provider.query_fields in remaining_args:
-            query_params = remaining_args.pop(provider.query_fields)
+        if provider.body_field and provider.body_field in remaining_args:
+            body_content = remaining_args.pop(provider.body_field)
 
         # The rest of the arguments are query parameters
-        body_content = remaining_args
+        query_params = remaining_args
 
         # Handle authentication
         auth_handler = None

@@ -31,10 +31,13 @@ test_tool = Tool(
     name="test_endpoint",
     description="A sample tool using HttpProvider",
     tags=["test", "http"],
+    inputs=TestRequest.schema(),
     provider=HttpProvider(
         name="test_tool_provider",
         url="http://localhost:8080/test",
         http_method="POST",
+        body_field="body",
         content_type="application/json"
     )
 )
+
