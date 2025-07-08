@@ -1,22 +1,8 @@
-from typing import Dict, Any, Optional, List, Union, get_type_hints
+from typing import Dict, Any, Optional, List, get_type_hints
 from pydantic import BaseModel, Field, TypeAdapter
 from typing import get_type_hints, List, Optional, Any, Dict
-from utcp.shared.provider import (
-    HttpProvider,
-    CliProvider,
-    Provider,
-    ProviderUnion,
-    WebSocketProvider,
-    GRPCProvider,
-    GraphQLProvider,
-    TCPProvider,
-    UDPProvider,
-    StreamableHttpProvider,
-    SSEProvider,
-    WebRTCProvider,
-    MCPProvider,
-    TextProvider,
-)
+from utcp.shared.provider import ProviderUnion
+
 
 
 class ToolInputOutputSchema(BaseModel):
@@ -33,20 +19,7 @@ class Tool(BaseModel):
     outputs: ToolInputOutputSchema = Field(default_factory=ToolInputOutputSchema)
     tags: List[str] = []
     average_response_size: Optional[int] = None
-    provider: Optional[Union[
-        HttpProvider,
-        CliProvider,
-        WebSocketProvider,
-        GRPCProvider,
-        GraphQLProvider,
-        TCPProvider,
-        UDPProvider,
-        StreamableHttpProvider,
-        SSEProvider,
-        WebRTCProvider,
-        MCPProvider,
-        TextProvider,
-    ]] = None
+    provider: ProviderUnion
 
 class ToolContext:
     tools: List[Tool] = []
@@ -62,21 +35,6 @@ class ToolContext:
     def get_tools() -> List[Tool]:
         """Get the list of tools available in the UTCP server."""
         return ToolContext.tools
-
-class HttpProvider(BaseModel):
-    name: str
-    url: str
-    http_method: str = "POST"
-    body_field: str = "body"
-    content_type: str = "application/json"
-
-class Tool(BaseModel):
-    name: str
-    description: str
-    tags: List[str]
-    inputs: ToolInputOutputSchema
-    outputs: ToolInputOutputSchema
-    provider: ProviderUnion
 
 def utcp_tool(
     provider: ProviderUnion,

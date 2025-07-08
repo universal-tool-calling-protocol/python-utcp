@@ -33,9 +33,9 @@ class HttpProvider(Provider):
     """Options specific to HTTP tools"""
 
     provider_type: Literal["http"] = "http"
-    http_method: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = "GET"
+    http_method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"] = "GET"
     url: str
-    content_type: Optional[str] = "application/json"
+    content_type: str = Field(default="application/json")
     auth: Optional[Auth] = None
     headers: Optional[Dict[str, str]] = None
     body_field: Optional[str] = Field(default="body", description="The name of the single input field to be sent as the request body.")
