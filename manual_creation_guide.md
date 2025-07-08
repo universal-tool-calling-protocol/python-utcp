@@ -28,6 +28,8 @@ This is the core of the task. Populate the fields of the `Tool` object as follow
 
 -   **`name`**: (String) Create a short, descriptive, `snake_case` name for the tool. Example: `get_user_by_id`.
 -   **`description`**: (String) Use the summary or description from the API documentation to explain what the tool does.
+-   **`tags`**: (Array of Strings) Add relevant keywords that can be used to search for this tool. These could be derived from the API's own tags or categories. Example: `["users", "profile", "read"]`.
+-   **`average_response_size`**: (Integer, Optional) If the API documentation provides information on the typical size of the response payload in bytes, include it here. This is useful for performance considerations.
 -   **`inputs`**: (Object) A JSON Schema object describing all the parameters the API endpoint accepts (path, query, headers, and body).
     -   Set `type` to `"object"`.
     -   In `properties`, create a key for *each* parameter. The value should be an object defining its `type` (e.g., `"string"`, `"number"`) and `description`.
@@ -44,6 +46,7 @@ This is the core of the task. Populate the fields of the `Tool` object as follow
     -   `query_fields`: (Array of Strings) List the names of any parameters sent as URL query strings.
     -   `header_fields`: (Array of Strings) List the names of any parameters sent as request headers.
     -   `body_field`: (String) If the request has a JSON body, specify the name of the single input property that contains the body object.
+    -   `auth`: (Object, Optional) If the API requires authentication, add this object. The `auth_type` field determines the authentication method (`api_key`, `basic`, or `oauth2`). Populate the other fields based on the API's security scheme. See the `auth.py` reference below for the exact structure.
 
 ### Step 4: Assemble the Final `UTCPManual`
 
@@ -108,6 +111,47 @@ class Tool(BaseModel):
         MCPProvider,
         TextProvider,
     ]] = None
+```
+
+### `auth.py`
+
+```python
+from typing import Literal, Optional, TypeAlias, Union
+
+from pydantic import BaseModel, Field
+
+class ApiKeyAuth(BaseModel):
+    """Authentication using an API key.
+
+    The key can be provided directly or sourced from an environment variable.
+    """
+
+    auth_type: Literal["api_key"] = "api_key"
+    api_key: str = Field(..., description="The API key for authentication.")
+    var_name: str = Field(
+        ..., description="The name of the variable containing the API key."
+    )
+
+
+class BasicAuth(BaseModel):
+    """Authentication using a username and password."""
+
+    auth_type: Literal["basic"] = "basic"
+    username: str = Field(..., description="The username for basic authentication.")
+    password: str = Field(..., description="The password for basic authentication.")
+
+
+class OAuth2Auth(BaseModel):
+    """Authentication using OAuth2."""
+
+    auth_type: Literal["oauth2"] = "oauth2"
+    token_url: str = Field(..., description="The URL to fetch the OAuth2 token from.")
+    client_id: str = Field(..., description="The OAuth2 client ID.")
+    client_secret: str = Field(..., description="The OAuth2 client secret.")
+    scope: Optional[str] = Field(None, description="The OAuth2 scope.")
+
+
+Auth: TypeAlias = Union[ApiKeyAuth, BasicAuth, OAuth2Auth]
 ```
 
 ### `provider.py`
