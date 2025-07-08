@@ -105,7 +105,7 @@ def tool_array():
             "tags": []
         },
         {
-            "name": "tool2", 
+            "name": "tool2",
             "description": "Second tool",
             "inputs": {"properties": {}, "required": []},
             "outputs": {"properties": {}, "required": []},

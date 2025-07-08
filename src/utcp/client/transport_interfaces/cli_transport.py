@@ -62,15 +62,15 @@ class CliTransport(ClientTransportInterface):
         return env
     
     async def _execute_command(
-        self, 
-        command: List[str], 
-        env: Dict[str, str], 
+        self,
+        command: List[str],
+        env: Dict[str, str],
         timeout: float = 30.0,
         input_data: Optional[str] = None,
         working_dir: Optional[str] = None
     ) -> tuple[str, str, int]:
         """Execute a command asynchronously.
-        
+
         Args:
             command: Command and arguments to execute
             env: Environment variables

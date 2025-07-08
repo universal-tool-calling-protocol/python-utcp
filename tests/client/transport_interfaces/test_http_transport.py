@@ -312,8 +312,8 @@ async def test_call_tool_with_body_field(http_transport, aiohttp_client):
     
     # Test calling a tool with a body field
     result = await http_transport.call_tool(
-        "test_tool", 
-        {"param1": "value1", "data": {"key": "value"}}, 
+        "test_tool",
+        {"param1": "value1", "data": {"key": "value"}},
         provider
     )
     
@@ -336,8 +336,8 @@ async def test_call_tool_with_header_fields(http_transport, aiohttp_client):
     
     # Test calling a tool with a header field
     result = await http_transport.call_tool(
-        "test_tool", 
-        {"param1": "value1", "X-Custom-Header": "custom-value"}, 
+        "test_tool",
+        {"param1": "value1", "X-Custom-Header": "custom-value"},
         provider
     )
     

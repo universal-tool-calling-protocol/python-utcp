@@ -37,8 +37,8 @@ class MCPTransport:
         # Create client streams based on transport type
         if server_config.transport == "stdio":
             params = StdioServerParameters(
-                command=server_config.command, 
-                args=server_config.args, 
+                command=server_config.command,
+                args=server_config.args,
                 env=server_config.env
             )
             async with stdio_client(params) as (read, write):
@@ -66,8 +66,8 @@ class MCPTransport:
         # Create client streams based on transport type
         if server_config.transport == "stdio":
             params = StdioServerParameters(
-                command=server_config.command, 
-                args=server_config.args, 
+                command=server_config.command,
+                args=server_config.args,
                 env=server_config.env
             )
             async with stdio_client(params) as (read, write):
