@@ -3,13 +3,17 @@ import os
 import json
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Union, Optional
-from utcp.shared.provider import Provider
 from utcp.shared.tool import Tool
 from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.client.transport_interfaces.http_transport import HttpClientTransport
 from utcp.client.utcp_client_config import UtcpClientConfig, UtcpVariableNotFound
-from utcp.client.utcp_tool_repository import UtcpToolRepository
+from utcp.client.tool_repository import ToolRepository
 from utcp.client.tool_repositories.in_mem_tool_repository import InMemToolRepository
+from utcp.client.tool_search_strategies.tag_search import TagSearchStrategy
+from utcp.client.tool_search_strategy import ToolSearchStrategy
+from utcp.shared.provider import Provider, HttpProvider, CliProvider, SSEProvider, \
+    StreamableHttpProvider, WebSocketProvider, GRPCProvider, GraphQLProvider, \
+    TCPProvider, UDPProvider, WebRTCProvider, MCPProvider, TextProvider
 
 class UtcpClientInterface(ABC):
     """
@@ -17,14 +21,53 @@ class UtcpClientInterface(ABC):
     """
     @abstractmethod
     def register_tool_provider(self, provider: Provider) -> List[Tool]:
+        """
+        Register a tool provider and its tools.
+
+        Args:
+            provider: The provider to register.
+
+        Returns:
+            A list of tools associated with the provider.
+        """
         pass
     
     @abstractmethod
     def deregister_tool_provider(self, provider_name: str) -> None:
+        """
+        Deregister a tool provider.
+
+        Args:
+            provider_name: The name of the provider to deregister.
+        """
         pass
     
     @abstractmethod
     def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
+        """
+        Call a tool.
+
+        Args:
+            tool_name: The name of the tool to call.
+            arguments: The arguments to pass to the tool.
+
+        Returns:
+            The result of the tool call.
+        """
+        pass
+
+    @abstractmethod
+    def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
+        """
+        Search for tools relevant to the query.
+
+        Args:
+            query: The search query.
+            limit: The maximum number of tools to return. 0 for no limit.
+
+        Returns:
+            A list of tools that match the search query.
+        """
         pass
 
 class UtcpClient(UtcpClientInterface):
@@ -32,32 +75,49 @@ class UtcpClient(UtcpClientInterface):
         "http": HttpClientTransport()
     }
 
-    def __init__(self, tool_repository: UtcpToolRepository = InMemToolRepository()):
+    def __init__(self, config: UtcpClientConfig, tool_repository: ToolRepository, search_strategy: ToolSearchStrategy):
         """
         Use 'create' class method to create a new instance instead, as it supports loading UtcpClientConfig.
         """
         self.tool_repository = tool_repository
-        self.config = UtcpClientConfig()
+        self.search_strategy = search_strategy
+        self.config = config
 
     @classmethod
-    async def create(cls, config: Optional[Union[Dict[str, Any], UtcpClientConfig]] = None, tool_repository: UtcpToolRepository = InMemToolRepository()) -> 'UtcpClient':
-        client = cls(tool_repository)
-        await client.load_providers(config.providers_file_path)
-        # Handle None by creating default config
+    async def create(cls, config: Optional[Union[Dict[str, Any], UtcpClientConfig]] = None, tool_repository: ToolRepository = InMemToolRepository(), search_strategy: Optional[ToolSearchStrategy] = None) -> 'UtcpClient':
+        """
+        Create a new instance of UtcpClient.
+        
+        Args:
+            config: The configuration for the client. Can be a dictionary or UtcpClientConfig object.
+            tool_repository: The tool repository to use. Defaults to InMemToolRepository.
+            search_strategy: The tool search strategy to use. Defaults to TagSearchStrategy.
+        
+        Returns:
+            A new instance of UtcpClient.
+        """
+        if search_strategy is None:
+            search_strategy = TagSearchStrategy(tool_repository)
         if config is None:
-            client.config = UtcpClientConfig()
-        # Convert dict to UtcpClientConfig if needed
+            config = UtcpClientConfig()
         elif isinstance(config, dict):
-            client.config = UtcpClientConfig.model_validate(config)
-        # Use provided UtcpClientConfig directly
-        else:
-            client.config = config
-            
-        # Process variables if they exist
+            config = UtcpClientConfig.model_validate(config)
+
+        client = cls(config, tool_repository, search_strategy)
+        
         if client.config.variables:
             config_without_vars = client.config.model_copy()
             config_without_vars.variables = None
             client.config.variables = client._replace_vars_in_obj(client.config.variables, config_without_vars)
+
+        providers = await client.load_providers(config.providers_file_path)
+        for provider in providers:
+            print(f"Registering provider '{provider.name}' with {len(provider.tools)} tools")
+            try:
+                await client.register_tool_provider(provider)
+            except Exception as e:
+                print(f"Error registering provider '{provider.name}': {str(e)}")
+        
         return client
 
     async def load_providers(self, providers_file_path: str) -> List[Provider]:
@@ -82,11 +142,6 @@ class UtcpClient(UtcpClientInterface):
         except json.JSONDecodeError:
             raise ValueError(f"Invalid JSON in providers file: {providers_file_path}")
         
-        # Import all provider types
-        from utcp.shared.provider import Provider, HttpProvider, CliProvider, SSEProvider, \
-            StreamableHttpProvider, WebSocketProvider, GRPCProvider, GraphQLProvider, \
-            TCPProvider, UDPProvider, WebRTCProvider, MCPProvider, TextProvider
-            
         provider_classes = {
             'http': HttpProvider,
             'cli': CliProvider,
@@ -237,3 +292,6 @@ class UtcpClient(UtcpClientInterface):
         tool_provider = self._substitute_provider_variables(tool_provider)
 
         return await self.transports[tool_provider.provider_type].call_tool(tool_name, arguments, tool_provider)
+
+    def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
+        return self.search_strategy.search_tools(query, limit)

@@ -1,0 +1,207 @@
+from typing import Dict, Any, List, Optional, Callable, AsyncIterator, Tuple
+import aiohttp
+import json
+
+from utcp.client.client_transport_interface import ClientTransportInterface
+from utcp.shared.provider import Provider, StreamableHttpProvider
+from utcp.shared.tool import Tool
+from utcp.shared.utcp_manual import UtcpManual
+from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
+from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth, ClientResponse
+
+
+class StreamableHttpClientTransport(ClientTransportInterface):
+    """Client transport implementation for HTTP streaming (chunked transfer encoding) providers using aiohttp."""
+
+    def __init__(self, logger: Optional[Callable[[str, Any], None]] = None):
+        self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
+        self._log = logger or (lambda *args, **kwargs: None)
+        self._active_connections: Dict[str, Tuple[ClientResponse, ClientSession]] = {}
+
+    async def close(self):
+        """Close all active connections and clear internal state."""
+        self._log("Closing all active HTTP stream connections.")
+        for provider_name, (response, session) in list(self._active_connections.items()):
+            self._log(f"Closing connection for provider: {provider_name}")
+            if not response.closed:
+                response.close()  # Close the response
+            if not session.closed:
+                await session.close()
+        self._active_connections.clear()
+        self._oauth_tokens.clear()
+
+    async def register_tool_provider(self, provider: Provider) -> List[Tool]:
+        """Discover tools from a StreamableHttp provider."""
+        if not isinstance(provider, StreamableHttpProvider):
+            raise ValueError("StreamableHttpClientTransport can only be used with StreamableHttpProvider")
+
+        url = provider.url
+        self._log(f"Discovering tools from '{provider.name}' (HTTP Stream) at {url}")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10.0)) as response:
+                    response.raise_for_status()
+                    response_data = await response.json()
+                    utcp_manual = UtcpManual(**response_data)
+                    return utcp_manual.tools
+        except aiohttp.ClientResponseError as e:
+            self._log(f"Error discovering tools from '{provider.name}': {e.status}, message='{e.message}', url='{e.request_info.url}'", error=True)
+            return []
+        except (json.JSONDecodeError, aiohttp.ClientError) as e:
+            self._log(f"Error processing request for '{provider.name}': {e}", error=True)
+            return []
+        except Exception as e:
+            self._log(f"An unexpected error occurred while discovering tools from '{provider.name}': {e}", error=True)
+            return []
+
+    async def deregister_tool_provider(self, provider: Provider) -> None:
+        """Deregister a StreamableHttp provider and close any active connections."""
+        if not isinstance(provider, StreamableHttpProvider):
+            return
+
+        if provider.name in self._active_connections:
+            self._log(f"Closing active HTTP stream connection for provider '{provider.name}'")
+            response, session = self._active_connections.pop(provider.name)
+            if not response.closed:
+                response.close()
+            if not session.closed:
+                await session.close()
+
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], provider: Provider) -> AsyncIterator[Any]:
+        """Calls a tool on a StreamableHttp provider and returns an async iterator for the response chunks."""
+        if not isinstance(provider, StreamableHttpProvider):
+            raise ValueError("StreamableHttpClientTransport can only be used with StreamableHttpProvider")
+
+        request_headers = provider.headers.copy() if provider.headers else {}
+        body_content = None
+        remaining_args = arguments.copy()
+
+        if provider.header_fields:
+            for field_name in provider.header_fields:
+                if field_name in remaining_args:
+                    request_headers[field_name] = str(remaining_args.pop(field_name))
+
+        if provider.body_field and provider.body_field in remaining_args:
+            body_content = remaining_args.pop(provider.body_field)
+
+        query_params = remaining_args
+        auth_handler = None
+
+        if provider.auth:
+            if isinstance(provider.auth, ApiKeyAuth):
+                request_headers[provider.auth.var_name] = provider.auth.api_key
+            elif isinstance(provider.auth, BasicAuth):
+                auth_handler = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
+            elif isinstance(provider.auth, OAuth2Auth):
+                token = await self._handle_oauth2(provider.auth)
+                request_headers["Authorization"] = f"Bearer {token}"
+
+        session = ClientSession()
+        try:
+            timeout_seconds = provider.timeout / 1000 if provider.timeout else 60.0
+            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+
+            data = None
+            json_data = None
+            if body_content is not None:
+                if "Content-Type" not in request_headers:
+                    request_headers["Content-Type"] = provider.content_type
+                if "application/json" in request_headers.get("Content-Type", ""):
+                    json_data = body_content
+                else:
+                    data = body_content
+
+            response = await session.request(
+                method=provider.http_method,
+                url=provider.url,
+                params=query_params,
+                headers=request_headers,
+                auth=auth_handler,
+                json=json_data,
+                data=data,
+                timeout=timeout
+            )
+            response.raise_for_status()
+
+            self._active_connections[provider.name] = (response, session)
+            return self._process_http_stream(response, provider.chunk_size, provider.name)
+
+        except Exception as e:
+            await session.close()
+            self._log(f"Error establishing HTTP stream connection to '{provider.name}': {e}", error=True)
+            raise
+
+    async def _process_http_stream(self, response: ClientResponse, chunk_size: Optional[int], provider_name: str) -> AsyncIterator[Any]:
+        """Process the HTTP stream and yield chunks based on content type."""
+        try:
+            content_type = response.headers.get('Content-Type', '')
+
+            if 'application/x-ndjson' in content_type:
+                async for line in response.content:
+                    if line.strip():
+                        try:
+                            yield json.loads(line)
+                        except json.JSONDecodeError:
+                            self._log(f"Error parsing NDJSON line for '{provider_name}': {line[:100]}", error=True)
+                            yield line # Yield raw line on error
+            elif 'application/octet-stream' in content_type:
+                async for chunk in response.content.iter_chunked(chunk_size or 8192):
+                    if chunk:
+                        yield chunk
+            elif 'application/json' in content_type:
+                # Buffer the entire response for a single JSON object
+                buffer = b''
+                async for chunk in response.content.iter_any():
+                    buffer += chunk
+                if buffer:
+                    try:
+                        yield json.loads(buffer)
+                    except json.JSONDecodeError:
+                        self._log(f"Error parsing JSON response for '{provider_name}': {buffer[:100]}", error=True)
+                        yield buffer # Yield raw buffer on error
+            else:
+                # Default to binary chunk streaming for unknown content types
+                async for chunk in response.content.iter_chunked(chunk_size or 8192):
+                    if chunk:
+                        yield chunk
+        except Exception as e:
+            self._log(f"Error processing HTTP stream for '{provider_name}': {e}", error=True)
+            raise
+        finally:
+            # The session is closed later by deregister_tool_provider or close()
+            if provider_name in self._active_connections:
+                response, _ = self._active_connections[provider_name]
+                if not response.closed:
+                    response.close()
+
+    async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
+        """Handles OAuth2 client credentials flow, trying both body and auth header methods."""
+        client_id = auth_details.client_id
+        if client_id in self._oauth_tokens:
+            return self._oauth_tokens[client_id]["access_token"]
+
+        async with aiohttp.ClientSession() as session:
+            # Method 1: Credentials in body
+            try:
+                self._log(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
+                async with session.post(auth_details.token_url, data={'grant_type': 'client_credentials', 'client_id': client_id, 'client_secret': auth_details.client_secret, 'scope': auth_details.scope}) as response:
+                    response.raise_for_status()
+                    token_data = await response.json()
+                    self._oauth_tokens[client_id] = token_data
+                    return token_data['access_token']
+            except aiohttp.ClientError as e:
+                self._log(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
+
+            # Method 2: Credentials as Basic Auth header
+            try:
+                self._log(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
+                auth = AiohttpBasicAuth(client_id, auth_details.client_secret)
+                async with session.post(auth_details.token_url, data={'grant_type': 'client_credentials', 'scope': auth_details.scope}, auth=auth) as response:
+                    response.raise_for_status()
+                    token_data = await response.json()
+                    self._oauth_tokens[client_id] = token_data
+                    return token_data['access_token']
+            except aiohttp.ClientError as e:
+                self._log(f"OAuth2 with Basic Auth header also failed: {e}", error=True)
+                raise e

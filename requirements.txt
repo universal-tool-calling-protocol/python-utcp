@@ -1,5 +1,13 @@
-httpx
 pydantic
 authlib
 python-dotenv
+tomli
+aiohttp
+
 build
+
+pytest
+pytest-asyncio
+pytest-aiohttp
+pytest-cov
+coverage

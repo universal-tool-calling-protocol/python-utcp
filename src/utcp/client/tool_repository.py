@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 from utcp.shared.provider import Provider
 from utcp.shared.tool import Tool
 
-class UtcpToolRepository(ABC):
+class ToolRepository(ABC):
     @abstractmethod
     async def save_provider_with_tools(self, provider: Provider, tools: List[Tool]) -> None:
         """
@@ -97,19 +97,5 @@ class UtcpToolRepository(ABC):
 
         Returns:
             A list of providers.
-        """
-        pass
-
-class SearchableUtcpToolRepository(UtcpToolRepository):
-    async def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
-        """
-        Search for tools relevant to the query.
-
-        Args:
-            query: The search query.
-            limit: The maximum number of tools to return. 0 for no limit.
-
-        Returns:
-            A list of tools that match the search query.
         """
         pass

@@ -1,22 +1,20 @@
 [project]
 name = "utcp"
-version = "1.0.0"
+version = "0.1.0"
 authors = [
-  { name="Example Author", email="author@example.com" },
+  { name="Razvan-Ion Radulescu", email="razvan.radulescu@bevel.software" },
 ]
-description = "A small example package"
+description = "Universal Tool Calling Protocol (UTCP) client library for Python"
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-license = "MIT"
+license = "MPL-2.0"
 license-files = ["LICEN[CS]E*"]
 
 [project.urls]
-Homepage = "https://github.com/pypa/sampleproject"
-Issues = "https://github.com/pypa/sampleproject/issues"
-
-[tool.setuptools.package-data]
-"utcp" = ["VERSION"]
+Homepage = "https://utcp.io"
+Source = "https://github.com/universal-tool-calling-protocol/python-utcp"
+Issues = "https://github.com/universal-tool-calling-protocol/python-utcp/issues"
