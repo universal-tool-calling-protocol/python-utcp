@@ -213,4 +213,3 @@ async def test_call_tool_with_oauth2_header_fallback(streamable_http_transport, 
     results = [item async for item in stream_iterator]
     
     assert results == SAMPLE_NDJSON_RESPONSE
-

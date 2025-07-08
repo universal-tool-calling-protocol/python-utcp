@@ -55,7 +55,7 @@ async def sse_handler(request):
                 return web.Response(status=401, text="Invalid Basic Auth")
         elif auth_header.startswith('Bearer'):
             if auth_header not in ('Bearer test-access-token', 'Bearer test-access-token-header'):
-                 return web.Response(status=401, text="Invalid Bearer Token")
+                return web.Response(status=401, text="Invalid Bearer Token")
 
     response = web.StreamResponse(
         status=200,

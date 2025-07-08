@@ -72,7 +72,9 @@ class CliProvider(Provider):
 
     provider_type: Literal["cli"] = "cli"
     command_name: Optional[str] = None  # If None, will use the tool name
-    auth: Optional[Union[ApiKeyAuth, BasicAuth]] = None
+    env_vars: Optional[Dict[str, str]] = Field(default=None, description="Environment variables to set when executing the command")
+    working_dir: Optional[str] = Field(default=None, description="Working directory for command execution")
+    auth: None = None
 
 class WebSocketProvider(Provider):
     """Options specific to WebSocket tools"""
@@ -134,20 +136,29 @@ class WebRTCProvider(Provider):
     data_channel_name: str = "tools"
     auth: None = None
 
-class McpServer(BaseModel):
+class McpStdioServer(BaseModel):
+    """Configuration for an MCP server connected via stdio."""
+    transport: Literal["stdio"] = "stdio"
     command: str
     args: Optional[List[str]] = []
     env: Optional[Dict[str, str]] = {}
+
+class McpHttpServer(BaseModel):
+    """Configuration for an MCP server connected via streamable HTTP."""
+    transport: Literal["http"] = "http"
+    url: str
+
+McpServer: TypeAlias = Union[McpStdioServer, McpHttpServer]
 
 class McpConfig(BaseModel):
     mcpServers: Dict[str, McpServer]
 
 class MCPProvider(Provider):
-    """Options specific to MCP tools"""
+    """Options specific to MCP tools, supporting both stdio and HTTP transports."""
 
     provider_type: Literal["mcp"] = "mcp"
-    config: McpConfig  # The JSON configuration for the MCP server
-    auth: Optional[Auth] = None
+    config: McpConfig
+    auth: Optional[OAuth2Auth] = None
 
 
 class TextProvider(Provider):

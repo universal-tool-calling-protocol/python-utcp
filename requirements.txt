@@ -3,6 +3,7 @@ authlib
 python-dotenv
 tomli
 aiohttp
+mcp
 
 build
 
@@ -11,3 +12,5 @@ pytest-asyncio
 pytest-aiohttp
 pytest-cov
 coverage
+fastapi
+uvicorn
