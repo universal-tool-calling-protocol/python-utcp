@@ -1,9 +1,9 @@
 from typing import List, Dict, Tuple, Optional
 from utcp.shared.provider import Provider
 from utcp.shared.tool import Tool
-from utcp.client.utcp_tool_repository import UtcpToolRepository
+from utcp.client.tool_repository import ToolRepository
 
-class InMemToolRepository(UtcpToolRepository):
+class InMemToolRepository(ToolRepository):
     tools: List[Tool] = []
     tool_per_provider: Dict[str, Tuple[Provider, List[Tool]]] = {}
 

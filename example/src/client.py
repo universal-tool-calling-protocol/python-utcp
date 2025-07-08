@@ -1,25 +1,12 @@
 import asyncio
-import httpx
+from os import getcwd
 from utcp.client.utcp_client import UtcpClient
-from utcp.shared.provider import Provider, HttpProvider
-from utcp.shared.tool import Tool
-from utcp.shared.utcp_manual import UtcpManual
-from pydantic import BaseModel
-from typing import List
-
-FASTAPI_URL = "http://localhost:8080/utcp"
 
 
 async def main():
-    client = UtcpClient()
-
-    provider = HttpProvider(
-        name="test_provider",
-        provider_type="http",
-        http_method="GET",
-        url=FASTAPI_URL)
-
-    await client.register_tool_provider(provider)
+    client: UtcpClient = await UtcpClient.create(
+        config={"providers_file_path": "./providers.json"}
+    )
 
     # List all available tools
     print("Registered tools:")

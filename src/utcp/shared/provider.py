@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional, List, Literal, TypeAlias, Union
 from pydantic import BaseModel, Field
+from typing import Annotated
 
 from utcp.shared.auth import (
     Auth,
@@ -32,12 +33,12 @@ class HttpProvider(Provider):
     """Options specific to HTTP tools"""
 
     provider_type: Literal["http"] = "http"
-    http_method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"] = "GET"
+    http_method: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = "GET"
     url: str
-    content_type: str = "application/json"
+    content_type: Optional[str] = "application/json"
     auth: Optional[Auth] = None
     headers: Optional[Dict[str, str]] = None
-    body_field: Optional[str] = Field(default=None, description="The name of the single input field to be sent as the request body.")
+    body_field: Optional[str] = Field(default="body", description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers.")
 
 class SSEProvider(Provider):
@@ -174,3 +175,21 @@ class TextProvider(Provider):
     provider_type: Literal["text"] = "text"
     file_path: str = Field(..., description="The path to the file containing the tool definitions.")
     auth: None = None
+
+ProviderUnion = Annotated[
+    Union[
+        HttpProvider,
+        SSEProvider,
+        StreamableHttpProvider,
+        CliProvider,
+        WebSocketProvider,
+        GRPCProvider,
+        GraphQLProvider,
+        TCPProvider,
+        UDPProvider,
+        WebRTCProvider,
+        MCPProvider,
+        TextProvider
+    ],
+    Field(discriminator="provider_type")
+]

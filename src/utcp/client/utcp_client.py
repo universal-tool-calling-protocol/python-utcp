@@ -1,3 +1,4 @@
+from pathlib import Path
 import re
 import os
 import json
@@ -110,13 +111,13 @@ class UtcpClient(UtcpClientInterface):
             config_without_vars.variables = None
             client.config.variables = client._replace_vars_in_obj(client.config.variables, config_without_vars)
 
-        providers = await client.load_providers(config.providers_file_path)
-        for provider in providers:
-            print(f"Registering provider '{provider.name}' with {len(provider.tools)} tools")
-            try:
-                await client.register_tool_provider(provider)
-            except Exception as e:
-                print(f"Error registering provider '{provider.name}': {str(e)}")
+        await client.load_providers(config.providers_file_path)
+        # for provider in providers:
+        #     print(f"Registering provider '{provider.name}' with {len(provider.tools)} tools")
+        #     try:
+        #         await client.register_tool_provider(provider)
+        #     except Exception as e:
+        #         print(f"Error registering provider '{provider.name}': {str(e)}")
         
         return client
 
@@ -134,6 +135,7 @@ class UtcpClient(UtcpClientInterface):
         if not providers_file_path:
             return []
         
+        providers_file_path = Path(providers_file_path).resolve()
         try:
             with open(providers_file_path, 'r') as f:
                 providers_data = json.load(f)
