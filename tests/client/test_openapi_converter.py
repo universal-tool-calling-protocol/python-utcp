@@ -26,6 +26,6 @@ async def test_openai_spec_conversion():
     assert sample_tool is not None
     assert sample_tool.provider.provider_type == "http"
     assert sample_tool.provider.http_method == "POST"
-    assert "messages" in sample_tool.inputs.properties
-    assert "model" in sample_tool.inputs.properties
+    assert "messages" in sample_tool.inputs.properties['body']['properties']
+    assert "model" in sample_tool.inputs.properties['body']['properties']
     assert "choices" in sample_tool.outputs.properties
