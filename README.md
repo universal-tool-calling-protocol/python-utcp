@@ -219,12 +219,12 @@ Providers are at the heart of UTCP's flexibility. They define the communication 
 *   `sse`: Server-Sent Events
 *   `http_stream`: HTTP Chunked Transfer Encoding
 *   `cli`: Command Line Interface
-*   `websocket`: WebSocket bidirectional connection
-*   `grpc`: gRPC (Google Remote Procedure Call)
-*   `graphql`: GraphQL query language
-*   `tcp`: Raw TCP socket
-*   `udp`: User Datagram Protocol
-*   `webrtc`: Web Real-Time Communication
+*   `websocket`: WebSocket bidirectional connection (work in progress)
+*   `grpc`: gRPC (Google Remote Procedure Call) (work in progress)
+*   `graphql`: GraphQL query language (work in progress)
+*   `tcp`: Raw TCP socket (work in progress)
+*   `udp`: User Datagram Protocol (work in progress)
+*   `webrtc`: Web Real-Time Communication (work in progress)
 *   `mcp`: Model Context Protocol (for interoperability)
 *   `text`: Local text file
 
@@ -292,7 +292,7 @@ For wrapping local command-line tools.
 }
 ```
 
-### WebSocket Provider
+### WebSocket Provider (work in progress)
 
 For tools that communicate over a WebSocket connection. Tool discovery may need to be handled via a separate HTTP endpoint.
 
@@ -304,7 +304,7 @@ For tools that communicate over a WebSocket connection. Tool discovery may need 
 }
 ```
 
-### gRPC Provider
+### gRPC Provider (work in progress)
 
 For connecting to gRPC services.
 
@@ -320,7 +320,7 @@ For connecting to gRPC services.
 }
 ```
 
-### GraphQL Provider
+### GraphQL Provider (work in progress)
 
 For interacting with GraphQL APIs. The `url` should point to the discovery endpoint.
 
@@ -333,7 +333,7 @@ For interacting with GraphQL APIs. The `url` should point to the discovery endpo
 }
 ```
 
-### TCP Provider
+### TCP Provider (work in progress)
 
 For raw TCP socket communication.
 
@@ -346,7 +346,7 @@ For raw TCP socket communication.
 }
 ```
 
-### UDP Provider
+### UDP Provider (work in progress)
 
 For UDP socket communication.
 
@@ -359,7 +359,7 @@ For UDP socket communication.
 }
 ```
 
-### WebRTC Provider
+### WebRTC Provider (work in progress)
 
 For peer-to-peer communication using WebRTC.
 

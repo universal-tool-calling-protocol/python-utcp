@@ -7,6 +7,11 @@ from typing import Dict, Any, List, Union, Optional
 from utcp.shared.tool import Tool
 from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.client.transport_interfaces.http_transport import HttpClientTransport
+from utcp.client.transport_interfaces.cli_transport import CliTransport
+from utcp.client.transport_interfaces.sse_transport import SSEClientTransport
+from utcp.client.transport_interfaces.streamable_http_transport import StreamableHttpClientTransport
+from utcp.client.transport_interfaces.mcp_transport import MCPTransport
+from utcp.client.transport_interfaces.text_transport import TextTransport
 from utcp.client.utcp_client_config import UtcpClientConfig, UtcpVariableNotFound
 from utcp.client.tool_repository import ToolRepository
 from utcp.client.tool_repositories.in_mem_tool_repository import InMemToolRepository
@@ -73,7 +78,12 @@ class UtcpClientInterface(ABC):
 
 class UtcpClient(UtcpClientInterface):
     transports: Dict[str, ClientTransportInterface] = {
-        "http": HttpClientTransport()
+        "http": HttpClientTransport(),
+        "cli": CliTransport(),
+        "sse": SSEClientTransport(),
+        "http_stream": StreamableHttpClientTransport(),
+        "mcp": MCPTransport(),
+        "text": TextTransport()
     }
 
     def __init__(self, config: UtcpClientConfig, tool_repository: ToolRepository, search_strategy: ToolSearchStrategy):
