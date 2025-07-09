@@ -43,7 +43,6 @@ This is the core of the task. Populate the fields of the `Tool` object as follow
     -   `http_method`: (String) The HTTP method, e.g., `"GET"`, `"POST"`.
     -   `content_type`: (String) The request's content type, typically `"application/json"`.
     -   `path_fields`: (Array of Strings) List the names of any parameters that are part of the URL path.
-    -   `query_fields`: (Array of Strings) List the names of any parameters sent as URL query strings.
     -   `header_fields`: (Array of Strings) List the names of any parameters sent as request headers.
     -   `body_field`: (String) If the request has a JSON body, specify the name of the single input property that contains the body object.
     -   `auth`: (Object, Optional) If the API requires authentication, add this object. The `auth_type` field determines the authentication method (`api_key`, `basic`, or `oauth2`). Populate the other fields based on the API's security scheme. See the `auth.py` reference below for the exact structure.
@@ -393,14 +392,11 @@ Response (200 OK):
         }
       },
       "provider": {
+        "name": "weather_service",
         "provider_type": "http",
         "url": "https://api.example.com/v1/weather",
         "http_method": "GET",
-        "content_type": "application/json",
-        "query_fields": [
-          "city",
-          "units"
-        ]
+        "content_type": "application/json"
       }
     }
   ]

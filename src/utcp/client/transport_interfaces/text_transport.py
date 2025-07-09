@@ -24,17 +24,17 @@ class TextTransport(ClientTransportInterface):
     and will raise a ValueError.
     """
     
-    def __init__(self, logger: Optional[Callable[[str], None]] = None):
+    def __init__(self, base_path: Optional[str] = None):
         """Initialize the text transport.
         
         Args:
-            logger: Optional logger function for debugging
+            base_path: The base path to resolve relative file paths from.
         """
-        self._log = logger or (lambda *args, **kwargs: None)
+        self.base_path = base_path
     
     def _log_info(self, message: str):
         """Log informational messages."""
-        self._log(f"[TextTransport] {message}")
+        print(f"[TextTransport] {message}")
         
     def _log_error(self, message: str):
         """Log error messages."""
@@ -58,6 +58,9 @@ class TextTransport(ClientTransportInterface):
             raise ValueError("TextTransport can only be used with TextProvider")
         
         file_path = Path(provider.file_path)
+        if not file_path.is_absolute() and self.base_path:
+            file_path = Path(self.base_path) / file_path
+        
         self._log_info(f"Reading tool definitions from '{file_path}'")
         
         try:
@@ -140,6 +143,9 @@ class TextTransport(ClientTransportInterface):
             raise ValueError("TextTransport can only be used with TextProvider")
         
         file_path = Path(provider.file_path)
+        if not file_path.is_absolute() and self.base_path:
+            file_path = Path(self.base_path) / file_path
+            
         self._log_info(f"Reading content from '{file_path}' for tool '{tool_name}'")
         
         try:

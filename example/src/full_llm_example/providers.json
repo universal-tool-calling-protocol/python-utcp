@@ -5,5 +5,10 @@
         "http_method": "GET",
         "url": "https://openlibrary.org/static/openapi.json",
         "content_type": "application/json"
-      }
+    },
+    {
+        "name": "newsapi",
+        "provider_type": "text",
+        "file_path": "./newsapi_manual.json"
+    }
 ]

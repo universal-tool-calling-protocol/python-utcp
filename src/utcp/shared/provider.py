@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional, List, Literal, TypeAlias, Union
 from pydantic import BaseModel, Field
 from typing import Annotated
-
+import uuid
 from utcp.shared.auth import (
     Auth,
     ApiKeyAuth,
@@ -25,7 +25,7 @@ ProviderType: TypeAlias = Literal[
 ]
 
 class Provider(BaseModel):
-    name: str
+    name: str = uuid.uuid4().hex
     provider_type: ProviderType
     startup_command: Optional[List[str]] = None  # For launching the provider if needed
 

@@ -115,6 +115,11 @@ class UtcpClient(UtcpClientInterface):
             config = UtcpClientConfig.model_validate(config)
 
         client = cls(config, tool_repository, search_strategy)
+
+        # If a providers file is used, configure TextTransport to resolve relative paths from its directory
+        if config.providers_file_path:
+            providers_dir = os.path.dirname(os.path.abspath(config.providers_file_path))
+            client.transports["text"] = TextTransport(base_path=providers_dir)
         
         if client.config.variables:
             config_without_vars = client.config.model_copy()
@@ -224,8 +229,13 @@ class UtcpClient(UtcpClientInterface):
         elif isinstance(obj, list):
             return [self._replace_vars_in_obj(elem, config) for elem in obj]
         elif isinstance(obj, str):
-            # Use a regular expression to find all variables in the string
-            return re.sub(r'\$\{([^}]+)\}', lambda m: self._get_variable(m.group(1), config), obj)
+            # Use a regular expression to find all variables in the string, supporting ${VAR} and $VAR formats
+            def replacer(match):
+                # The first group that is not None is the one that matched
+                var_name = next(g for g in match.groups() if g is not None)
+                return self._get_variable(var_name, config)
+
+            return re.sub(r'\${(\w+)}|\$(\w+)', replacer, obj)
         else:
             return obj
 
