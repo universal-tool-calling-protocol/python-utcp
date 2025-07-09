@@ -3,3 +3,5 @@ uvicorn
 httpx
 pydantic
 authlib
+python-dotenv
+openai

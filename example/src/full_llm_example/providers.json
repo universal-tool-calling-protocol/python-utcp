@@ -1,0 +1,9 @@
+[
+    {
+        "name": "openlibrary",
+        "provider_type": "http",
+        "http_method": "GET",
+        "url": "https://openlibrary.org/static/openapi.json",
+        "content_type": "application/json"
+      }
+]

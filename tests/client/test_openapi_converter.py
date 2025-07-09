@@ -1,6 +1,6 @@
 import pytest
 import aiohttp
-
+import sys
 from utcp.client.openapi_converter import OpenApiConverter
 from utcp.shared.utcp_manual import UtcpManual
 
@@ -15,7 +15,7 @@ async def test_openai_spec_conversion():
             response.raise_for_status()
             openapi_spec = await response.json()
 
-    converter = OpenApiConverter(openapi_spec)
+    converter = OpenApiConverter(openapi_spec, spec_url=url)
     utcp_manual = converter.convert()
 
     assert isinstance(utcp_manual, UtcpManual)

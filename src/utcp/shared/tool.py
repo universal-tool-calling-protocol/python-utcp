@@ -1,9 +1,6 @@
 from typing import Dict, Any, Optional, List, get_type_hints
 from pydantic import BaseModel, Field, TypeAdapter
-from typing import get_type_hints, List, Optional, Any, Dict
 from utcp.shared.provider import ProviderUnion
-
-
 
 class ToolInputOutputSchema(BaseModel):
     type: str = Field(default="object")
@@ -38,7 +35,7 @@ class ToolContext:
 
 def utcp_tool(
     provider: ProviderUnion,
-    name: Optional[str] = None, 
+    name: Optional[str] = None,
     description: Optional[str] = None,
     tags: Optional[List[str]] = ["utcp"],
     inputs: Optional[ToolInputOutputSchema] = None,
@@ -88,7 +85,7 @@ def utcp_tool(
                 name=name or func_name,
                 description=description or func_description,
                 tags=tags,
-                inputs=inputs or  input_tool_schema,
+                inputs=inputs or input_tool_schema,
                 outputs=outputs or output_tool_schema,
                 provider=provider
             )

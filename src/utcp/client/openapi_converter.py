@@ -1,22 +1,33 @@
 import json
-from typing import Any, Dict, List, Optional
-
+from typing import Any, Dict, List, Optional, Tuple
+import sys
 from utcp.shared.tool import Tool, ToolInputOutputSchema
 from utcp.shared.utcp_manual import UtcpManual
+from urllib.parse import urlparse
+
 from utcp.shared.provider import HttpProvider
 
 
 class OpenApiConverter:
     """Converts an OpenAPI JSON specification into a UtcpManual."""
 
-    def __init__(self, openapi_spec: Dict[str, Any]):
+    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None):
         self.spec = openapi_spec
+        self.spec_url = spec_url
 
     def convert(self) -> UtcpManual:
         """Parses the OpenAPI specification and returns a UtcpManual."""
         tools = []
-        servers = self.spec.get("servers", [{"url": "/"}])
-        base_url = servers[0].get("url", "/")
+        servers = self.spec.get("servers")
+        if servers:
+            base_url = servers[0].get("url", "/")
+        elif self.spec_url:
+            parsed_url = urlparse(self.spec_url)
+            base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        else:
+            # Fallback if no server info and no spec URL is provided
+            base_url = "/"
+            print("No server info or spec URL provided. Using fallback base URL: ", base_url, file=sys.stderr)
 
         for path, path_item in self.spec.get("paths", {}).items():
             for method, operation in path_item.items():
@@ -69,17 +80,21 @@ class OpenApiConverter:
         description = operation.get("summary") or operation.get("description", "")
         tags = operation.get("tags", [])
 
-        inputs = self._extract_inputs(operation)
+        inputs, header_fields, body_field = self._extract_inputs(operation)
         outputs = self._extract_outputs(operation)
 
         provider_name = self.spec.get("info", {}).get("title", "openapi_provider")
+
+        # Combine base URL and path, ensuring no double slashes
+        full_url = base_url.rstrip('/') + '/' + path.lstrip('/')
 
         provider = HttpProvider(
             name=provider_name,
             provider_type="http",
             http_method=method.upper(),
-            url=base_url,
-            path=path
+            url=full_url,
+            body_field=body_field if body_field else None,
+            header_fields=header_fields if header_fields else None
         )
 
         return Tool(
@@ -91,24 +106,31 @@ class OpenApiConverter:
             provider=provider
         )
 
-    def _extract_inputs(self, operation: Dict[str, Any]) -> ToolInputOutputSchema:
-        """Extracts the input schema from an OpenAPI operation, resolving refs."""
+    def _extract_inputs(self, operation: Dict[str, Any]) -> Tuple[ToolInputOutputSchema, List[str], Optional[str]]:
+        """Extracts input schema, header fields, and body field from an OpenAPI operation."""
         properties = {}
         required = []
+        header_fields = []
+        body_field = None
 
-        # Handle parameters
+        # Handle parameters (query, header, path, cookie)
         for param in operation.get("parameters", []):
             param = self._resolve_schema(param)
             param_name = param.get("name")
-            if param_name:
-                schema = self._resolve_schema(param.get("schema", {}))
-                properties[param_name] = {
-                    "type": schema.get("type", "string"),
-                    "description": param.get("description", ""),
-                    **schema
-                }
-                if param.get("required"):
-                    required.append(param_name)
+            if not param_name:
+                continue
+
+            if param.get("in") == "header":
+                header_fields.append(param_name)
+
+            schema = self._resolve_schema(param.get("schema", {}))
+            properties[param_name] = {
+                "type": schema.get("type", "string"),
+                "description": param.get("description", ""),
+                **schema
+            }
+            if param.get("required"):
+                required.append(param_name)
 
         # Handle request body
         request_body = operation.get("requestBody")
@@ -117,13 +139,17 @@ class OpenApiConverter:
             content = resolved_body.get("content", {})
             json_schema = content.get("application/json", {}).get("schema")
             if json_schema:
-                resolved_json_schema = self._resolve_schema(json_schema)
-                if resolved_json_schema.get('type') == 'object' and 'properties' in resolved_json_schema:
-                    properties.update(resolved_json_schema.get('properties', {}))
-                    if 'required' in resolved_json_schema:
-                        required.extend(resolved_json_schema['required'])
+                # Add a single 'body' field to represent the request body
+                body_field = "body"
+                properties[body_field] = {
+                    "description": resolved_body.get("description", "Request body"),
+                    **self._resolve_schema(json_schema)
+                }
+                if resolved_body.get("required"):
+                    required.append(body_field)
 
-        return ToolInputOutputSchema(properties=properties, required=required if required else None)
+        schema = ToolInputOutputSchema(properties=properties, required=required if required else None)
+        return schema, header_fields, body_field
 
     def _extract_outputs(self, operation: Dict[str, Any]) -> ToolInputOutputSchema:
         """Extracts the output schema from an OpenAPI operation, resolving refs."""

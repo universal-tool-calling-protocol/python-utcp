@@ -385,17 +385,157 @@ async def test_call_tool_with_header_fields(http_transport, aiohttp_client):
 @pytest.mark.asyncio
 async def test_call_tool_error(http_transport, logger, aiohttp_client):
     """Test error handling when calling a tool."""
-    # Create a provider that points to our error endpoint
-    error_provider = HttpProvider(
-        name="error-provider",
-        url=f"{aiohttp_client.make_url('/error')}",
+    # Create a provider that will return a DNS error (since the host doesn't exist)
+    provider = HttpProvider(
+        name="test-provider",
+        url="http://nonexistent.localhost:8080/404",
         http_method="GET",
         content_type="application/json"
     )
     
-    # Test calling a tool with error
-    with pytest.raises(aiohttp.ClientResponseError):
-        await http_transport.call_tool("test_tool", {"param1": "value1"}, error_provider)
+    # Test calling a tool that returns a DNS error
+    with pytest.raises(aiohttp.ClientConnectorDNSError):
+        await http_transport.call_tool("test_tool", {"param1": "value1"}, provider)
     
-    # Verify the logger was called
-    logger.assert_called()
+    # Check that the error was logged
+    assert logger.call_count >= 1
+
+
+# Test URL path parameters functionality
+def test_build_url_with_path_params(http_transport):
+    """Test the _build_url_with_path_params method with various URL patterns."""
+    
+    # Test 1: Simple single parameter
+    arguments = {"user_id": "123", "limit": "10"}
+    url = http_transport._build_url_with_path_params("https://api.example.com/users/{user_id}", arguments)
+    assert url == "https://api.example.com/users/123"
+    assert arguments == {"limit": "10"}  # Path parameter should be removed
+    
+    # Test 2: Multiple path parameters (like OpenLibrary API)
+    arguments = {"key_type": "isbn", "value": "9780140328721", "format": "json"}
+    url = http_transport._build_url_with_path_params("https://openlibrary.org/api/volumes/brief/{key_type}/{value}.json", arguments)
+    assert url == "https://openlibrary.org/api/volumes/brief/isbn/9780140328721.json"
+    assert arguments == {"format": "json"}  # Path parameters should be removed
+    
+    # Test 3: Complex URL with multiple parameters
+    arguments = {"user_id": "123", "post_id": "456", "comment_id": "789", "limit": "10", "offset": "0"}
+    url = http_transport._build_url_with_path_params("https://api.example.com/users/{user_id}/posts/{post_id}/comments/{comment_id}", arguments)
+    assert url == "https://api.example.com/users/123/posts/456/comments/789"
+    assert arguments == {"limit": "10", "offset": "0"}  # Path parameters should be removed
+    
+    # Test 4: URL with no path parameters
+    arguments = {"param1": "value1", "param2": "value2"}
+    url = http_transport._build_url_with_path_params("https://api.example.com/endpoint", arguments)
+    assert url == "https://api.example.com/endpoint"
+    assert arguments == {"param1": "value1", "param2": "value2"}  # Arguments should remain unchanged
+    
+    # Test 5: Error case - missing parameter
+    arguments = {"user_id": "123"}
+    with pytest.raises(ValueError, match="Missing required path parameter: post_id"):
+        http_transport._build_url_with_path_params("https://api.example.com/users/{user_id}/posts/{post_id}", arguments)
+    
+    # Test 6: Error case - unreplaced parameters (this should not happen in practice as the first missing parameter will raise)
+    # The actual implementation will raise on the first missing parameter encountered
+    arguments = {"user_id": "123"}
+    with pytest.raises(ValueError, match="Missing required path parameter: post_id"):
+        http_transport._build_url_with_path_params("https://api.example.com/users/{user_id}/posts/{post_id}", arguments)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_path_parameters(http_transport):
+    """Test calling a tool with URL path parameters."""
+
+    # Create a test server that handles path parameters
+    app = web.Application()
+
+    async def path_param_handler(request):
+        # Extract path parameters from the URL
+        user_id = request.match_info.get('user_id')
+        post_id = request.match_info.get('post_id')
+        
+        # Also get query parameters
+        limit = request.query.get('limit', '10')
+        
+        return web.json_response({
+            "user_id": user_id,
+            "post_id": post_id,
+            "limit": limit,
+            "message": f"Retrieved post {post_id} for user {user_id} with limit {limit}"
+        })
+    
+    app.router.add_get('/users/{user_id}/posts/{post_id}', path_param_handler)
+
+    # Create our own test client for this specific test
+    from aiohttp.test_utils import TestServer, TestClient
+    server = TestServer(app)
+    client = TestClient(server)
+    await client.start_server()
+    try:
+        base_url = f"http://localhost:{client.port}"
+    
+        # Create a provider with path parameters in the URL
+        provider = HttpProvider(
+            name="test_provider",
+            url=f"{base_url}/users/{{user_id}}/posts/{{post_id}}",
+            http_method="GET"
+        )
+        
+        # Call the tool with path parameters
+        result = await http_transport.call_tool(
+            "get_user_post",
+            {"user_id": "123", "post_id": "456", "limit": "20"},
+            provider
+        )
+        
+        # Verify the result
+        assert result["user_id"] == "123"
+        assert result["post_id"] == "456"
+        assert result["limit"] == "20"
+        assert "Retrieved post 456 for user 123 with limit 20" in result["message"]
+    finally:
+        # Clean up the test client
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_missing_path_parameter(http_transport, logger):
+    """Test error handling when path parameters are missing."""
+    
+    # Create a provider with path parameters
+    provider = HttpProvider(
+        name="test_provider",
+        url="https://api.example.com/users/{user_id}/posts/{post_id}",
+        http_method="GET"
+    )
+    
+    # Try to call the tool without required path parameters
+    with pytest.raises(ValueError, match="Missing required path parameter: post_id"):
+        await http_transport.call_tool(
+            "test_tool",
+            {"user_id": "123"},  # Missing post_id
+            provider
+        )
+
+
+@pytest.mark.asyncio
+async def test_call_tool_openlibrary_style_url(http_transport, logger):
+    """Test calling a tool with OpenLibrary-style URL path parameters."""
+    
+    # Create a provider with OpenLibrary-style URL (the original problem case)
+    provider = HttpProvider(
+        name="openlibrary_provider",
+        url="https://openlibrary.org/api/volumes/brief/{key_type}/{value}.json",
+        http_method="GET"
+    )
+    
+    # Test the URL building (we can't make actual requests to OpenLibrary in tests)
+    arguments = {"key_type": "isbn", "value": "9780140328721", "format": "json"}
+    url = http_transport._build_url_with_path_params(provider.url, arguments.copy())
+    
+    # Verify the URL was built correctly
+    assert url == "https://openlibrary.org/api/volumes/brief/isbn/9780140328721.json"
+    
+    # Verify that path parameters were removed from arguments, leaving only query parameters
+    expected_remaining = {"format": "json"}
+    http_transport._build_url_with_path_params(provider.url, arguments)
+    assert arguments == expected_remaining

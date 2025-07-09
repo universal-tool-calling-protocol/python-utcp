@@ -37,8 +37,57 @@ class SSEClientTransport(ClientTransportInterface):
                 )
                 
             self._log(f"Discovering tools from '{provider.name}' (SSE) at {url}")
+            
+            # Use the provider's configuration (headers, auth, etc.)
+            request_headers = provider.headers.copy() if provider.headers else {}
+            body_content = None
+            
+            # Handle authentication
+            auth = None
+            if provider.auth:
+                if isinstance(provider.auth, ApiKeyAuth):
+                    if provider.auth.api_key:
+                        request_headers[provider.auth.var_name] = provider.auth.api_key
+                    else:
+                        self._log("API key not found for ApiKeyAuth.", error=True)
+                        raise ValueError("API key for ApiKeyAuth not found.")
+                elif isinstance(provider.auth, BasicAuth):
+                    auth = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
+                elif isinstance(provider.auth, OAuth2Auth):
+                    token = await self._handle_oauth2(provider.auth)
+                    request_headers["Authorization"] = f"Bearer {token}"
+            
+            # Handle body content if specified
+            if provider.body_field:
+                # For discovery, we typically don't have body content, but support it if needed
+                body_content = None
+            
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10.0)) as response:
+                # Set content-type header if body is provided and header not already set
+                if body_content is not None and "Content-Type" not in request_headers:
+                    request_headers["Content-Type"] = "application/json"
+                
+                # Prepare body content based on content type
+                data = None
+                json_data = None
+                if body_content is not None:
+                    if "application/json" in request_headers.get("Content-Type", ""):
+                        json_data = body_content
+                    else:
+                        data = body_content
+                
+                # Make the request (typically GET for discovery, but respect configuration)
+                method = "GET"  # Default to GET for discovery
+                request_method = getattr(session, method.lower())
+                
+                async with request_method(
+                    url,
+                    headers=request_headers,
+                    auth=auth,
+                    json=json_data,
+                    data=data,
+                    timeout=aiohttp.ClientTimeout(total=10.0)
+                ) as response:
                     response.raise_for_status()
                     response_data = await response.json()
                     utcp_manual = UtcpManual(**response_data)
@@ -73,7 +122,12 @@ class SSEClientTransport(ClientTransportInterface):
         if provider.body_field and provider.body_field in remaining_args:
             body_content = remaining_args.pop(provider.body_field)
 
+        # Build the URL with path parameters substituted
+        url = self._build_url_with_path_params(provider.url, remaining_args)
+        
+        # The rest of the arguments are query parameters
         query_params = remaining_args
+        
         auth = None
         if provider.auth:
             if isinstance(provider.auth, ApiKeyAuth):
@@ -91,7 +145,7 @@ class SSEClientTransport(ClientTransportInterface):
             json_data = body_content if "application/json" in request_headers.get("Content-Type", "") else None
 
             response = await session.request(
-                method, provider.url, params=query_params, headers=request_headers,
+                method, url, params=query_params, headers=request_headers,
                 auth=auth, json=json_data, data=data, timeout=None
             )
             response.raise_for_status()
@@ -193,3 +247,40 @@ class SSEClientTransport(ClientTransportInterface):
                 response.close()
                 await session.close()
         self._active_connections.clear()
+    
+    def _build_url_with_path_params(self, url_template: str, arguments: Dict[str, Any]) -> str:
+        """Build URL by substituting path parameters from arguments.
+        
+        Args:
+            url_template: URL template with path parameters in {param_name} format
+            arguments: Dictionary of arguments that will be modified to remove used path parameters
+            
+        Returns:
+            URL with path parameters substituted
+            
+        Example:
+            url_template = "https://api.example.com/users/{user_id}/posts/{post_id}"
+            arguments = {"user_id": "123", "post_id": "456", "limit": "10"}
+            Returns: "https://api.example.com/users/123/posts/456"
+            And modifies arguments to: {"limit": "10"}
+        """
+        # Find all path parameters in the URL template
+        path_params = re.findall(r'\{([^}]+)\}', url_template)
+        
+        url = url_template
+        for param_name in path_params:
+            if param_name in arguments:
+                # Replace the parameter in the URL
+                param_value = str(arguments[param_name])
+                url = url.replace(f'{{{param_name}}}', param_value)
+                # Remove the parameter from arguments so it's not used as a query parameter
+                arguments.pop(param_name)
+            else:
+                raise ValueError(f"Missing required path parameter: {param_name}")
+        
+        # Check if there are any unreplaced path parameters
+        remaining_params = re.findall(r'\{([^}]+)\}', url)
+        if remaining_params:
+            raise ValueError(f"Missing required path parameters: {remaining_params}")
+        
+        return url

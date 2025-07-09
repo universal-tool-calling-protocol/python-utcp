@@ -4,7 +4,7 @@ from utcp.shared.tool import Tool
 
 class ToolSearchStrategy(ABC):
     @abstractmethod
-    def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
+    async def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
         """
         Search for tools relevant to the query.
 

@@ -12,7 +12,7 @@ class TagSearchStrategy(ToolSearchStrategy):
         # Weight for description words vs explicit tags (explicit tags have weight of 1.0)
         self.description_weight = description_weight
 
-    def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
+    async def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
         """
         Return tools ordered by tag occurrences in the query.
         
@@ -31,7 +31,7 @@ class TagSearchStrategy(ToolSearchStrategy):
         query_words = set(re.findall(r'\w+', query_lower))
         
         # Get all tools (using asyncio to run the coroutine)
-        tools = asyncio.run(self.tool_repository.get_tools())
+        tools = await self.tool_repository.get_tools()
         
         # Calculate scores for each tool
         tool_scores: List[Tuple[Tool, float]] = []

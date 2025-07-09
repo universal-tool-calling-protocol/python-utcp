@@ -250,12 +250,14 @@ class UtcpClient(UtcpClientInterface):
             UtcpVariableNotFound: If a variable is not found in the environment or in the configuration.
         """
         provider = self._substitute_provider_variables(provider)
+        provider.name = provider.name.replace(".", "_")
         if provider.provider_type not in self.transports:
             raise ValueError(f"Provider type not supported: {provider.provider_type}")
         tools: List[Tool] = await self.transports[provider.provider_type].register_tool_provider(provider)
         for tool in tools:
             if not tool.name.startswith(provider.name + "."):
                 tool.name = provider.name + "." + tool.name
+            print(tool.provider.url)
         await self.tool_repository.save_provider_with_tools(provider, tools)
         return tools
 
