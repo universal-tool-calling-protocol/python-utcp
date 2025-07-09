@@ -13,13 +13,23 @@ from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
 # --- Test Data ---
 
 SAMPLE_TOOLS_JSON = {
-    "tools": [{
-        "name": "test_tool",
-        "description": "A test tool",
-        "inputs": {"type": "object", "properties": {"param": {"type": "string"}}},
-        "outputs": {"type": "object", "properties": {"result": {"type": "string"}}},
-        "tags": []
-    }]
+    "version": "1.0",
+    "tools": [
+        {
+            "name": "test_tool",
+            "description": "Test tool",
+            "inputs": {},
+            "outputs": {},
+            "tags": [],
+            "provider": {
+                "provider_type": "http_stream",
+                "name": "test-streamable-http-provider-executor",
+                "url": "http://test-url/tool",
+                "http_method": "GET",
+                "content_type": "application/json"
+            }
+        }
+    ]
 }
 
 SAMPLE_NDJSON_RESPONSE = [
@@ -46,7 +56,27 @@ async def streamable_http_transport(logger):
 def app():
     """Fixture for the aiohttp test application."""
     async def discover(request):
-        return web.json_response(SAMPLE_TOOLS_JSON)
+        execution_provider = {
+            "provider_type": "http_stream",
+            "name": "test-streamable-http-provider-executor",
+            "url": str(request.url.origin()) + "/stream-ndjson",
+            "http_method": "GET",
+            "content_type": "application/x-ndjson"
+        }
+        utcp_manual = {
+            "version": "1.0",
+            "tools": [
+                {
+                    "name": "test_tool",
+                    "description": "Test tool",
+                    "inputs": {},
+                    "outputs": {},
+                    "tags": [],
+                    "provider": execution_provider
+                }
+            ]
+        }
+        return web.json_response(utcp_manual)
 
     async def stream_ndjson(request):
         response = web.StreamResponse(

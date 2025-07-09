@@ -46,7 +46,12 @@ def sample_utcp_manual():
                         "result": {"type": "number"}
                     }
                 },
-                "tags": ["math", "arithmetic"]
+                "tags": ["math", "arithmetic"],
+                "provider": {
+                    "provider_type": "text",
+                    "name": "test-text-provider",
+                    "file_path": "dummy.json"
+                }
             },
             {
                 "name": "string_utils",
@@ -66,7 +71,12 @@ def sample_utcp_manual():
                         "result": {"type": "string"}
                     }
                 },
-                "tags": ["text", "utilities"]
+                "tags": ["text", "utilities"],
+                "provider": {
+                    "provider_type": "text",
+                    "name": "test-text-provider",
+                    "file_path": "dummy.json"
+                }
             }
         ]
     }
@@ -89,27 +99,40 @@ def single_tool_definition():
                 "echo": {"type": "string"}
             }
         },
-        "tags": ["utility"]
+        "tags": ["utility"],
+        "provider": {
+            "provider_type": "text",
+            "name": "test-text-provider",
+            "file_path": "dummy.json"
+        }
     }
 
 
 @pytest_asyncio.fixture
 def tool_array():
     """Sample array of tool definitions."""
+    default_provider = {
+        "provider_type": "text",
+        "name": "test-text-provider",
+        "file_path": "dummy.json"
+    }
+    
     return [
         {
             "name": "tool1",
             "description": "First tool",
             "inputs": {"properties": {}, "required": []},
             "outputs": {"properties": {}, "required": []},
-            "tags": []
+            "tags": [],
+            "provider": default_provider
         },
         {
             "name": "tool2",
             "description": "Second tool",
             "inputs": {"properties": {}, "required": []},
             "outputs": {"properties": {}, "required": []},
-            "tags": []
+            "tags": [],
+            "provider": default_provider
         }
     ]
 

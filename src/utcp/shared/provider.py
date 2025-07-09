@@ -72,7 +72,7 @@ class CliProvider(Provider):
     """Options specific to CLI tools"""
 
     provider_type: Literal["cli"] = "cli"
-    command_name: Optional[str] = None  # If None, will use the tool name
+    command_name: str
     env_vars: Optional[Dict[str, str]] = Field(default=None, description="Environment variables to set when executing the command")
     working_dir: Optional[str] = Field(default=None, description="Working directory for command execution")
     auth: None = None

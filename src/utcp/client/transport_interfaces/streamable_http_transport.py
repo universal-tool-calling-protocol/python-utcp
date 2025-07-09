@@ -36,6 +36,14 @@ class StreamableHttpClientTransport(ClientTransportInterface):
             raise ValueError("StreamableHttpClientTransport can only be used with StreamableHttpProvider")
 
         url = provider.url
+        
+        # Security check: Enforce HTTPS or localhost to prevent MITM attacks
+        if not (url.startswith("https://") or url.startswith("http://localhost") or url.startswith("http://127.0.0.1")):
+            raise ValueError(
+                f"Security error: URL must use HTTPS or start with 'http://localhost' or 'http://127.0.0.1'. Got: {url}. "
+                "Non-secure URLs are vulnerable to man-in-the-middle attacks."
+            )
+            
         self._log(f"Discovering tools from '{provider.name}' (HTTP Stream) at {url}")
 
         try:

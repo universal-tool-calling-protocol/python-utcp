@@ -27,8 +27,18 @@ class SSEClientTransport(ClientTransportInterface):
             raise ValueError("SSEClientTransport can only be used with SSEProvider")
 
         try:
+            url = provider.url
+            
+            # Security check: Enforce HTTPS or localhost to prevent MITM attacks
+            if not (url.startswith("https://") or url.startswith("http://localhost") or url.startswith("http://127.0.0.1")):
+                raise ValueError(
+                    f"Security error: URL must use HTTPS or start with 'http://localhost' or 'http://127.0.0.1'. Got: {url}. "
+                    "Non-secure URLs are vulnerable to man-in-the-middle attacks."
+                )
+                
+            self._log(f"Discovering tools from '{provider.name}' (SSE) at {url}")
             async with aiohttp.ClientSession() as session:
-                async with session.get(provider.url, timeout=aiohttp.ClientTimeout(total=10.0)) as response:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10.0)) as response:
                     response.raise_for_status()
                     response_data = await response.json()
                     utcp_manual = UtcpManual(**response_data)

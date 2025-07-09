@@ -55,7 +55,12 @@ def main():
                             "result": {"type": "string"}
                         }
                     },
-                    "tags": ["utility"]
+                    "tags": ["utility"],
+                    "provider": {
+                        "provider_type": "cli",
+                        "name": "mock_cli_provider",
+                        "command_name": sys.argv[0]
+                    }
                 },
                 {
                     "name": "math",
@@ -73,7 +78,12 @@ def main():
                             "result": {"type": "number"}
                         }
                     },
-                    "tags": ["math"]
+                    "tags": ["math"],
+                    "provider": {
+                        "provider_type": "cli",
+                        "name": "mock_cli_provider",
+                        "command_name": sys.argv[0]
+                    }
                 }
             ]
         }
@@ -198,9 +208,10 @@ async def test_register_provider_discovers_tools(transport: CliTransport, mock_c
 
 @pytest.mark.asyncio
 async def test_register_provider_missing_command_name(transport: CliTransport):
-    """Test that registering a provider without command_name raises an error."""
+    """Test that registering a provider with empty command_name raises an error."""
     provider = CliProvider(
-        name="missing_command_provider"
+        name="missing_command_provider",
+        command_name=""  # Empty string instead of missing field
     )
     
     with pytest.raises(ValueError, match="must have command_name set"):
@@ -267,9 +278,10 @@ async def test_call_tool_error_handling(transport: CliTransport, mock_cli_script
 
 @pytest.mark.asyncio
 async def test_call_tool_missing_command_name(transport: CliTransport):
-    """Test calling a tool without command_name raises an error."""
+    """Test calling a tool with empty command_name raises an error."""
     provider = CliProvider(
-        name="missing_command_provider"
+        name="missing_command_provider",
+        command_name=""  # Empty string instead of missing field
     )
     
     with pytest.raises(ValueError, match="must have command_name set"):
@@ -473,7 +485,7 @@ async def test_json_extraction_from_output():
     transport = CliTransport()
     
     # Test complete JSON output
-    output1 = '{"tools": [{"name": "test", "description": "Test tool"}]}'
+    output1 = '{"tools": [{"name": "test", "description": "Test tool", "provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}]}'
     tools1 = transport._extract_utcp_manual_from_output(output1, "test_provider")
     assert len(tools1) == 1
     assert tools1[0].name == "test"
@@ -481,7 +493,7 @@ async def test_json_extraction_from_output():
     # Test JSON within text output
     output2 = '''
     Starting CLI tool...
-    {"tools": [{"name": "embedded", "description": "Embedded tool"}]}
+    {"tools": [{"name": "embedded", "description": "Embedded tool", "provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}]}
     Process completed.
     '''
     tools2 = transport._extract_utcp_manual_from_output(output2, "test_provider")
@@ -489,7 +501,7 @@ async def test_json_extraction_from_output():
     assert tools2[0].name == "embedded"
     
     # Test single tool definition
-    output3 = '{"name": "single", "description": "Single tool"}'
+    output3 = '{"name": "single", "description": "Single tool", "provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}'
     tools3 = transport._extract_utcp_manual_from_output(output3, "test_provider")
     assert len(tools3) == 1
     assert tools3[0].name == "single"

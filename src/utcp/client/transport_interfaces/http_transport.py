@@ -7,6 +7,7 @@ from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.shared.provider import Provider, HttpProvider
 from utcp.shared.tool import Tool
 from utcp.shared.utcp_manual import UtcpManual
+from utcp.client.openapi_converter import OpenApiConverter
 from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
 from typing import Optional, Callable
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
@@ -32,13 +33,32 @@ class HttpClientTransport(ClientTransportInterface):
 
         try:
             url = provider.url
+            
+            # Security check: Enforce HTTPS or localhost to prevent MITM attacks
+            if not (url.startswith("https://") or url.startswith("http://localhost") or url.startswith("http://127.0.0.1")):
+                raise ValueError(
+                    f"Security error: URL must use HTTPS or start with 'http://localhost' or 'http://127.0.0.1'. Got: {url}. "
+                    "Non-secure URLs are vulnerable to man-in-the-middle attacks."
+                )
+                
             self._log(f"Discovering tools from '{provider.name}' (REST) at {url}")
             async with aiohttp.ClientSession() as session:
                 try:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=10.0)) as response:
                         response.raise_for_status()  # Raise exception for 4XX/5XX responses
                         response_data = await response.json()
-                        utcp_manual = UtcpManual(**response_data)
+
+                        # Check if the response is a UTCP manual or an OpenAPI spec
+                        if "version" in response_data and "tools" in response_data:
+                            self._log(f"Detected UTCP manual from '{provider.name}'.")
+                            utcp_manual = UtcpManual(**response_data)
+                        else:
+                            self._log(f"Assuming OpenAPI spec from '{provider.name}'. Converting to UTCP manual.")
+                            converter = OpenApiConverter(response_data)
+                            utcp_manual = converter.convert()
+                            for tool in utcp_manual.tools:
+                                tool.provider = provider
+                        
                         return utcp_manual.tools
                 except aiohttp.ClientResponseError as e:
                     self._log(f"Error connecting to REST provider '{provider.name}': {e}", error=True)

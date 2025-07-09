@@ -18,8 +18,17 @@ async def app():
     
     # Setup routes for our test server
     async def tools_handler(request):
+        # The execution provider points to the /tool endpoint
+        execution_provider = {
+            "provider_type": "http",
+            "name": "test-http-provider-executor",
+            "url": str(request.url.origin()) + "/tool",
+            "http_method": "GET",
+            "content_type": "application/json"
+        }
         # Return sample tools JSON
         return web.json_response({
+            "version": "1.0",
             "tools": [
                 {
                     "name": "test_tool",
@@ -36,7 +45,8 @@ async def app():
                             "result": {"type": "string"}
                         }
                     },
-                    "tags": []
+                    "tags": [],
+                    "provider": execution_provider
                 }
             ]
         })
@@ -90,6 +100,32 @@ async def app():
             
         # Return tool response
         return web.json_response({"result": "success"})
+    
+    async def discover_handler(request):
+        tools_data = [
+            {
+                "name": "test_tool",
+                "description": "Test tool",
+                "inputs": {
+                    "type": "object",
+                    "properties": {
+                        "param1": {"type": "string"}
+                    }
+                },
+                "outputs": {
+                    "type": "object",
+                    "properties": {
+                        "result": {"type": "string"}
+                    }
+                },
+                "tags": []
+            }
+        ]
+        utcp_manual = {
+            "version": "1.0",
+            "tools": tools_data
+        }
+        return web.json_response(utcp_manual)
     
     async def error_handler(request):
         # Simulate an error response
