@@ -110,6 +110,22 @@ def get_weather(location: str):
     return {"temperature": 22.5, "conditions": "Sunny"}
 ```
 
+### 3. Full LLM Integration Example
+
+For a complete, end-to-end demonstration of how to integrate UTCP with a Large Language Model (LLM) like OpenAI, see the example in `example/src/full_llm_example/openai_utcp_example.py`.
+
+This advanced example showcases:
+*   **Dynamic Tool Discovery**: No hardcoded tool names. The client loads all available tools from the `providers.json` config.
+*   **Relevant Tool Search**: For each user prompt, it uses `utcp_client.search_tools()` to find the most relevant tools for the task.
+*   **LLM-Driven Tool Calls**: It instructs the OpenAI model to respond with a custom JSON format to call a tool.
+*   **Robust Execution**: It parses the LLM's response, executes the tool call via `utcp_client.call_tool()`, and sends the result back to the model for a final, human-readable answer.
+*   **Conversation History**: It maintains a full conversation history for contextual, multi-turn interactions.
+
+**To run the example:**
+1.  Navigate to the `example/src/full_llm_example/` directory.
+2.  Rename `example.env` to `.env` and add your OpenAI API key.
+3.  Run `python openai_utcp_example.py`.
+
 ## Protocol Specification
 
 UTCP is defined by a set of core data models that describe tools, how to connect to them (providers), and how to secure them (authentication).
@@ -253,6 +269,20 @@ For connecting to standard RESTful APIs.
   }
 }
 ```
+
+#### Automatic OpenAPI Conversion
+
+UTCP simplifies integration with existing web services by automatically converting OpenAPI v3 specifications into UTCP tools. Instead of pointing to a `UtcpManual`, the `url` for an `http` provider can point directly to an OpenAPI JSON specification. The `OpenApiConverter` handles this conversion automatically, making it seamless to integrate thousands of existing APIs.
+
+```json
+{
+  "name": "open_library_api",
+  "provider_type": "http",
+  "url": "https://openlibrary.org/dev/docs/api/openapi.json"
+}
+```
+
+When the client registers this provider, it will fetch the OpenAPI spec from the URL, convert all defined endpoints into UTCP `Tool` objects, and make them available for searching and calling.
 
 ### Server-Sent Events (SSE) Provider
 
