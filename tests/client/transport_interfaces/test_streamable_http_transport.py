@@ -21,7 +21,7 @@ SAMPLE_TOOLS_JSON = {
             "inputs": {},
             "outputs": {},
             "tags": [],
-            "provider": {
+            "tool_provider": {
                 "provider_type": "http_stream",
                 "name": "test-streamable-http-provider-executor",
                 "url": "http://test-url/tool",
@@ -72,7 +72,7 @@ def app():
                     "inputs": {},
                     "outputs": {},
                     "tags": [],
-                    "provider": execution_provider
+                    "tool_provider": execution_provider
                 }
             ]
         }

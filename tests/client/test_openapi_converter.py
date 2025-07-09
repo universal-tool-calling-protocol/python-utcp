@@ -24,8 +24,8 @@ async def test_openai_spec_conversion():
     # Check a few things on a sample tool to ensure parsing is reasonable
     sample_tool = next((tool for tool in utcp_manual.tools if tool.name == "createChatCompletion"), None)
     assert sample_tool is not None
-    assert sample_tool.provider.provider_type == "http"
-    assert sample_tool.provider.http_method == "POST"
+    assert sample_tool.tool_provider.provider_type == "http"
+    assert sample_tool.tool_provider.http_method == "POST"
     assert "messages" in sample_tool.inputs.properties['body']['properties']
     assert "model" in sample_tool.inputs.properties['body']['properties']
     assert "choices" in sample_tool.outputs.properties

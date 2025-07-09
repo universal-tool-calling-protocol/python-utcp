@@ -29,7 +29,7 @@ SAMPLE_TOOLS_JSON = {
                 "properties": {"result": {"type": "string"}}
             },
             "tags": [],
-            "provider": {
+            "tool_provider": {
                 "provider_type": "sse",
                 "name": "test-sse-provider-executor",
                 "url": "/events",
@@ -71,7 +71,7 @@ async def tools_handler(request):
                     "properties": {"result": {"type": "string"}}
                 },
                 "tags": [],
-                "provider": execution_provider
+                "tool_provider": execution_provider
             }
         ]
     }

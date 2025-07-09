@@ -8,6 +8,11 @@ class ToolInputOutputSchema(BaseModel):
     required: Optional[List[str]] = None
     description: Optional[str] = None
     title: Optional[str] = None
+    items: Optional[Dict[str, Any]] = None  # For array types
+    enum: Optional[List[Any]] = None  # For enum types
+    minimum: Optional[float] = None  # For number types
+    maximum: Optional[float] = None  # For number types
+    format: Optional[str] = None  # For string formats
 
 class Tool(BaseModel):
     name: str
@@ -16,7 +21,7 @@ class Tool(BaseModel):
     outputs: ToolInputOutputSchema = Field(default_factory=ToolInputOutputSchema)
     tags: List[str] = []
     average_response_size: Optional[int] = None
-    provider: ProviderUnion
+    tool_provider: ProviderUnion
 
 class ToolContext:
     tools: List[Tool] = []
@@ -25,7 +30,7 @@ class ToolContext:
     def add_tool(tool: Tool):
         """Add a tool to the UTCP server."""
 
-        print(f"Adding tool: {tool.name} with provider: {tool.provider.name if tool.provider else 'None'}")
+        print(f"Adding tool: {tool.name} with provider: {tool.tool_provider.name if tool.tool_provider else 'None'}")
         ToolContext.tools.append(tool)
 
     @staticmethod
@@ -34,7 +39,7 @@ class ToolContext:
         return ToolContext.tools
 
 def utcp_tool(
-    provider: ProviderUnion,
+    tool_provider: ProviderUnion,
     name: Optional[str] = None,
     description: Optional[str] = None,
     tags: Optional[List[str]] = ["utcp"],
@@ -42,11 +47,11 @@ def utcp_tool(
     outputs: Optional[ToolInputOutputSchema] = None,
 ):
     def decorator(func):
-        if provider.name is None:
+        if tool_provider.name is None:
             _provider_name = f"{func.__name__}_provider"
-            provider.name = _provider_name
+            tool_provider.name = _provider_name
         else:
-            _provider_name = provider.name
+            _provider_name = tool_provider.name
 
         func_name = func.__name__
         func_description = description or func.__doc__ or ""
@@ -87,7 +92,7 @@ def utcp_tool(
                 tags=tags,
                 inputs=inputs or input_tool_schema,
                 outputs=outputs or output_tool_schema,
-                provider=provider
+                tool_provider=tool_provider
             )
         
         # Attach methods to function

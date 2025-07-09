@@ -47,7 +47,7 @@ def sample_utcp_manual():
                     }
                 },
                 "tags": ["math", "arithmetic"],
-                "provider": {
+                "tool_provider": {
                     "provider_type": "text",
                     "name": "test-text-provider",
                     "file_path": "dummy.json"
@@ -72,7 +72,7 @@ def sample_utcp_manual():
                     }
                 },
                 "tags": ["text", "utilities"],
-                "provider": {
+                "tool_provider": {
                     "provider_type": "text",
                     "name": "test-text-provider",
                     "file_path": "dummy.json"
@@ -100,7 +100,7 @@ def single_tool_definition():
             }
         },
         "tags": ["utility"],
-        "provider": {
+        "tool_provider": {
             "provider_type": "text",
             "name": "test-text-provider",
             "file_path": "dummy.json"
@@ -111,12 +111,6 @@ def single_tool_definition():
 @pytest_asyncio.fixture
 def tool_array():
     """Sample array of tool definitions."""
-    default_provider = {
-        "provider_type": "text",
-        "name": "test-text-provider",
-        "file_path": "dummy.json"
-    }
-    
     return [
         {
             "name": "tool1",
@@ -124,7 +118,11 @@ def tool_array():
             "inputs": {"properties": {}, "required": []},
             "outputs": {"properties": {}, "required": []},
             "tags": [],
-            "provider": default_provider
+            "tool_provider": {
+                "provider_type": "text",
+                "name": "test-text-provider",
+                "file_path": "dummy.json"
+            }
         },
         {
             "name": "tool2",
@@ -132,7 +130,11 @@ def tool_array():
             "inputs": {"properties": {}, "required": []},
             "outputs": {"properties": {}, "required": []},
             "tags": [],
-            "provider": default_provider
+            "tool_provider": {
+                "provider_type": "text",
+                "name": "test-text-provider",
+                "file_path": "dummy.json"
+            }
         }
     ]
 
@@ -156,10 +158,12 @@ async def test_register_provider_with_utcp_manual(transport: TextTransport, samp
         assert tools[0].name == "calculator"
         assert tools[0].description == "Performs basic arithmetic operations"
         assert tools[0].tags == ["math", "arithmetic"]
+        assert tools[0].tool_provider.name == "test-text-provider"
         
         assert tools[1].name == "string_utils"
         assert tools[1].description == "String manipulation utilities"
         assert tools[1].tags == ["text", "utilities"]
+        assert tools[1].tool_provider.name == "test-text-provider"
         
     finally:
         Path(temp_file).unlink()
@@ -169,7 +173,13 @@ async def test_register_provider_with_utcp_manual(transport: TextTransport, samp
 async def test_register_provider_with_single_tool(transport: TextTransport, single_tool_definition):
     """Test registering a provider with a single tool definition."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(single_tool_definition, f)
+        manual = {
+            "version": "1.0.0",
+            "name": "Single Tool Manual",
+            "description": "A manual with a single tool",
+            "tools": [single_tool_definition]
+        }
+        json.dump(manual, f)
         temp_file = f.name
     
     try:
@@ -184,6 +194,7 @@ async def test_register_provider_with_single_tool(transport: TextTransport, sing
         assert tools[0].name == "echo"
         assert tools[0].description == "Echoes back the input text"
         assert tools[0].tags == ["utility"]
+        assert tools[0].tool_provider.name == "test-text-provider"
         
     finally:
         Path(temp_file).unlink()
@@ -193,7 +204,13 @@ async def test_register_provider_with_single_tool(transport: TextTransport, sing
 async def test_register_provider_with_tool_array(transport: TextTransport, tool_array):
     """Test registering a provider with an array of tool definitions."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(tool_array, f)
+        manual = {
+            "version": "1.0.0",
+            "name": "Tool Array Manual",
+            "description": "A manual with a tool array",
+            "tools": tool_array
+        }
+        json.dump(manual, f)
         temp_file = f.name
     
     try:
@@ -207,6 +224,8 @@ async def test_register_provider_with_tool_array(transport: TextTransport, tool_
         assert len(tools) == 2
         assert tools[0].name == "tool1"
         assert tools[1].name == "tool2"
+        assert tools[0].tool_provider.name == "test-text-provider"
+        assert tools[1].tool_provider.name == "test-text-provider"
         
     finally:
         Path(temp_file).unlink()
@@ -240,26 +259,6 @@ async def test_register_provider_invalid_json(transport: TextTransport):
         with pytest.raises(json.JSONDecodeError):
             await transport.register_tool_provider(provider)
             
-    finally:
-        Path(temp_file).unlink()
-
-
-@pytest.mark.asyncio
-async def test_register_provider_invalid_format(transport: TextTransport):
-    """Test registering a provider with invalid format."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump({"invalid": "format"}, f)
-        temp_file = f.name
-    
-    try:
-        provider = TextProvider(
-            name="invalid_format_provider",
-            file_path=temp_file
-        )
-        
-        tools = await transport.register_tool_provider(provider)
-        assert len(tools) == 0  # Should return empty list for invalid format
-        
     finally:
         Path(temp_file).unlink()
 

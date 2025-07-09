@@ -95,7 +95,7 @@ def utcp_discovery():
                         "temperature": {"type": "number"}
                     }
                 },
-                "provider": {
+                "tool_provider": {
                     "provider_type": "http",
                     "url": "https://example.com/api/weather",
                     "http_method": "GET"
@@ -146,7 +146,7 @@ For a client to use a tool, it must be provided with a `UtcpManual` object. This
       "inputs": { ... },
       "outputs": { ... },
       "tags": ["string"],
-      "provider": { ... }
+      "tool_provider": { ... }
     }
   ]
 }
@@ -174,7 +174,7 @@ Each tool is defined by the `Tool` model.
   },
   "outputs": { ... },
   "tags": ["string"],
-  "provider": { ... }
+  "tool_provider": { ... }
 }
 ```
 

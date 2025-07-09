@@ -3,7 +3,7 @@
   "tools": [
     {
       "name": "everything_get",
-      "description": "Search through millions of articles from over 150,000 large and small news sources and blogs. This endpoint suits article discovery and analysis.",
+      "description": "Search through millions of articles from over 150,000 large and small news sources and blogs. This endpoint suits article discovery and analysis. It requires either a search query, a source, or a domain.",
       "tags": [
         "articles"
       ],
@@ -54,7 +54,10 @@
             "type": "integer",
             "description": "Use this to page through the results."
           }
-        }
+        },
+        "required": [
+          "q"
+        ]
       },
       "outputs": {
         "type": "object",
@@ -121,7 +124,7 @@
           }
         }
       },
-      "provider": {
+      "tool_provider": {
         "provider_type": "http",
         "url": "https://newsapi.org/v2/everything",
         "http_method": "GET",
@@ -233,7 +236,7 @@
           }
         }
       },
-      "provider": {
+      "tool_provider": {
         "provider_type": "http",
         "url": "https://newsapi.org/v2/top-headlines",
         "http_method": "GET",

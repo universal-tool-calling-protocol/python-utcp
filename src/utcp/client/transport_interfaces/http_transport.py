@@ -1,6 +1,7 @@
 from typing import Dict, Any, List
 import aiohttp
 import json
+import yaml
 import base64
 import re
 
@@ -19,8 +20,40 @@ class HttpClientTransport(ClientTransportInterface):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 
         self._log = logger or (lambda *args, **kwargs: None)
+    
+    def _apply_auth(self, provider: HttpProvider, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
+        """Apply authentication to the request based on the provider's auth configuration.
+        
+        Returns:
+            tuple: (auth_obj, cookies) where auth_obj is for aiohttp basic auth and cookies is a dict
+        """
+        auth = None
+        cookies = {}
+        
+        if provider.auth:
+            if isinstance(provider.auth, ApiKeyAuth):
+                if provider.auth.api_key:
+                    if provider.auth.location == "header":
+                        headers[provider.auth.var_name] = provider.auth.api_key
+                    elif provider.auth.location == "query":
+                        query_params[provider.auth.var_name] = provider.auth.api_key
+                    elif provider.auth.location == "cookie":
+                        cookies[provider.auth.var_name] = provider.auth.api_key
+                else:
+                    self._log("API key not found for ApiKeyAuth.", error=True)
+                    raise ValueError("API key for ApiKeyAuth not found.")
+            
+            elif isinstance(provider.auth, BasicAuth):
+                auth = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
+            
+            elif isinstance(provider.auth, OAuth2Auth):
+                # OAuth2 tokens are always sent in the Authorization header
+                # We'll handle this separately since it requires async token retrieval
+                pass
+        
+        return auth, cookies
 
-    async def register_tool_provider(self, provider: Provider) -> List[Tool]:
+    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
         """Discover tools from a REST API provider.
 
         Args:
@@ -29,11 +62,11 @@ class HttpClientTransport(ClientTransportInterface):
         Returns:
             List of tool declarations as dictionaries, or None if discovery fails
         """
-        if not isinstance(provider, HttpProvider):
+        if not isinstance(manual_provider, HttpProvider):
             raise ValueError("HttpTransport can only be used with HttpProvider")
 
         try:
-            url = provider.url
+            url = manual_provider.url
             
             # Security check: Enforce HTTPS or localhost to prevent MITM attacks
             if not (url.startswith("https://") or url.startswith("http://localhost") or url.startswith("http://127.0.0.1")):
@@ -42,29 +75,23 @@ class HttpClientTransport(ClientTransportInterface):
                     "Non-secure URLs are vulnerable to man-in-the-middle attacks."
                 )
                 
-            self._log(f"Discovering tools from '{provider.name}' (REST) at {url}")
+            self._log(f"Discovering tools from '{manual_provider.name}' (REST) at {url}")
             
             # Use the provider's configuration (headers, auth, HTTP method, etc.)
-            request_headers = provider.headers.copy() if provider.headers else {}
+            request_headers = manual_provider.headers.copy() if manual_provider.headers else {}
             body_content = None
+            query_params = {}
             
             # Handle authentication
-            auth = None
-            if provider.auth:
-                if isinstance(provider.auth, ApiKeyAuth):
-                    if provider.auth.api_key:
-                        request_headers[provider.auth.var_name] = provider.auth.api_key
-                    else:
-                        self._log("API key not found for ApiKeyAuth.", error=True)
-                        raise ValueError("API key for ApiKeyAuth not found.")
-                elif isinstance(provider.auth, BasicAuth):
-                    auth = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
-                elif isinstance(provider.auth, OAuth2Auth):
-                    token = await self._handle_oauth2(provider.auth)
-                    request_headers["Authorization"] = f"Bearer {token}"
+            auth, cookies = self._apply_auth(manual_provider, request_headers, query_params)
+            
+            # Handle OAuth2 separately since it requires async token retrieval
+            if manual_provider.auth and isinstance(manual_provider.auth, OAuth2Auth):
+                token = await self._handle_oauth2(manual_provider.auth)
+                request_headers["Authorization"] = f"Bearer {token}"
             
             # Handle body content if specified
-            if provider.body_field:
+            if manual_provider.body_field:
                 # For discovery, we typically don't have body content, but support it if needed
                 body_content = None
             
@@ -72,7 +99,7 @@ class HttpClientTransport(ClientTransportInterface):
                 try:
                     # Set content-type header if body is provided and header not already set
                     if body_content is not None and "Content-Type" not in request_headers:
-                        request_headers["Content-Type"] = provider.content_type
+                        request_headers["Content-Type"] = manual_provider.content_type
                     
                     # Prepare body content based on content type
                     data = None
@@ -84,91 +111,92 @@ class HttpClientTransport(ClientTransportInterface):
                             data = body_content
                     
                     # Make the request with the provider's HTTP method
-                    method = provider.http_method.lower()
+                    method = manual_provider.http_method.lower()
                     request_method = getattr(session, method)
                     
                     async with request_method(
                         url,
+                        params=query_params,
                         headers=request_headers,
                         auth=auth,
                         json=json_data,
                         data=data,
+                        cookies=cookies,
                         timeout=aiohttp.ClientTimeout(total=10.0)
                     ) as response:
                         response.raise_for_status()  # Raise exception for 4XX/5XX responses
-                        response_data = await response.json()
+
+                        # Check content type to determine how to parse the response
+                        content_type = response.headers.get('Content-Type', '')
+                        response_text = await response.text()
+
+                        if 'yaml' in content_type or url.endswith(('.yaml', '.yml')):
+                            response_data = yaml.safe_load(response_text)
+                        else:
+                            response_data = json.loads(response_text)
 
                         # Check if the response is a UTCP manual or an OpenAPI spec
                         if "version" in response_data and "tools" in response_data:
-                            self._log(f"Detected UTCP manual from '{provider.name}'.")
+                            self._log(f"Detected UTCP manual from '{manual_provider.name}'.")
                             utcp_manual = UtcpManual(**response_data)
                         else:
-                            self._log(f"Assuming OpenAPI spec from '{provider.name}'. Converting to UTCP manual.")
-                            converter = OpenApiConverter(response_data, spec_url=provider.url)
+                            self._log(f"Assuming OpenAPI spec from '{manual_provider.name}'. Converting to UTCP manual.")
+                            converter = OpenApiConverter(response_data, spec_url=manual_provider.url, provider_name=manual_provider.name)
                             utcp_manual = converter.convert()
                         
                         return utcp_manual.tools
                 except aiohttp.ClientResponseError as e:
-                    self._log(f"Error connecting to REST provider '{provider.name}': {e}", error=True)
+                    self._log(f"Error connecting to REST provider '{manual_provider.name}': {e}", error=True)
                     return []
-                except json.JSONDecodeError as e:
-                    self._log(f"Error parsing JSON from REST provider '{provider.name}': {e}", error=True)
+                except (json.JSONDecodeError, yaml.YAMLError) as e:
+                    self._log(f"Error parsing spec from REST provider '{manual_provider.name}': {e}", error=True)
                     return []
         except Exception as e:
-            self._log(f"Unexpected error discovering tools from REST provider '{provider.name}': {e}", error=True)
+            self._log(f"Unexpected error discovering tools from REST provider '{manual_provider.name}': {e}", error=True)
             return []
 
-    async def deregister_tool_provider(self, provider: Provider) -> None:
+    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
         """Deregistering a tool provider is a no-op for the stateless HTTP transport."""
         pass
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], provider: Provider) -> Any:
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
         """Calls a tool on an HTTP provider."""
-        if not isinstance(provider, HttpProvider):
+        if not isinstance(tool_provider, HttpProvider):
             raise ValueError("HttpClientTransport can only be used with HttpProvider")
 
-        request_headers = provider.headers.copy() if provider.headers else {}
+        request_headers = tool_provider.headers.copy() if tool_provider.headers else {}
         body_content = None
         remaining_args = arguments.copy()
 
         # Handle header fields
-        if provider.header_fields:
-            for field_name in provider.header_fields:
+        if tool_provider.header_fields:
+            for field_name in tool_provider.header_fields:
                 if field_name in remaining_args:
                     request_headers[field_name] = str(remaining_args.pop(field_name))
 
         # Handle body field
-        if provider.body_field and provider.body_field in remaining_args:
-            body_content = remaining_args.pop(provider.body_field)
+        if tool_provider.body_field and tool_provider.body_field in remaining_args:
+            body_content = remaining_args.pop(tool_provider.body_field)
 
         # Build the URL with path parameters substituted
-        url = self._build_url_with_path_params(provider.url, remaining_args)
+        url = self._build_url_with_path_params(tool_provider.url, remaining_args)
         
         # The rest of the arguments are query parameters
         query_params = remaining_args
 
         # Handle authentication
-        auth = None
-        if provider.auth:
-            if isinstance(provider.auth, ApiKeyAuth):
-                if provider.auth.api_key:
-                    request_headers[provider.auth.var_name] = provider.auth.api_key
-                else:
-                    self._log("API key not found for ApiKeyAuth.", error=True)
-                    raise ValueError("API key for ApiKeyAuth not found.")
-
-            elif isinstance(provider.auth, BasicAuth):
-                auth = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
-
-            elif isinstance(provider.auth, OAuth2Auth):
-                token = await self._handle_oauth2(provider.auth)
-                request_headers["Authorization"] = f"Bearer {token}"
+        auth, cookies = self._apply_auth(tool_provider, request_headers, query_params)
+        
+        # Handle OAuth2 separately since it requires async token retrieval
+        if tool_provider.auth and isinstance(tool_provider.auth, OAuth2Auth):
+            token = await self._handle_oauth2(tool_provider.auth)
+            request_headers["Authorization"] = f"Bearer {token}"
 
         async with aiohttp.ClientSession() as session:
             try:
                 # Set content-type header if body is provided and header not already set
                 if body_content is not None and "Content-Type" not in request_headers:
-                    request_headers["Content-Type"] = provider.content_type
+                    request_headers["Content-Type"] = tool_provider.content_type
 
                 # Prepare body content based on content type
                 data = None
@@ -180,7 +208,7 @@ class HttpClientTransport(ClientTransportInterface):
                         data = body_content
 
                 # Make the request with the appropriate HTTP method
-                method = provider.http_method.lower()
+                method = tool_provider.http_method.lower()
                 request_method = getattr(session, method)
                 
                 async with request_method(
@@ -190,13 +218,14 @@ class HttpClientTransport(ClientTransportInterface):
                     auth=auth,
                     json=json_data,
                     data=data,
+                    cookies=cookies,
                     timeout=aiohttp.ClientTimeout(total=30.0)
                 ) as response:
                     response.raise_for_status()
                     return await response.json()
                     
             except aiohttp.ClientResponseError as e:
-                self._log(f"Error calling tool '{tool_name}' on provider '{provider.name}': {e}", error=True)
+                self._log(f"Error calling tool '{tool_name}' on provider '{tool_provider.name}': {e}", error=True)
                 raise
             except Exception as e:
                 self._log(f"Unexpected error calling tool '{tool_name}': {e}", error=True)

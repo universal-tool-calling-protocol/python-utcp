@@ -5,10 +5,12 @@ This transport reads tool definitions from local text files.
 """
 import json
 import logging
+import yaml
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 
 from utcp.client.client_transport_interface import ClientTransportInterface
+from utcp.client.openapi_converter import OpenApiConverter
 from utcp.shared.provider import Provider, TextProvider
 from utcp.shared.tool import Tool
 from utcp.shared.utcp_manual import UtcpManual
@@ -40,11 +42,11 @@ class TextTransport(ClientTransportInterface):
         """Log error messages."""
         logging.error(f"[TextTransport Error] {message}")
     
-    async def register_tool_provider(self, provider: Provider) -> List[Tool]:
+    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
         """Register a text provider and discover its tools.
         
         Args:
-            provider: The TextProvider to register
+            manual_provider: The TextProvider to register
             
         Returns:
             List of tools defined in the text file
@@ -54,75 +56,64 @@ class TextTransport(ClientTransportInterface):
             FileNotFoundError: If the specified file doesn't exist
             json.JSONDecodeError: If the file contains invalid JSON
         """
-        if not isinstance(provider, TextProvider):
+        if not isinstance(manual_provider, TextProvider):
             raise ValueError("TextTransport can only be used with TextProvider")
         
-        file_path = Path(provider.file_path)
+        file_path = Path(manual_provider.file_path)
         if not file_path.is_absolute() and self.base_path:
             file_path = Path(self.base_path) / file_path
         
         self._log_info(f"Reading tool definitions from '{file_path}'")
         
         try:
-            # Check if file exists
             if not file_path.exists():
                 raise FileNotFoundError(f"Tool definition file not found: {file_path}")
-            
-            # Read and parse the file
+
             with open(file_path, 'r', encoding='utf-8') as f:
                 file_content = f.read()
-            
-            # Parse as JSON
-            try:
-                data = json.loads(file_content)
-            except json.JSONDecodeError as e:
-                self._log_error(f"Invalid JSON in file '{file_path}': {e}")
-                raise
-            
-            # Validate structure and extract tools
-            if isinstance(data, dict):
-                if 'tools' in data:
-                    # Standard UTCP manual format
-                    utcp_manual = UtcpManual(**data)
-                    tools = utcp_manual.tools
-                elif 'name' in data and 'description' in data:
-                    # Single tool definition
-                    tools = [Tool(**data)]
-                else:
-                    self._log_error(f"Invalid file format in '{file_path}': expected 'tools' array or single tool definition")
-                    return []
-            elif isinstance(data, list):
-                # Array of tool definitions
-                tools = [Tool(**tool_data) for tool_data in data]
+
+            # Parse based on file extension
+            if file_path.suffix in ['.yaml', '.yml']:
+                data = yaml.safe_load(file_content)
             else:
-                self._log_error(f"Invalid file format in '{file_path}': expected object or array")
-                return []
-            
-            self._log_info(f"Successfully loaded {len(tools)} tools from '{file_path}'")
-            return tools
-            
+                data = json.loads(file_content)
+
+            # Check if the data is a UTCP manual, an OpenAPI spec, or neither
+            if isinstance(data, dict) and "version" in data and "tools" in data:
+                self._log_info(f"Detected UTCP manual in '{file_path}'.")
+                utcp_manual = UtcpManual(**data)
+            elif isinstance(data, dict) and ('openapi' in data or 'swagger' in data or 'paths' in data):
+                self._log_info(f"Assuming OpenAPI spec in '{file_path}'. Converting to UTCP manual.")
+                converter = OpenApiConverter(data, spec_url=file_path.as_uri(), provider_name=manual_provider.name)
+                utcp_manual = converter.convert()
+            else:
+                raise ValueError(f"File '{file_path}' is not a valid OpenAPI specification or UTCP manual")
+
+            self._log_info(f"Successfully loaded {len(utcp_manual.tools)} tools from '{file_path}'")
+            return utcp_manual.tools
+
         except FileNotFoundError:
             self._log_error(f"Tool definition file not found: {file_path}")
             raise
-        except json.JSONDecodeError:
-            # Already logged in the except block above
+        except (json.JSONDecodeError, yaml.YAMLError) as e:
+            self._log_error(f"Failed to parse file '{file_path}': {e}")
             raise
         except Exception as e:
             self._log_error(f"Unexpected error reading file '{file_path}': {e}")
             return []
     
-    async def deregister_tool_provider(self, provider: Provider) -> None:
+    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
         """Deregister a text provider.
         
         This is a no-op for text providers since they are stateless.
         
         Args:
-            provider: The provider to deregister
+            manual_provider: The provider to deregister
         """
-        if isinstance(provider, TextProvider):
-            self._log_info(f"Deregistering text provider '{provider.name}' (no-op)")
+        if isinstance(manual_provider, TextProvider):
+            self._log_info(f"Deregistering text provider '{manual_provider.name}' (no-op)")
     
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], provider: Provider) -> Any:
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
         """Call a tool on a text provider.
         
         For text providers, this returns the content of the text file.
@@ -139,10 +130,10 @@ class TextTransport(ClientTransportInterface):
             ValueError: If provider is not a TextProvider
             FileNotFoundError: If the specified file doesn't exist
         """
-        if not isinstance(provider, TextProvider):
+        if not isinstance(tool_provider, TextProvider):
             raise ValueError("TextTransport can only be used with TextProvider")
         
-        file_path = Path(provider.file_path)
+        file_path = Path(tool_provider.file_path)
         if not file_path.is_absolute() and self.base_path:
             file_path = Path(self.base_path) / file_path
             

@@ -10,5 +10,12 @@
         "name": "newsapi",
         "provider_type": "text",
         "file_path": "./newsapi_manual.json"
+    },
+    {
+        "name": "openai",
+        "provider_type": "http",
+        "http_method": "GET",
+        "url": "https://raw.githubusercontent.com/openai/openai-openapi/refs/heads/manual_spec/openapi.yaml",
+        "content_type": "application/x-yaml"
     }
 ]

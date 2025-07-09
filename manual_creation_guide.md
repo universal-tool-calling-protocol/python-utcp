@@ -391,7 +391,7 @@ Response (200 OK):
           }
         }
       },
-      "provider": {
+      "tool_provider": {
         "name": "weather_service",
         "provider_type": "http",
         "url": "https://api.example.com/v1/weather",

@@ -46,7 +46,7 @@ async def app():
                         }
                     },
                     "tags": [],
-                    "provider": execution_provider
+                    "tool_provider": execution_provider
                 }
             ]
         })

@@ -123,13 +123,13 @@ class CliTransport(ClientTransportInterface):
             self._log_error(f"Error executing command {' '.join(command)}: {e}")
             raise
     
-    async def register_tool_provider(self, provider: Provider) -> List[Tool]:
+    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
         """Register a CLI provider and discover its tools.
         
         Executes the provider's command_name and looks for UTCPManual JSON in the output.
         
         Args:
-            provider: The CliProvider to register
+            manual_provider: The CliProvider to register
             
         Returns:
             List of tools discovered from the CLI provider
@@ -137,19 +137,19 @@ class CliTransport(ClientTransportInterface):
         Raises:
             ValueError: If provider is not a CliProvider or command_name is not set
         """
-        if not isinstance(provider, CliProvider):
+        if not isinstance(manual_provider, CliProvider):
             raise ValueError("CliTransport can only be used with CliProvider")
         
-        if not provider.command_name:
-            raise ValueError(f"CliProvider '{provider.name}' must have command_name set")
+        if not manual_provider.command_name:
+            raise ValueError(f"CliProvider '{manual_provider.name}' must have command_name set")
         
-        self._log_info(f"Registering CLI provider '{provider.name}' with command '{provider.command_name}'")
+        self._log_info(f"Registering CLI provider '{manual_provider.name}' with command '{manual_provider.command_name}'")
         
         try:
-            env = self._prepare_environment(provider)
+            env = self._prepare_environment(manual_provider)
             # Parse command string into proper arguments
             # Use posix=False on Windows, posix=True on Unix-like systems
-            command = shlex.split(provider.command_name, posix=(os.name != 'nt'))
+            command = shlex.split(manual_provider.command_name, posix=(os.name != 'nt'))
             
             self._log_info(f"Executing command for tool discovery: {' '.join(command)}")
             
@@ -157,36 +157,36 @@ class CliTransport(ClientTransportInterface):
                 command,
                 env,
                 timeout=30.0,
-                working_dir=provider.working_dir
+                working_dir=manual_provider.working_dir
             )
             
             # Get output based on exit code
             output = stdout if return_code == 0 else stderr
             
             if not output.strip():
-                self._log_info(f"No output from command '{provider.command_name}'")
+                self._log_info(f"No output from command '{manual_provider.command_name}'")
                 return []
             
             # Try to find UTCPManual JSON within the output
-            tools = self._extract_utcp_manual_from_output(output, provider.name)
+            tools = self._extract_utcp_manual_from_output(output, manual_provider.name)
             
-            self._log_info(f"Discovered {len(tools)} tools from CLI provider '{provider.name}'")
+            self._log_info(f"Discovered {len(tools)} tools from CLI provider '{manual_provider.name}'")
             return tools
             
         except Exception as e:
-            self._log_error(f"Error discovering tools from CLI provider '{provider.name}': {e}")
+            self._log_error(f"Error discovering tools from CLI provider '{manual_provider.name}': {e}")
             return []
     
-    async def deregister_tool_provider(self, provider: Provider) -> None:
+    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
         """Deregister a CLI provider.
         
         This is a no-op for CLI providers since they are stateless.
         
         Args:
-            provider: The provider to deregister
+            manual_provider: The provider to deregister
         """
-        if isinstance(provider, CliProvider):
-            self._log_info(f"Deregistering CLI provider '{provider.name}' (no-op)")
+        if isinstance(manual_provider, CliProvider):
+            self._log_info(f"Deregistering CLI provider '{manual_provider.name}' (no-op)")
     
     def _format_arguments(self, arguments: Dict[str, Any]) -> List[str]:
         """Format arguments for command-line execution.
@@ -284,7 +284,7 @@ class CliTransport(ClientTransportInterface):
         
         return []
     
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], provider: Provider) -> Any:
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
         """Call a CLI tool.
         
         Executes the command specified by provider.command_name with the provided arguments.
@@ -292,7 +292,7 @@ class CliTransport(ClientTransportInterface):
         Args:
             tool_name: Name of the tool to call
             arguments: Arguments for the tool call
-            provider: The CliProvider containing the tool
+            tool_provider: The CliProvider containing the tool
             
         Returns:
             The output from the command execution based on exit code:
@@ -302,16 +302,16 @@ class CliTransport(ClientTransportInterface):
         Raises:
             ValueError: If provider is not a CliProvider or command_name is not set
         """
-        if not isinstance(provider, CliProvider):
+        if not isinstance(tool_provider, CliProvider):
             raise ValueError("CliTransport can only be used with CliProvider")
         
-        if not provider.command_name:
-            raise ValueError(f"CliProvider '{provider.name}' must have command_name set")
+        if not tool_provider.command_name:
+            raise ValueError(f"CliProvider '{tool_provider.name}' must have command_name set")
         
         # Build the command
         # Parse command string into proper arguments
         # Use posix=False on Windows, posix=True on Unix-like systems
-        command = shlex.split(provider.command_name, posix=(os.name != 'nt'))
+        command = shlex.split(tool_provider.command_name, posix=(os.name != 'nt'))
         
         # Add formatted arguments
         if arguments:
@@ -320,13 +320,13 @@ class CliTransport(ClientTransportInterface):
         self._log_info(f"Executing CLI tool '{tool_name}': {' '.join(command)}")
         
         try:
-            env = self._prepare_environment(provider)
+            env = self._prepare_environment(tool_provider)
             
             stdout, stderr, return_code = await self._execute_command(
                 command,
                 env,
                 timeout=60.0,  # Longer timeout for tool execution
-                working_dir=provider.working_dir
+                working_dir=tool_provider.working_dir
             )
             
             # Get output based on exit code

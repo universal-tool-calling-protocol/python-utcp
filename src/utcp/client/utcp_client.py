@@ -267,7 +267,7 @@ class UtcpClient(UtcpClientInterface):
         for tool in tools:
             if not tool.name.startswith(provider.name + "."):
                 tool.name = provider.name + "." + tool.name
-            print(tool.provider.url)
+            print(tool.tool_provider.url)
         await self.tool_repository.save_provider_with_tools(provider, tools)
         return tools
 
@@ -311,7 +311,7 @@ class UtcpClient(UtcpClientInterface):
         if tool is None:
             raise ValueError(f"Tool not found: {tool_name}")
 
-        tool_provider = tool.provider
+        tool_provider = tool.tool_provider
 
         tool_provider = self._substitute_provider_variables(tool_provider)
 

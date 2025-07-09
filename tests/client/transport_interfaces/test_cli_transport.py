@@ -56,7 +56,7 @@ def main():
                         }
                     },
                     "tags": ["utility"],
-                    "provider": {
+                    "tool_provider": {
                         "provider_type": "cli",
                         "name": "mock_cli_provider",
                         "command_name": sys.argv[0]
@@ -79,7 +79,7 @@ def main():
                         }
                     },
                     "tags": ["math"],
-                    "provider": {
+                    "tool_provider": {
                         "provider_type": "cli",
                         "name": "mock_cli_provider",
                         "command_name": sys.argv[0]
@@ -485,7 +485,7 @@ async def test_json_extraction_from_output():
     transport = CliTransport()
     
     # Test complete JSON output
-    output1 = '{"tools": [{"name": "test", "description": "Test tool", "provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}]}'
+    output1 = '{"tools": [{"name": "test", "description": "Test tool", "tool_provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}]}'
     tools1 = transport._extract_utcp_manual_from_output(output1, "test_provider")
     assert len(tools1) == 1
     assert tools1[0].name == "test"
@@ -493,7 +493,7 @@ async def test_json_extraction_from_output():
     # Test JSON within text output
     output2 = '''
     Starting CLI tool...
-    {"tools": [{"name": "embedded", "description": "Embedded tool", "provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}]}
+    {"tools": [{"name": "embedded", "description": "Embedded tool", "tool_provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}]}
     Process completed.
     '''
     tools2 = transport._extract_utcp_manual_from_output(output2, "test_provider")
@@ -501,7 +501,7 @@ async def test_json_extraction_from_output():
     assert tools2[0].name == "embedded"
     
     # Test single tool definition
-    output3 = '{"name": "single", "description": "Single tool", "provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}'
+    output3 = '{"name": "single", "description": "Single tool", "tool_provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}'
     tools3 = transport._extract_utcp_manual_from_output(output3, "test_provider")
     assert len(tools3) == 1
     assert tools3[0].name == "single"

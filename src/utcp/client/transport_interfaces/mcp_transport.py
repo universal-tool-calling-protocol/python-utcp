@@ -90,32 +90,32 @@ class MCPTransport:
         else:
             raise ValueError(f"Unsupported MCP transport: {server_config.transport}")
 
-    async def register_tool_provider(self, provider: MCPProvider) -> List[Tool]:
+    async def register_tool_provider(self, manual_provider: MCPProvider) -> List[Tool]:
         """Register an MCP provider and discover its tools."""
         all_tools = []
-        if provider.config and provider.config.mcpServers:
-            for server_name, server_config in provider.config.mcpServers.items():
+        if manual_provider.config and manual_provider.config.mcpServers:
+            for server_name, server_config in manual_provider.config.mcpServers.items():
                 try:
                     self._log(f"Discovering tools for server '{server_name}' via {server_config.transport}")
-                    tools = await self._list_tools_with_session(server_config, auth=provider.auth)
+                    tools = await self._list_tools_with_session(server_config, auth=manual_provider.auth)
                     self._log(f"Discovered {len(tools)} tools for server '{server_name}'")
                     all_tools.extend(tools)
                 except Exception as e:
                     self._log(f"Failed to discover tools for server '{server_name}': {e}", error=True)
         return all_tools
 
-    async def call_tool(self, tool_name: str, inputs: Dict[str, Any], provider: MCPProvider) -> Any:
+    async def call_tool(self, tool_name: str, inputs: Dict[str, Any], tool_provider: MCPProvider) -> Any:
         """Call a tool by creating a fresh session to the appropriate server."""
-        if not provider.config or not provider.config.mcpServers:
+        if not tool_provider.config or not tool_provider.config.mcpServers:
             raise ValueError(f"No server configuration found for tool '{tool_name}'")
         
         # Try each server until we find one that has the tool
-        for server_name, server_config in provider.config.mcpServers.items():
+        for server_name, server_config in tool_provider.config.mcpServers.items():
             try:
                 self._log(f"Attempting to call tool '{tool_name}' on server '{server_name}'")
                 
                 # First check if this server has the tool
-                tools = await self._list_tools_with_session(server_config, auth=provider.auth)
+                tools = await self._list_tools_with_session(server_config, auth=tool_provider.auth)
                 tool_names = [tool.name for tool in tools]
                 
                 if tool_name not in tool_names:
@@ -123,7 +123,7 @@ class MCPTransport:
                     continue  # Try next server
                 
                 # Call the tool
-                result = await self._call_tool_with_session(server_config, tool_name, inputs, auth=provider.auth)
+                result = await self._call_tool_with_session(server_config, tool_name, inputs, auth=tool_provider.auth)
                 
                 # Process the result
                 return self._process_tool_result(result, tool_name)
@@ -210,9 +210,9 @@ class MCPTransport:
         # Return as string
         return text
 
-    async def deregister_tool_provider(self, provider: MCPProvider) -> None:
+    async def deregister_tool_provider(self, manual_provider: MCPProvider) -> None:
         """Deregister an MCP provider. This is a no-op in session-per-operation mode."""
-        self._log(f"Deregistering provider '{provider.name}' (no-op in session-per-operation mode)")
+        self._log(f"Deregistering provider '{manual_provider.name}' (no-op in session-per-operation mode)")
         pass
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:

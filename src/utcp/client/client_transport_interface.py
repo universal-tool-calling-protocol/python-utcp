@@ -5,13 +5,13 @@ from utcp.shared.tool import Tool
 
 class ClientTransportInterface(ABC):
     @abstractmethod
-    async def register_tool_provider(self, provider: Provider) -> List[Tool]:
+    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
         pass
 
     @abstractmethod
-    async def deregister_tool_provider(self, provider: Provider) -> None:
+    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
         pass
 
     @abstractmethod
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], provider: Provider) -> Any:
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
         pass
