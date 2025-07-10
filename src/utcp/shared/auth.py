@@ -11,7 +11,7 @@ class ApiKeyAuth(BaseModel):
     auth_type: Literal["api_key"] = "api_key"
     api_key: str = Field(..., description="The API key for authentication. If it starts with '$', it is treated as an injected variable. This is the recommended way to provide API keys.")
     var_name: str = Field(
-        "X-Api-Key", description="The name of the header, query parameter, or cookie containing the API key."
+        "X-Api-Key", description="The name of the header, query parameter, cookie or other container for the API key."
     )
     location: Literal["header", "query", "cookie"] = Field(
         "header", description="Where to include the API key (header, query parameter, or cookie)."

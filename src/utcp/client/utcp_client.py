@@ -26,12 +26,12 @@ class UtcpClientInterface(ABC):
     Interface for a UTCP client.
     """
     @abstractmethod
-    def register_tool_provider(self, provider: Provider) -> List[Tool]:
+    def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
         """
         Register a tool provider and its tools.
 
         Args:
-            provider: The provider to register.
+            manual_provider: The provider to register.
 
         Returns:
             A list of tools associated with the provider.
@@ -245,12 +245,12 @@ class UtcpClient(UtcpClientInterface):
         processed_dict = self._replace_vars_in_obj(provider_dict, self.config)
         return provider.__class__(**processed_dict)
 
-    async def register_tool_provider(self, provider: Provider) -> List[Tool]:
+    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
         """
         Register a tool provider.
 
         Args:
-            provider: The provider to register.
+            manual_provider: The provider to register.
 
         Returns:
             A list of tools registered by the provider.
@@ -259,16 +259,16 @@ class UtcpClient(UtcpClientInterface):
             ValueError: If the provider type is not supported.
             UtcpVariableNotFound: If a variable is not found in the environment or in the configuration.
         """
-        provider = self._substitute_provider_variables(provider)
-        provider.name = provider.name.replace(".", "_")
-        if provider.provider_type not in self.transports:
-            raise ValueError(f"Provider type not supported: {provider.provider_type}")
-        tools: List[Tool] = await self.transports[provider.provider_type].register_tool_provider(provider)
+        manual_provider = self._substitute_provider_variables(manual_provider)
+        manual_provider.name = manual_provider.name.replace(".", "_")
+        if manual_provider.provider_type not in self.transports:
+            raise ValueError(f"Provider type not supported: {manual_provider.provider_type}")
+        tools: List[Tool] = await self.transports[manual_provider.provider_type].register_tool_provider(manual_provider)
         for tool in tools:
-            if not tool.name.startswith(provider.name + "."):
-                tool.name = provider.name + "." + tool.name
+            if not tool.name.startswith(manual_provider.name + "."):
+                tool.name = manual_provider.name + "." + tool.name
             print(tool.tool_provider.url)
-        await self.tool_repository.save_provider_with_tools(provider, tools)
+        await self.tool_repository.save_provider_with_tools(manual_provider, tools)
         return tools
 
     async def deregister_tool_provider(self, provider_name: str) -> None:
