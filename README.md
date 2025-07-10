@@ -183,7 +183,7 @@ Each tool is defined by the `Tool` model.
 *   `inputs`: A schema defining the input parameters for the tool. This follows a simplified JSON Schema format.
 *   `outputs`: A schema defining the output of the tool.
 *   `tags`: A list of tags for categorizing the tool making searching for relevant tools easier.
-*   `provider`: The `Provider` object that describes how to connect to and use the tool.
+*   `tool_provider`: The `ToolProvider` object that describes how to connect to and use the tool.
 
 ### Authentication
 
