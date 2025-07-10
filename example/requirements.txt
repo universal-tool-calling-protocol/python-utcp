@@ -1,0 +1,7 @@
+fastapi[standard]
+uvicorn
+httpx
+pydantic
+authlib
+python-dotenv
+openai

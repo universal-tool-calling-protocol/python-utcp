@@ -1,6 +1,7 @@
 from typing import Dict, Any, Optional, List, Literal, TypeAlias, Union
 from pydantic import BaseModel, Field
-
+from typing import Annotated
+import uuid
 from utcp.shared.auth import (
     Auth,
     ApiKeyAuth,
@@ -24,20 +25,19 @@ ProviderType: TypeAlias = Literal[
 ]
 
 class Provider(BaseModel):
-    name: str
+    name: str = uuid.uuid4().hex
     provider_type: ProviderType
-    startup_command: Optional[List[str]] = None  # For launching the provider if needed
 
 class HttpProvider(Provider):
     """Options specific to HTTP tools"""
 
     provider_type: Literal["http"] = "http"
-    http_method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"] = "POST"
+    http_method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"] = "GET"
     url: str
-    content_type: str = "application/json"
+    content_type: str = Field(default="application/json")
     auth: Optional[Auth] = None
     headers: Optional[Dict[str, str]] = None
-    body_field: Optional[str] = Field(default=None, description="The name of the single input field to be sent as the request body.")
+    body_field: Optional[str] = Field(default="body", description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers.")
 
 class SSEProvider(Provider):
@@ -71,8 +71,10 @@ class CliProvider(Provider):
     """Options specific to CLI tools"""
 
     provider_type: Literal["cli"] = "cli"
-    command_name: Optional[str] = None  # If None, will use the tool name
-    auth: Optional[Union[ApiKeyAuth, BasicAuth]] = None
+    command_name: str
+    env_vars: Optional[Dict[str, str]] = Field(default=None, description="Environment variables to set when executing the command")
+    working_dir: Optional[str] = Field(default=None, description="Working directory for command execution")
+    auth: None = None
 
 class WebSocketProvider(Provider):
     """Options specific to WebSocket tools"""
@@ -134,25 +136,34 @@ class WebRTCProvider(Provider):
     data_channel_name: str = "tools"
     auth: None = None
 
-class McpServer(BaseModel):
+class McpStdioServer(BaseModel):
+    """Configuration for an MCP server connected via stdio."""
+    transport: Literal["stdio"] = "stdio"
     command: str
     args: Optional[List[str]] = []
     env: Optional[Dict[str, str]] = {}
+
+class McpHttpServer(BaseModel):
+    """Configuration for an MCP server connected via streamable HTTP."""
+    transport: Literal["http"] = "http"
+    url: str
+
+McpServer: TypeAlias = Union[McpStdioServer, McpHttpServer]
 
 class McpConfig(BaseModel):
     mcpServers: Dict[str, McpServer]
 
 class MCPProvider(Provider):
-    """Options specific to MCP tools"""
+    """Options specific to MCP tools, supporting both stdio and HTTP transports."""
 
     provider_type: Literal["mcp"] = "mcp"
-    config: McpConfig  # The JSON configuration for the MCP server
-    auth: Optional[Auth] = None
+    config: McpConfig
+    auth: Optional[OAuth2Auth] = None
 
 
 class TextProvider(Provider):
     """Options specific to text file-based tools.
-    
+
     This provider reads tool definitions from a local text file. This is useful
     when the tool call is included in the startup command, but the result of the
     tool call produces a file at a static location that can be read from. It can
@@ -163,3 +174,21 @@ class TextProvider(Provider):
     provider_type: Literal["text"] = "text"
     file_path: str = Field(..., description="The path to the file containing the tool definitions.")
     auth: None = None
+
+ProviderUnion = Annotated[
+    Union[
+        HttpProvider,
+        SSEProvider,
+        StreamableHttpProvider,
+        CliProvider,
+        WebSocketProvider,
+        GRPCProvider,
+        GraphQLProvider,
+        TCPProvider,
+        UDPProvider,
+        WebRTCProvider,
+        MCPProvider,
+        TextProvider
+    ],
+    Field(discriminator="provider_type")
+]

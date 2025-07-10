@@ -1,8 +1,16 @@
-import pathlib
+from importlib.metadata import version, PackageNotFoundError
+import tomli
+from pathlib import Path
 
-# Get the path to the VERSION file
-version_path = pathlib.Path(__file__).parent / "VERSION"
-
-# Read the version from the file
-with open(version_path, "r") as f:
-    __version__ = f.read().strip()
+__version__ = "0.1.0"
+try:
+    __version__ = version("utcp")
+except PackageNotFoundError:
+    try:
+        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
+        if pyproject_path.exists():
+            with open(pyproject_path, "rb") as f:
+                pyproject_data = tomli.load(f)
+                __version__ = pyproject_data.get("project", {}).get("version", __version__)
+    except (ImportError, FileNotFoundError, KeyError):
+        pass
