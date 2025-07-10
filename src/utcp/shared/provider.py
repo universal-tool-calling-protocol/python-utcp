@@ -27,7 +27,6 @@ ProviderType: TypeAlias = Literal[
 class Provider(BaseModel):
     name: str = uuid.uuid4().hex
     provider_type: ProviderType
-    startup_command: Optional[List[str]] = None  # For launching the provider if needed
 
 class HttpProvider(Provider):
     """Options specific to HTTP tools"""
