@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 import os
 import json
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Union, Optional
 from utcp.shared.tool import Tool
@@ -178,31 +179,41 @@ class UtcpClient(UtcpClientInterface):
             raise ValueError(f"Providers file must contain a JSON array at the root level: {providers_file_path}")
         
         registered_providers = []
+        # Create tasks for parallel provider registration
+        tasks = []
         for provider_data in providers_data:
-            try:
-                # Determine provider type from provider_type field
-                provider_type = provider_data.get('provider_type')
-                if not provider_type:
-                    print(f"Warning: Provider entry is missing required 'provider_type' field, skipping: {provider_data}")
-                    continue
-                
-                provider_class = provider_classes.get(provider_type)
-                if not provider_class:
-                    print(f"Warning: Unsupported provider type: {provider_type}, skipping")
-                    continue
-                
-                # Create provider object with Pydantic validation
-                provider = provider_class.model_validate(provider_data)
-                
-                # Apply variable substitution and register provider
-                provider = self._substitute_provider_variables(provider)
-                tools = await self.register_tool_provider(provider)
-                registered_providers.append(provider)
-                print(f"Successfully registered provider '{provider.name}' with {len(tools)} tools")
-            except Exception as e:
-                # Log the error but continue with other providers
-                provider_name = provider_data.get('name', 'unknown')
-                print(f"Error registering provider '{provider_name}': {str(e)}")
+            async def register_single_provider(provider_data=provider_data):
+                try:
+                    # Determine provider type from provider_type field
+                    provider_type = provider_data.get('provider_type')
+                    if not provider_type:
+                        print(f"Warning: Provider entry is missing required 'provider_type' field, skipping: {provider_data}")
+                        return None
+                    
+                    provider_class = provider_classes.get(provider_type)
+                    if not provider_class:
+                        print(f"Warning: Unsupported provider type: {provider_type}, skipping")
+                        return None
+                    
+                    # Create provider object with Pydantic validation
+                    provider = provider_class.model_validate(provider_data)
+                    
+                    # Apply variable substitution and register provider
+                    provider = self._substitute_provider_variables(provider)
+                    tools = await self.register_tool_provider(provider)
+                    print(f"Successfully registered provider '{provider.name}' with {len(tools)} tools")
+                    return provider
+                except Exception as e:
+                    # Log the error but continue with other providers
+                    provider_name = provider_data.get('name', 'unknown')
+                    print(f"Error registering provider '{provider_name}': {str(e)}")
+                    return None
+            
+            tasks.append(register_single_provider())
+        
+        # Wait for all tasks to complete and collect results
+        results = await asyncio.gather(*tasks)
+        registered_providers = [p for p in results if p is not None]
                 
         return registered_providers
             
@@ -267,7 +278,6 @@ class UtcpClient(UtcpClientInterface):
         for tool in tools:
             if not tool.name.startswith(manual_provider.name + "."):
                 tool.name = manual_provider.name + "." + tool.name
-            print(tool.tool_provider.url)
         await self.tool_repository.save_provider_with_tools(manual_provider, tools)
         return tools
 
