@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "utcp"
-version = "0.1.0"
+version = "0.1.2"
 authors = [
   { name = "Razvan-Ion Radulescu" },
   { name = "Andrei-Stefan Ghiurtu" },
@@ -21,6 +21,7 @@ dependencies = [
     "tomli>=2.0",
     "aiohttp>=3.8",
     "mcp>=1.0",
+    "pyyaml>=6.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -41,7 +42,6 @@ dev = [
     "coverage",
     "fastapi",
     "uvicorn",
-    "pyyaml",
     "twine",
 ]
 
