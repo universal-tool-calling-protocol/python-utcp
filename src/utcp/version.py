@@ -2,7 +2,7 @@ from importlib.metadata import version, PackageNotFoundError
 import tomli
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 try:
     __version__ = version("utcp")
 except PackageNotFoundError:
