@@ -4,6 +4,7 @@ python-dotenv
 tomli
 aiohttp
 mcp
+gql
 
 build
 
