@@ -141,7 +141,7 @@ async def main():
                         {"role": "system", "content": system_prompt},
                         *conversation_history,
                         # Provide the tool's output as a new user message for the model to process
-                        {"role": "user", "content": f"Tool output: {tool_output}"}
+                        {"role": "user", "content": f"Tool output: {tool_output}\n Please use the tool output to answer the users request."}
                     ]
 
                     final_response = await get_openai_response(follow_up_messages)

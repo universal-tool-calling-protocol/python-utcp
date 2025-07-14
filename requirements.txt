@@ -5,9 +5,9 @@ tomli
 aiohttp
 mcp
 gql
+pyyaml
 
 build
-
 pytest
 pytest-asyncio
 pytest-aiohttp
@@ -15,4 +15,3 @@ pytest-cov
 coverage
 fastapi
 uvicorn
-pyyaml
