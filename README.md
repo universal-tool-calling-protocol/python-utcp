@@ -544,6 +544,7 @@ for tool in tools:
 ## Main contributors
 - Razvan-Ion Radulescu (razvan.radulescu@bevel.software, www.bevel.software)
 - Andrei-Stefan Ghiurtu (https://www.linkedin.com/in/andrei-stefan-ghiurtu/)
+- Ulugbek Isroilov (https://www.linkedin.com/in/ulugbekisroilov/)
 
 ## Distribution Team
 - Juan Viera Garcia (juan@bevel.software, www.bevel.software)
