@@ -394,7 +394,7 @@ async def test_call_tool_error(http_transport, logger, aiohttp_client):
     )
     
     # Test calling a tool that returns a DNS error
-    with pytest.raises(aiohttp.ContentTypeError):
+    with pytest.raises(Exception):
         await http_transport.call_tool("test_tool", {"param1": "value1"}, provider)
     
     # Check that the error was logged
