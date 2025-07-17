@@ -4,8 +4,9 @@ from utcp.shared.tool import Tool
 from utcp.client.tool_repository import ToolRepository
 
 class InMemToolRepository(ToolRepository):
-    tools: List[Tool] = []
-    tool_per_provider: Dict[str, Tuple[Provider, List[Tool]]] = {}
+    def __init__(self):
+        self.tools: List[Tool] = []
+        self.tool_per_provider: Dict[str, Tuple[Provider, List[Tool]]] = {}
 
     async def save_provider_with_tools(self, provider: Provider, tools: List[Tool]) -> None:
         self.tools.extend(tools)
