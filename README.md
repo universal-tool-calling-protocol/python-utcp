@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/universal-tool-calling-protocol-python-utcp-badge.png)](https://mseep.ai/app/universal-tool-calling-protocol-python-utcp)
+
 # Universal Tool Calling Protocol (UTCP)
 
 ## Introduction
