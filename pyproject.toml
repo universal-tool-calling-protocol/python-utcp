@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "utcp"
-version = "0.1.3"
+version = "0.1.4"
 authors = [
   { name = "Razvan-Ion Radulescu" },
   { name = "Andrei-Stefan Ghiurtu" },
   { name = "Juan Viera Garcia" },
-  { name = "Ali Raza" }
+  { name = "Ali Raza" },
+  { name = "Ulugbek Isroilov" }
 ]
 description = "Universal Tool Calling Protocol (UTCP) client library for Python"
 readme = "README.md"
@@ -22,6 +23,7 @@ dependencies = [
     "aiohttp>=3.8",
     "mcp>=1.0",
     "pyyaml>=6.0",
+    "gql>=3.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -29,8 +31,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-license = "MPL-2.0"
-license-files = ["LICEN[CS]E*"]
+license = {text = "MPL-2.0"}
 
 [project.optional-dependencies]
 dev = [
