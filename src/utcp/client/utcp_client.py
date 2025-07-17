@@ -98,7 +98,7 @@ class UtcpClient(UtcpClientInterface):
         self.config = config
 
     @classmethod
-    async def create(cls, config: Optional[Union[Dict[str, Any], UtcpClientConfig]] = None, tool_repository: ToolRepository = InMemToolRepository(), search_strategy: Optional[ToolSearchStrategy] = None) -> 'UtcpClient':
+    async def create(cls, config: Optional[Union[Dict[str, Any], UtcpClientConfig]] = None, tool_repository: Optional[ToolRepository] = None, search_strategy: Optional[ToolSearchStrategy] = None) -> 'UtcpClient':
         """
         Create a new instance of UtcpClient.
         
@@ -110,6 +110,8 @@ class UtcpClient(UtcpClientInterface):
         Returns:
             A new instance of UtcpClient.
         """
+        if tool_repository is None:
+            tool_repository = InMemToolRepository()
         if search_strategy is None:
             search_strategy = TagSearchStrategy(tool_repository)
         if config is None:
