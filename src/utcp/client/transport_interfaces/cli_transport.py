@@ -168,7 +168,7 @@ class CliTransport(ClientTransportInterface):
                 return []
             
             # Try to find UTCPManual JSON within the output
-            tools = self._extract_utcp_manual_from_output(output, manual_provider.name)
+            tools = self._extract_utcp_manual_from_output(output, manual_provider.name, manual_provider)
             
             self._log_info(f"Discovered {len(tools)} tools from CLI provider '{manual_provider.name}'")
             return tools
@@ -211,7 +211,7 @@ class CliTransport(ClientTransportInterface):
                 args.extend([f"--{key}", str(value)])
         return args
     
-    def _extract_utcp_manual_from_output(self, output: str, provider_name: str) -> List[Tool]:
+    def _extract_utcp_manual_from_output(self, output: str, provider_name: str, provider: CliProvider) -> List[Tool]:
         """Extract UTCPManual JSON from command output.
         
         Searches for JSON content that matches UTCPManual format within the output text.
@@ -219,6 +219,7 @@ class CliTransport(ClientTransportInterface):
         Args:
             output: The command output to search
             provider_name: Name of the provider for logging
+            provider: The CLI provider instance
             
         Returns:
             List of tools found in the output
@@ -228,7 +229,7 @@ class CliTransport(ClientTransportInterface):
         # Try to parse the entire output as JSON first
         try:
             data = json.loads(output.strip())
-            tools = self._parse_tool_data(data, provider_name)
+            tools = self._parse_tool_data(data, provider_name, provider)
             if tools:
                 return tools
         except json.JSONDecodeError:
@@ -241,19 +242,20 @@ class CliTransport(ClientTransportInterface):
             if line.startswith('{') and line.endswith('}'):
                 try:
                     data = json.loads(line)
-                    found_tools = self._parse_tool_data(data, provider_name)
+                    found_tools = self._parse_tool_data(data, provider_name, provider)
                     tools.extend(found_tools)
                 except json.JSONDecodeError:
                     continue
         
         return tools
     
-    def _parse_tool_data(self, data: Any, provider_name: str) -> List[Tool]:
+    def _parse_tool_data(self, data: Any, provider_name: str, provider: CliProvider) -> List[Tool]:
         """Parse tool data from JSON.
         
         Args:
             data: JSON data to parse
             provider_name: Name of the provider for logging
+            provider: The CLI provider instance
             
         Returns:
             List of tools parsed from the data
@@ -262,14 +264,24 @@ class CliTransport(ClientTransportInterface):
             if 'tools' in data:
                 # Standard UTCP manual format
                 try:
-                    utcp_manual = UtcpManual(**data)
-                    return utcp_manual.tools
+                    # Parse the tools from the UTCP manual and add provider reference
+                    tools_data = data.get('tools', [])
+                    tools = []
+                    for tool_data in tools_data:
+                        # Add tool_provider field if not present
+                        if 'tool_provider' not in tool_data:
+                            tool_data['tool_provider'] = provider
+                        tools.append(Tool(**tool_data))
+                    return tools
                 except Exception as e:
                     self._log_error(f"Invalid UTCP manual format from provider '{provider_name}': {e}")
                     return []
             elif 'name' in data and 'description' in data:
                 # Single tool definition
                 try:
+                    # Add tool_provider field if not present
+                    if 'tool_provider' not in data:
+                        data['tool_provider'] = provider
                     return [Tool(**data)]
                 except Exception as e:
                     self._log_error(f"Invalid tool definition from provider '{provider_name}': {e}")
@@ -277,7 +289,13 @@ class CliTransport(ClientTransportInterface):
         elif isinstance(data, list):
             # Array of tool definitions
             try:
-                return [Tool(**tool_data) for tool_data in data]
+                tools = []
+                for tool_data in data:
+                    # Add tool_provider field if not present
+                    if 'tool_provider' not in tool_data:
+                        tool_data['tool_provider'] = provider
+                    tools.append(Tool(**tool_data))
+                return tools
             except Exception as e:
                 self._log_error(f"Invalid tool array from provider '{provider_name}': {e}")
                 return []
