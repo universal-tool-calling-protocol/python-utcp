@@ -12,9 +12,6 @@ class UtcpGcpSecretManager(UtcpVariablesConfig):
         self.secrets_path = f"projects/{project_id}/secrets"
         self.client = secretmanager.SecretManagerServiceClient()
 
-    def load(self) -> dict:
-        return {}
-
     def get(self, key: str, version: str = "latest") -> Optional[str]:
         """Get a specific secret by key."""
         request = {"name": f"{self.secrets_path}/{key}/versions/{version}"}
