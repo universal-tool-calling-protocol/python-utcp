@@ -10,6 +10,11 @@ In contrast to other protocols like MCP, UTCP places a strong emphasis on:
 *   **Interoperability**: With support for a wide range of provider types (including HTTP, WebSockets, gRPC, and even CLI tools), UTCP can integrate with almost any existing service or infrastructure.
 *   **Ease of Use**: The protocol is built on simple, well-defined Pydantic models, making it easy for developers to implement and use.
 
+
+![MCP vs. UTCP](https://github.com/user-attachments/assets/3cadfc19-8eea-4467-b606-66e580b89444)
+
+
+
 ## Usage Examples
 
 These examples illustrate the core concepts of the UTCP client and server. They are not designed to be a single, runnable example.
@@ -539,13 +544,4 @@ for tool in tools:
 4. `python -m build`
 5. `pip install dist/utcp-<version>.tar.gz` (e.g. `pip install dist/utcp-1.0.0.tar.gz`)
 
-# Contributors
-
-## Main contributors
-- Razvan-Ion Radulescu (razvan.radulescu@bevel.software, www.bevel.software)
-- Andrei-Stefan Ghiurtu (https://www.linkedin.com/in/andrei-stefan-ghiurtu/)
-- Ulugbek Isroilov (https://www.linkedin.com/in/ulugbekisroilov/)
-
-## Distribution Team
-- Juan Viera Garcia (juan@bevel.software, www.bevel.software)
-- Ali Raza (ali.raza@bevel.software, www.bevel.software)
+# [Contributors](https://www.utcp.io/about)
