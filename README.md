@@ -10,6 +10,11 @@ In contrast to other protocols like MCP, UTCP places a strong emphasis on:
 *   **Interoperability**: With support for a wide range of provider types (including HTTP, WebSockets, gRPC, and even CLI tools), UTCP can integrate with almost any existing service or infrastructure.
 *   **Ease of Use**: The protocol is built on simple, well-defined Pydantic models, making it easy for developers to implement and use.
 
+
+![MCP vs. UTCP](https://github.com/user-attachments/assets/3cadfc19-8eea-4467-b606-66e580b89444)
+
+
+
 ## Usage Examples
 
 These examples illustrate the core concepts of the UTCP client and server. They are not designed to be a single, runnable example.
