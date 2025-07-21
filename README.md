@@ -539,13 +539,4 @@ for tool in tools:
 4. `python -m build`
 5. `pip install dist/utcp-<version>.tar.gz` (e.g. `pip install dist/utcp-1.0.0.tar.gz`)
 
-# Contributors
-
-## Main contributors
-- Razvan-Ion Radulescu (razvan.radulescu@bevel.software, www.bevel.software)
-- Andrei-Stefan Ghiurtu (https://www.linkedin.com/in/andrei-stefan-ghiurtu/)
-- Ulugbek Isroilov (https://www.linkedin.com/in/ulugbekisroilov/)
-
-## Distribution Team
-- Juan Viera Garcia (juan@bevel.software, www.bevel.software)
-- Ali Raza (ali.raza@bevel.software, www.bevel.software)
+# [Contributors](https://www.utcp.io/about)
