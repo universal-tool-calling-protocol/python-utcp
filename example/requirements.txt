@@ -5,3 +5,4 @@ pydantic
 authlib
 python-dotenv
 openai
+boto3>=1.28.0
