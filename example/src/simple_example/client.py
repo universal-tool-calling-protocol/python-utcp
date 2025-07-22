@@ -1,11 +1,15 @@
 import asyncio
 from os import getcwd
 from utcp.client.utcp_client import UtcpClient
+from utcp.client.utcp_client_config import UtcpClientConfig
 
 
 async def main():
     client: UtcpClient = await UtcpClient.create(
-        config={"providers_file_path": "./providers.json"}
+        config=UtcpClientConfig(
+            providers_file_path=str(getcwd() + "/providers.json"),
+            load_variables_from=[]
+        )
     )
 
     # List all available tools
