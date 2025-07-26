@@ -332,4 +332,4 @@ class UtcpClient(UtcpClientInterface):
         return await self.transports[tool_provider.provider_type].call_tool(tool_name, arguments, tool_provider)
 
     def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
-        return self.search_strategy.search_tools(query, limit)
+        return await self.search_strategy.search_tools(query, limit) 
