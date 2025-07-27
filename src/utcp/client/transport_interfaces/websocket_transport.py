@@ -171,13 +171,26 @@ class WebSocketClientTransport(ClientTransportInterface):
                                     # Parse tools from response
                                     tools = []
                                     for tool_data in response.get("tools", []):
+                                        # Create individual provider for each tool
+                                        # This allows tools to have different endpoints, auth, etc.
+                                        tool_provider = WebSocketProvider(
+                                            name=f"{manual_provider.name}_{tool_data['name']}",
+                                            url=tool_data.get("url", manual_provider.url),
+                                            protocol=tool_data.get("protocol", manual_provider.protocol),
+                                            keep_alive=tool_data.get("keep_alive", manual_provider.keep_alive),
+                                            auth=tool_data.get("auth", manual_provider.auth),
+                                            headers=tool_data.get("headers", manual_provider.headers),
+                                            header_fields=tool_data.get("header_fields", manual_provider.header_fields),
+                                            message_format=tool_data.get("message_format", manual_provider.message_format)
+                                        )
+                                        
                                         tool = Tool(
                                             name=tool_data["name"],
                                             description=tool_data.get("description", ""),
                                             inputs=ToolInputOutputSchema(**tool_data.get("inputs", {})),
                                             outputs=ToolInputOutputSchema(**tool_data.get("outputs", {})),
                                             tags=tool_data.get("tags", []),
-                                            tool_provider=manual_provider
+                                            tool_provider=tool_provider
                                         )
                                         tools.append(tool)
                                     
@@ -214,7 +227,7 @@ class WebSocketClientTransport(ClientTransportInterface):
         """
         Call a tool via WebSocket.
         
-        Sends a JSON message:
+        The format can be customized per tool, but defaults to:
         {"type": "call_tool", "request_id": "unique_id", "tool_name": "tool", "arguments": {...}}
         
         Expected response:
@@ -227,14 +240,37 @@ class WebSocketClientTransport(ClientTransportInterface):
         
         ws = await self._get_connection(tool_provider)
         
-        # Prepare tool call request
+        # Prepare tool call request - allow for custom format via tool_provider config
         request_id = f"call_{tool_name}_{id(arguments)}"
-        call_request = {
-            "type": "call_tool",
-            "request_id": request_id,
-            "tool_name": tool_name,
-            "arguments": arguments
-        }
+        
+        # Check if tool_provider specifies a custom message format
+        if tool_provider.message_format:
+            # Allow tools to define their own message format
+            # This supports existing WebSocket services without modification
+            try:
+                formatted_message = tool_provider.message_format.format(
+                    tool_name=tool_name,
+                    arguments=json.dumps(arguments),
+                    request_id=request_id
+                )
+                call_request = json.loads(formatted_message)
+            except (KeyError, json.JSONDecodeError) as e:
+                self._log(f"Error formatting custom message: {e}", error=True)
+                # Fall back to default format
+                call_request = {
+                    "type": "call_tool",
+                    "request_id": request_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments
+                }
+        else:
+            # Default UTCP format
+            call_request = {
+                "type": "call_tool",
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "arguments": arguments
+            }
         
         # Add any header fields to the request
         if tool_provider.header_fields and arguments:

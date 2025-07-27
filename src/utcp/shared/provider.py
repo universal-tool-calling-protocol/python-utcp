@@ -86,6 +86,7 @@ class WebSocketProvider(Provider):
     auth: Optional[Auth] = None
     headers: Optional[Dict[str, str]] = None
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers for the initial connection.")
+    message_format: Optional[str] = Field(default=None, description="Custom message format template for tool calls. Supports {tool_name}, {arguments}, {request_id} placeholders.")
 
 class GRPCProvider(Provider):
     """Options specific to gRPC tools"""
