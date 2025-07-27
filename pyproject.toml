@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "utcp"
-version = "0.1.7"
+version = "0.1.8"
 authors = [
   { name = "Razvan-Ion Radulescu" },
   { name = "Andrei-Stefan Ghiurtu" },
