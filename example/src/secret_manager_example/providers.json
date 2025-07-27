@@ -1,9 +1,0 @@
-[
-    {
-        "name": "test_provider",
-        "provider_type": "http",
-        "http_method": "GET",
-        "type": "utcp",
-        "url": "http://localhost:8080/utcp"
-    }
-]
