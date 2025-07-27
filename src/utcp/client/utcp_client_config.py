@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Literal
+from typing import Optional, List, Dict, Literal, TypedDict
 from dotenv import dotenv_values
 
 class UtcpVariableNotFound(Exception):
@@ -14,14 +14,21 @@ class UtcpVariablesConfig(BaseModel, ABC):
     type: Literal["dotenv"] = "dotenv"
 
     @abstractmethod
+    def load(self) -> Dict[str, str]:
+        pass
+
+    @abstractmethod
     def get(self, key: str) -> Optional[str]:
         pass
 
 class UtcpDotEnv(UtcpVariablesConfig):
     env_file_path: str
 
+    def load(self) -> Dict[str, str]:
+        return dotenv_values(self.env_file_path)
+
     def get(self, key: str) -> Optional[str]:
-        return dotenv_values(self.env_file_path).get(key)
+        return self.load().get(key)
 
 class UtcpClientConfig(BaseModel):
     variables: Optional[Dict[str, str]] = Field(default_factory=dict)
