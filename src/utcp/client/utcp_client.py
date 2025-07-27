@@ -14,6 +14,7 @@ from utcp.client.transport_interfaces.streamable_http_transport import Streamabl
 from utcp.client.transport_interfaces.mcp_transport import MCPTransport
 from utcp.client.transport_interfaces.text_transport import TextTransport
 from utcp.client.transport_interfaces.graphql_transport import GraphQLClientTransport
+from utcp.client.transport_interfaces.websocket_transport import WebSocketClientTransport
 from utcp.client.utcp_client_config import UtcpClientConfig, UtcpVariableNotFound
 from utcp.client.tool_repository import ToolRepository
 from utcp.client.tool_repositories.in_mem_tool_repository import InMemToolRepository
@@ -87,6 +88,7 @@ class UtcpClient(UtcpClientInterface):
         "mcp": MCPTransport(),
         "text": TextTransport(),
         "graphql": GraphQLClientTransport(),
+        "websocket": WebSocketClientTransport(),
     }
 
     def __init__(self, config: UtcpClientConfig, tool_repository: ToolRepository, search_strategy: ToolSearchStrategy):

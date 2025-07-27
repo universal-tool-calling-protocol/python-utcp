@@ -240,7 +240,7 @@ Providers are at the heart of UTCP's flexibility. They define the communication 
 *   `sse`: Server-Sent Events
 *   `http_stream`: HTTP Chunked Transfer Encoding
 *   `cli`: Command Line Interface
-*   `websocket`: WebSocket bidirectional connection (work in progress)
+*   `websocket`: WebSocket bidirectional connection
 *   `grpc`: gRPC (Google Remote Procedure Call) (work in progress)
 *   `graphql`: GraphQL query language (work in progress)
 *   `tcp`: Raw TCP socket (work in progress)
@@ -327,15 +327,23 @@ For wrapping local command-line tools.
 }
 ```
 
-### WebSocket Provider (work in progress)
+### WebSocket Provider
 
-For tools that communicate over a WebSocket connection. Tool discovery may need to be handled via a separate HTTP endpoint.
+For tools that communicate over a WebSocket connection providing real-time bidirectional communication. Tool discovery is handled via the WebSocket connection using UTCP protocol messages.
 
 ```json
 {
-  "name": "realtime_chat_service",
-  "provider_type": "websocket",
-  "url": "wss://api.example.com/socket"
+  "name": "realtime_tools",
+  "provider_type": "websocket", 
+  "url": "wss://api.example.com/ws",
+  "auth": {
+    "auth_type": "api_key",
+    "api_key": "your-api-key",
+    "var_name": "X-API-Key",
+    "location": "header"
+  },
+  "keep_alive": true,
+  "protocol": "utcp-v1"
 }
 ```
 
