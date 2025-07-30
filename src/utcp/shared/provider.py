@@ -119,11 +119,26 @@ class TCPProvider(Provider):
     auth: None = None
 
 class UDPProvider(Provider):
-    """Options specific to UDP socket tools"""
+    """Options specific to UDP socket tools
+    
+    For request data handling:
+    - If request_data_format is 'json', arguments will be formatted as a JSON object and sent
+    - If request_data_format is 'text', the request_data_template can contain placeholders
+      in the format UTCP_ARG_argname_UTCP_ARG which will be replaced with the value of 
+      the argument named 'argname'
+    
+    For response data handling:
+    - If response_byte_format is None, raw bytes will be returned
+    - If response_byte_format is an encoding (e.g., 'utf-8'), bytes will be decoded to text
+    """
 
     provider_type: Literal["udp"] = "udp"
     host: str
     port: int
+    number_of_response_datagrams: int = 0
+    request_data_format: Literal["json", "text"] = "json"
+    request_data_template: Optional[str] = None
+    response_byte_format: Optional[str] = Field(default="utf-8", description="Encoding to decode response bytes. If None, returns raw bytes.")
     timeout: int = 30000
     auth: None = None
 

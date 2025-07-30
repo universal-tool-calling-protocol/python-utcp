@@ -244,7 +244,7 @@ Providers are at the heart of UTCP's flexibility. They define the communication 
 *   `grpc`: gRPC (Google Remote Procedure Call) (work in progress)
 *   `graphql`: GraphQL query language (work in progress)
 *   `tcp`: Raw TCP socket (work in progress)
-*   `udp`: User Datagram Protocol (work in progress)
+*   `udp`: User Datagram Protocol
 *   `webrtc`: Web Real-Time Communication (work in progress)
 *   `mcp`: Model Context Protocol (for interoperability)
 *   `text`: Local text file
@@ -381,16 +381,44 @@ For raw TCP socket communication.
 }
 ```
 
-### UDP Provider (work in progress)
+### UDP Provider
 
-For UDP socket communication.
+For UDP socket communication. Supports both JSON and text-based request formats with configurable response handling.
 
 ```json
 {
   "name": "udp_telemetry_service",
   "provider_type": "udp",
   "host": "localhost",
-  "port": 54321
+  "port": 54321,
+  "timeout": 30000,
+  "request_data_format": "json",
+  "number_of_response_datagrams": 1,
+  "response_byte_format": "utf-8"
+}
+```
+
+**Key UDP Provider Fields:**
+
+* `host`: The hostname or IP address of the UDP server
+* `port`: The UDP port number
+* `timeout`: Timeout in milliseconds (default: 30000)
+* `request_data_format`: Either `"json"` for structured data or `"text"` for template-based formatting (default: `"json"`)
+* `request_data_template`: Template string for text format with `UTCP_ARG_argname_UTCP_ARG` placeholders
+* `number_of_response_datagrams`: Number of UDP response packets to expect (default: 0 for no response)
+* `response_byte_format`: Encoding for response bytes - `"utf-8"`, `"ascii"`, etc., or `null` for raw bytes (default: `"utf-8"`)
+
+**Text Format Example:**
+```json
+{
+  "name": "legacy_udp_service",
+  "provider_type": "udp",
+  "host": "192.168.1.100",
+  "port": 9999,
+  "request_data_format": "text",
+  "request_data_template": "CMD:UTCP_ARG_command_UTCP_ARG;VALUE:UTCP_ARG_value_UTCP_ARG",
+  "number_of_response_datagrams": 2,
+  "response_byte_format": "ascii"
 }
 ```
 
