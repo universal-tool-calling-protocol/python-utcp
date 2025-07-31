@@ -77,16 +77,28 @@ class CliProvider(Provider):
     auth: None = None
 
 class WebSocketProvider(Provider):
-    """Options specific to WebSocket tools"""
+    """Options specific to WebSocket tools
+    
+    For request data handling:
+    - If request_data_format is 'json', arguments will be formatted as a JSON object and sent
+    - If request_data_format is 'text', the request_data_template can contain placeholders
+      in the format UTCP_ARG_argname_UTCP_ARG which will be replaced with the value of 
+      the argument named 'argname'
+    - If message_format is provided, it supports {tool_name}, {arguments}, {request_id} placeholders
+      for maximum flexibility with existing WebSocket services
+    """
 
     provider_type: Literal["websocket"] = "websocket"
     url: str
     protocol: Optional[str] = None
     keep_alive: bool = True
+    request_data_format: Literal["json", "text"] = "json"
+    request_data_template: Optional[str] = None
+    message_format: Optional[str] = Field(default=None, description="Custom message format template for tool calls. Supports {tool_name}, {arguments}, {request_id} placeholders.")
+    timeout: int = 30000
     auth: Optional[Auth] = None
     headers: Optional[Dict[str, str]] = None
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers for the initial connection.")
-    message_format: Optional[str] = Field(default=None, description="Custom message format template for tool calls. Supports {tool_name}, {arguments}, {request_id} placeholders.")
 
 class GRPCProvider(Provider):
     """Options specific to gRPC tools"""
@@ -111,20 +123,82 @@ class GraphQLProvider(Provider):
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers for the initial connection.")
 
 class TCPProvider(Provider):
-    """Options specific to raw TCP socket tools"""
+    """Options specific to raw TCP socket tools
+    
+    For request data handling:
+    - If request_data_format is 'json', arguments will be formatted as a JSON object and sent
+    - If request_data_format is 'text', the request_data_template can contain placeholders
+      in the format UTCP_ARG_argname_UTCP_ARG which will be replaced with the value of 
+      the argument named 'argname'
+    For response data handling:
+    - If response_byte_format is None, raw bytes will be returned
+    - If response_byte_format is an encoding (e.g., 'utf-8'), bytes will be decoded to text
+    For TCP stream framing (choose one):
+    1. Length-prefix framing: Set framing_strategy='length_prefix' and length_prefix_bytes
+    2. Delimiter-based framing: Set framing_strategy='delimiter' and message_delimiter  
+    3. Fixed-length framing: Set framing_strategy='fixed_length' and fixed_message_length
+    4. Stream-based: Set framing_strategy='stream' to read until connection closes
+    """
 
     provider_type: Literal["tcp"] = "tcp"
     host: str
     port: int
+    request_data_format: Literal["json", "text"] = "json"
+    request_data_template: Optional[str] = None
+    response_byte_format: Optional[str] = Field(default="utf-8", description="Encoding to decode response bytes. If None, returns raw bytes.")
+    # TCP Framing Strategy
+    framing_strategy: Literal["length_prefix", "delimiter", "fixed_length", "stream"] = Field(
+        default="stream",
+        description="Strategy for framing TCP messages"
+    )
+    # Length-prefix framing options
+    length_prefix_bytes: int = Field(
+        default=4,
+        description="Number of bytes for length prefix (1, 2, 4, or 8). Used with 'length_prefix' framing."
+    )
+    length_prefix_endian: Literal["big", "little"] = Field(
+        default="big",
+        description="Byte order for length prefix. Used with 'length_prefix' framing."
+    )
+    # Delimiter-based framing options
+    message_delimiter: str = Field(
+        default='\\x00',
+        description="Delimiter to detect end of TCP response (e.g., '\\n', '\\r\\n', '\\x00'). Used with 'delimiter' framing."
+    )
+    # Fixed-length framing options
+    fixed_message_length: Optional[int] = Field(
+        default=None,
+        description="Fixed length of each message in bytes. Used with 'fixed_length' framing."
+    )
+    # Stream-based options
+    max_response_size: int = Field(
+        default=65536,
+        description="Maximum bytes to read from TCP stream. Used with 'stream' framing."
+    )
     timeout: int = 30000
     auth: None = None
 
 class UDPProvider(Provider):
-    """Options specific to UDP socket tools"""
+    """Options specific to UDP socket tools
+    
+    For request data handling:
+    - If request_data_format is 'json', arguments will be formatted as a JSON object and sent
+    - If request_data_format is 'text', the request_data_template can contain placeholders
+      in the format UTCP_ARG_argname_UTCP_ARG which will be replaced with the value of 
+      the argument named 'argname'
+    
+    For response data handling:
+    - If response_byte_format is None, raw bytes will be returned
+    - If response_byte_format is an encoding (e.g., 'utf-8'), bytes will be decoded to text
+    """
 
     provider_type: Literal["udp"] = "udp"
     host: str
     port: int
+    number_of_response_datagrams: int = 0
+    request_data_format: Literal["json", "text"] = "json"
+    request_data_template: Optional[str] = None
+    response_byte_format: Optional[str] = Field(default="utf-8", description="Encoding to decode response bytes. If None, returns raw bytes.")
     timeout: int = 30000
     auth: None = None
 

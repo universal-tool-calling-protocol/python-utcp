@@ -26,11 +26,86 @@ class WebSocketClientTransport(ClientTransportInterface):
     - Protocol subprotocols
     """
     
-    def __init__(self, logger: Optional[Callable[[str, Any], None]] = None):
-        self._log = logger or (lambda msg, error=False: None)
+    def __init__(self, logger: Optional[Callable[[str], None]] = None):
+        self._log = logger or (lambda *args, **kwargs: None)
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
         self._connections: Dict[str, ClientWebSocketResponse] = {}
         self._sessions: Dict[str, ClientSession] = {}
+    
+    def _log_info(self, message: str):
+        """Log informational messages."""
+        self._log(f"[WebSocketTransport] {message}")
+        
+    def _log_error(self, message: str):
+        """Log error messages."""
+        logging.error(f"[WebSocketTransport Error] {message}")
+
+    def _format_tool_call_message(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        provider: WebSocketProvider,
+        request_id: str
+    ) -> str:
+        """Format a tool call message based on provider configuration.
+        
+        Args:
+            tool_name: Name of the tool to call
+            arguments: Arguments for the tool call
+            provider: The WebSocketProvider with formatting configuration
+            request_id: Unique request identifier
+            
+        Returns:
+            Formatted message string
+        """
+        # Check if provider specifies a custom message format
+        if provider.message_format:
+            # Custom format with placeholders (maintains backward compatibility)
+            try:
+                formatted_message = provider.message_format.format(
+                    tool_name=tool_name,
+                    arguments=json.dumps(arguments),
+                    request_id=request_id
+                )
+                return formatted_message
+            except (KeyError, json.JSONDecodeError) as e:
+                self._log_error(f"Error formatting custom message: {e}")
+                # Fall back to default format below
+        
+        # Handle request_data_format similar to UDP transport
+        if provider.request_data_format == "json":
+            return json.dumps({
+                "type": "call_tool",
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "arguments": arguments
+            })
+        elif provider.request_data_format == "text":
+            # Use template-based formatting
+            if provider.request_data_template is not None and provider.request_data_template != "":
+                message = provider.request_data_template
+                # Replace placeholders with argument values
+                for arg_name, arg_value in arguments.items():
+                    placeholder = f"UTCP_ARG_{arg_name}_UTCP_ARG"
+                    if isinstance(arg_value, str):
+                        message = message.replace(placeholder, arg_value)
+                    else:
+                        message = message.replace(placeholder, json.dumps(arg_value))
+                # Also replace tool name and request ID if placeholders exist
+                message = message.replace("UTCP_ARG_tool_name_UTCP_ARG", tool_name)
+                message = message.replace("UTCP_ARG_request_id_UTCP_ARG", request_id)
+                return message
+            else:
+                # Fallback to simple format
+                return f"{tool_name} {' '.join([str(v) for k, v in arguments.items()])}"
+        else:
+            # Default to JSON format
+            return json.dumps({
+                "type": "call_tool",
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "arguments": arguments
+            })
 
     def _enforce_security(self, url: str):
         """Enforce HTTPS/WSS or localhost for security."""
@@ -149,68 +224,79 @@ class WebSocketClientTransport(ClientTransportInterface):
         ws = await self._get_connection(manual_provider)
         
         try:
-            # Send discovery request
-            discovery_request = {
-                "type": "discover",
-                "request_id": f"discover_{manual_provider.name}"
-            }
-            await ws.send_str(json.dumps(discovery_request))
-            self._log(f"Sent discovery request to {manual_provider.url}")
+            # Send discovery request (matching UDP pattern)
+            discovery_message = json.dumps({
+                "type": "utcp"
+            })
+            await ws.send_str(discovery_message)
+            self._log_info(f"Registering WebSocket provider '{manual_provider.name}' at {manual_provider.url}")
             
             # Wait for discovery response
-            timeout = 30  # 30 second timeout for discovery
+            timeout = manual_provider.timeout / 1000.0  # Convert ms to seconds
             try:
                 async with asyncio.timeout(timeout):
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
-                                response = json.loads(msg.data)
-                                if (response.get("type") == "discovery_response" and 
-                                    response.get("request_id") == discovery_request["request_id"]):
+                                response_data = json.loads(msg.data)
+                                
+                                # Check if response contains tools (matching UDP pattern)
+                                if isinstance(response_data, dict) and 'tools' in response_data:
+                                    tools_data = response_data['tools']
                                     
-                                    # Parse tools from response
+                                    # Parse tools
                                     tools = []
-                                    for tool_data in response.get("tools", []):
-                                        # Create individual provider for each tool
-                                        # This allows tools to have different endpoints, auth, etc.
-                                        tool_provider = WebSocketProvider(
-                                            name=f"{manual_provider.name}_{tool_data['name']}",
-                                            url=tool_data.get("url", manual_provider.url),
-                                            protocol=tool_data.get("protocol", manual_provider.protocol),
-                                            keep_alive=tool_data.get("keep_alive", manual_provider.keep_alive),
-                                            auth=tool_data.get("auth", manual_provider.auth),
-                                            headers=tool_data.get("headers", manual_provider.headers),
-                                            header_fields=tool_data.get("header_fields", manual_provider.header_fields),
-                                            message_format=tool_data.get("message_format", manual_provider.message_format)
-                                        )
-                                        
-                                        tool = Tool(
-                                            name=tool_data["name"],
-                                            description=tool_data.get("description", ""),
-                                            inputs=ToolInputOutputSchema(**tool_data.get("inputs", {})),
-                                            outputs=ToolInputOutputSchema(**tool_data.get("outputs", {})),
-                                            tags=tool_data.get("tags", []),
-                                            tool_provider=tool_provider
-                                        )
-                                        tools.append(tool)
+                                    for tool_data in tools_data:
+                                        try:
+                                            # Create individual provider for each tool
+                                            # This allows tools to have different endpoints, auth, etc.
+                                            tool_provider = WebSocketProvider(
+                                                name=f"{manual_provider.name}_{tool_data['name']}",
+                                                url=tool_data.get("url", manual_provider.url),
+                                                protocol=tool_data.get("protocol", manual_provider.protocol),
+                                                keep_alive=tool_data.get("keep_alive", manual_provider.keep_alive),
+                                                request_data_format=tool_data.get("request_data_format", manual_provider.request_data_format),
+                                                request_data_template=tool_data.get("request_data_template", manual_provider.request_data_template),
+                                                message_format=tool_data.get("message_format", manual_provider.message_format),
+                                                timeout=tool_data.get("timeout", manual_provider.timeout),
+                                                auth=tool_data.get("auth", manual_provider.auth),
+                                                headers=tool_data.get("headers", manual_provider.headers),
+                                                header_fields=tool_data.get("header_fields", manual_provider.header_fields)
+                                            )
+                                            
+                                            tool = Tool(
+                                                name=tool_data["name"],
+                                                description=tool_data.get("description", ""),
+                                                inputs=ToolInputOutputSchema(**tool_data.get("inputs", {})),
+                                                outputs=ToolInputOutputSchema(**tool_data.get("outputs", {})),
+                                                tags=tool_data.get("tags", []),
+                                                tool_provider=tool_provider
+                                            )
+                                            tools.append(tool)
+                                        except Exception as e:
+                                            self._log_error(f"Invalid tool definition in WebSocket provider '{manual_provider.name}': {e}")
+                                            continue
                                     
-                                    self._log(f"Discovered {len(tools)} tools from {manual_provider.url}")
+                                    self._log_info(f"Discovered {len(tools)} tools from WebSocket provider '{manual_provider.name}'")
                                     return tools
+                                else:
+                                    self._log_info(f"No tools found in WebSocket provider '{manual_provider.name}' response")
+                                    return []
                                     
-                            except json.JSONDecodeError:
-                                self._log(f"Invalid JSON in discovery response: {msg.data}", error=True)
+                            except json.JSONDecodeError as e:
+                                self._log_error(f"Invalid JSON response from WebSocket provider '{manual_provider.name}': {e}")
                                 
                         elif msg.type == aiohttp.WSMsgType.ERROR:
-                            self._log(f"WebSocket error during discovery: {ws.exception()}", error=True)
+                            self._log_error(f"WebSocket error during discovery: {ws.exception()}")
                             break
                             
             except asyncio.TimeoutError:
-                self._log(f"Discovery timeout for {manual_provider.url}", error=True)
+                self._log_error(f"Discovery timeout for {manual_provider.url}")
                 raise ValueError(f"Tool discovery timeout for WebSocket provider {manual_provider.url}")
                 
         except Exception as e:
-            self._log(f"Error during tool discovery: {e}", error=True)
-            raise
+            self._log_error(f"Error registering WebSocket provider '{manual_provider.name}': {e}")
+            return []
         
         return []
 
@@ -221,7 +307,7 @@ class WebSocketClientTransport(ClientTransportInterface):
         
         provider_key = f"{manual_provider.name}_{manual_provider.url}"
         await self._cleanup_connection(provider_key)
-        self._log(f"Deregistered WebSocket provider {manual_provider.name}")
+        self._log_info(f"Deregistering WebSocket provider '{manual_provider.name}' (connection closed)")
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
         """
@@ -238,86 +324,73 @@ class WebSocketClientTransport(ClientTransportInterface):
         if not isinstance(tool_provider, WebSocketProvider):
             raise ValueError("WebSocketClientTransport can only be used with WebSocketProvider")
         
+        self._log_info(f"Calling WebSocket tool '{tool_name}' on provider '{tool_provider.name}'")
+        
         ws = await self._get_connection(tool_provider)
         
-        # Prepare tool call request - allow for custom format via tool_provider config
-        request_id = f"call_{tool_name}_{id(arguments)}"
-        
-        # Check if tool_provider specifies a custom message format
-        if tool_provider.message_format:
-            # Allow tools to define their own message format
-            # This supports existing WebSocket services without modification
-            try:
-                formatted_message = tool_provider.message_format.format(
-                    tool_name=tool_name,
-                    arguments=json.dumps(arguments),
-                    request_id=request_id
-                )
-                call_request = json.loads(formatted_message)
-            except (KeyError, json.JSONDecodeError) as e:
-                self._log(f"Error formatting custom message: {e}", error=True)
-                # Fall back to default format
-                call_request = {
-                    "type": "call_tool",
-                    "request_id": request_id,
-                    "tool_name": tool_name,
-                    "arguments": arguments
-                }
-        else:
-            # Default UTCP format
-            call_request = {
-                "type": "call_tool",
-                "request_id": request_id,
-                "tool_name": tool_name,
-                "arguments": arguments
-            }
-        
-        # Add any header fields to the request
-        if tool_provider.header_fields and arguments:
-            headers = {}
-            for field in tool_provider.header_fields:
-                if field in arguments:
-                    headers[field] = arguments[field]
-            if headers:
-                call_request["headers"] = headers
-        
         try:
-            await ws.send_str(json.dumps(call_request))
-            self._log(f"Sent tool call request for {tool_name}")
+            # Prepare tool call request using the new formatting method
+            request_id = f"call_{tool_name}_{id(arguments)}"
+            tool_call_message = self._format_tool_call_message(tool_name, arguments, tool_provider, request_id)
+            
+            # For JSON format, we need to parse it back to add header fields if needed
+            if tool_provider.request_data_format == "json" or tool_provider.message_format:
+                try:
+                    call_request = json.loads(tool_call_message)
+                    
+                    # Add any header fields to the request
+                    if tool_provider.header_fields and arguments:
+                        headers = {}
+                        for field in tool_provider.header_fields:
+                            if field in arguments:
+                                headers[field] = arguments[field]
+                        if headers:
+                            call_request["headers"] = headers
+                    
+                    tool_call_message = json.dumps(call_request)
+                except json.JSONDecodeError:
+                    # Keep the original message if it's not valid JSON
+                    pass
+            
+            await ws.send_str(tool_call_message)
+            self._log_info(f"Sent tool call request for {tool_name}")
             
             # Wait for response
-            timeout = 60  # 60 second timeout for tool calls
+            timeout = tool_provider.timeout / 1000.0  # Convert ms to seconds
             try:
                 async with asyncio.timeout(timeout):
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
                                 response = json.loads(msg.data)
-                                if response.get("request_id") == request_id:
+                                # Check for either new format or backward compatible format
+                                if (response.get("request_id") == request_id or 
+                                    not response.get("request_id")):  # Allow responses without request_id for backward compatibility
                                     if response.get("type") == "tool_response":
-                                        self._log(f"Received successful response for {tool_name}")
                                         return response.get("result")
                                     elif response.get("type") == "tool_error":
                                         error_msg = response.get("error", "Unknown error")
-                                        self._log(f"Tool error for {tool_name}: {error_msg}", error=True)
+                                        self._log_error(f"Tool error for {tool_name}: {error_msg}")
                                         raise RuntimeError(f"Tool {tool_name} failed: {error_msg}")
+                                    else:
+                                        # For non-UTCP responses, return the entire response
+                                        return msg.data
                                         
                             except json.JSONDecodeError:
-                                self._log(f"Invalid JSON in tool response: {msg.data}", error=True)
+                                # Return raw response for non-JSON responses
+                                return msg.data
                                 
                         elif msg.type == aiohttp.WSMsgType.ERROR:
-                            self._log(f"WebSocket error during tool call: {ws.exception()}", error=True)
+                            self._log_error(f"WebSocket error during tool call: {ws.exception()}")
                             break
                             
             except asyncio.TimeoutError:
-                self._log(f"Tool call timeout for {tool_name}", error=True)
+                self._log_error(f"Tool call timeout for {tool_name}")
                 raise RuntimeError(f"Tool call timeout for {tool_name}")
                 
         except Exception as e:
-            self._log(f"Error calling tool {tool_name}: {e}", error=True)
+            self._log_error(f"Error calling WebSocket tool '{tool_name}': {e}")
             raise
-        
-        raise RuntimeError(f"No response received for tool {tool_name}")
 
     async def close(self) -> None:
         """Close all WebSocket connections and sessions."""
@@ -328,7 +401,7 @@ class WebSocketClientTransport(ClientTransportInterface):
         # Clear OAuth tokens
         self._oauth_tokens.clear()
         
-        self._log("WebSocket transport closed")
+        self._log_info("WebSocket transport closed")
 
     def __del__(self):
         """Ensure cleanup on object destruction."""
