@@ -117,11 +117,9 @@ class TCPProvider(Provider):
     - If request_data_format is 'text', the request_data_template can contain placeholders
       in the format UTCP_ARG_argname_UTCP_ARG which will be replaced with the value of 
       the argument named 'argname'
-    
     For response data handling:
     - If response_byte_format is None, raw bytes will be returned
     - If response_byte_format is an encoding (e.g., 'utf-8'), bytes will be decoded to text
-    
     For TCP stream framing (choose one):
     1. Length-prefix framing: Set framing_strategy='length_prefix' and length_prefix_bytes
     2. Delimiter-based framing: Set framing_strategy='delimiter' and message_delimiter  
@@ -135,41 +133,35 @@ class TCPProvider(Provider):
     request_data_format: Literal["json", "text"] = "json"
     request_data_template: Optional[str] = None
     response_byte_format: Optional[str] = Field(default="utf-8", description="Encoding to decode response bytes. If None, returns raw bytes.")
-    
     # TCP Framing Strategy
     framing_strategy: Literal["length_prefix", "delimiter", "fixed_length", "stream"] = Field(
-        default="stream", 
+        default="stream",
         description="Strategy for framing TCP messages"
     )
-    
     # Length-prefix framing options
     length_prefix_bytes: int = Field(
-        default=4, 
+        default=4,
         description="Number of bytes for length prefix (1, 2, 4, or 8). Used with 'length_prefix' framing."
     )
     length_prefix_endian: Literal["big", "little"] = Field(
-        default="big", 
+        default="big",
         description="Byte order for length prefix. Used with 'length_prefix' framing."
     )
-    
     # Delimiter-based framing options
-    message_delimiter: Optional[str] = Field(
-        default=None, 
+    message_delimiter: str = Field(
+        default='\\x00',
         description="Delimiter to detect end of TCP response (e.g., '\\n', '\\r\\n', '\\x00'). Used with 'delimiter' framing."
     )
-    
     # Fixed-length framing options
     fixed_message_length: Optional[int] = Field(
-        default=None, 
+        default=None,
         description="Fixed length of each message in bytes. Used with 'fixed_length' framing."
     )
-    
     # Stream-based options
     max_response_size: int = Field(
-        default=65536, 
+        default=65536,
         description="Maximum bytes to read from TCP stream. Used with 'stream' framing."
     )
-    
     timeout: int = 30000
     auth: None = None
 

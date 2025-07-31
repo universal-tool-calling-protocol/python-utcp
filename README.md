@@ -243,7 +243,7 @@ Providers are at the heart of UTCP's flexibility. They define the communication 
 *   `websocket`: WebSocket bidirectional connection (work in progress)
 *   `grpc`: gRPC (Google Remote Procedure Call) (work in progress)
 *   `graphql`: GraphQL query language (work in progress)
-*   `tcp`: Raw TCP socket (work in progress)
+*   `tcp`: Raw TCP socket
 *   `udp`: User Datagram Protocol
 *   `webrtc`: Web Real-Time Communication (work in progress)
 *   `mcp`: Model Context Protocol (for interoperability)
@@ -368,16 +368,80 @@ For interacting with GraphQL APIs. The `url` should point to the discovery endpo
 }
 ```
 
-### TCP Provider (work in progress)
+### TCP Provider
 
-For raw TCP socket communication.
+For TCP socket communication. Supports multiple framing strategies, JSON and text-based request formats, and configurable response handling.
 
+**Basic Example:**
 ```json
 {
-  "name": "raw_tcp_service",
+  "name": "tcp_service",
   "provider_type": "tcp",
   "host": "localhost",
-  "port": 12345
+  "port": 12345,
+  "timeout": 30000,
+  "request_data_format": "json",
+  "framing_strategy": "stream",
+  "response_byte_format": "utf-8"
+}
+```
+
+**Key TCP Provider Fields:**
+
+* `host`: The hostname or IP address of the TCP server
+* `port`: The TCP port number
+* `timeout`: Timeout in milliseconds (default: 30000)
+* `request_data_format`: Either `"json"` for structured data or `"text"` for template-based formatting (default: `"json"`)
+* `request_data_template`: Template string for text format with `UTCP_ARG_argname_UTCP_ARG` placeholders
+* `response_byte_format`: Encoding for response bytes - `"utf-8"`, `"ascii"`, etc., or `null` for raw bytes (default: `"utf-8"`)
+* `framing_strategy`: Message framing strategy: `"stream"`, `"length_prefix"`, `"delimiter"`, or `"fixed_length"` (default: `"stream"`)
+* `length_prefix_bytes`: For length-prefix framing: 1, 2, 4, or 8 bytes (default: 4)
+* `length_prefix_endian`: For length-prefix framing: `"big"` or `"little"` (default: `"big"`)
+* `message_delimiter`: For delimiter framing: delimiter string like `"\n"`, `"\r\n"`, `"\x00"` (default: `"\x00"`)
+* `fixed_message_length`: For fixed-length framing: exact message length in bytes
+* `max_response_size`: For stream framing: maximum bytes to read (default: 65536)
+
+**Length-Prefix Framing Example:**
+```json
+{
+  "name": "binary_tcp_service",
+  "provider_type": "tcp",
+  "host": "192.168.1.50",
+  "port": 8080,
+  "framing_strategy": "length_prefix",
+  "length_prefix_bytes": 4,
+  "length_prefix_endian": "big",
+  "request_data_format": "json",
+  "response_byte_format": "utf-8"
+}
+```
+
+**Delimiter Framing Example:**
+```json
+{
+  "name": "line_based_tcp_service",
+  "provider_type": "tcp",
+  "host": "tcp.example.com",
+  "port": 9999,
+  "framing_strategy": "delimiter",
+  "message_delimiter": "\n",
+  "request_data_format": "text",
+  "request_data_template": "GET UTCP_ARG_resource_UTCP_ARG",
+  "response_byte_format": "ascii"
+}
+```
+
+**Fixed-Length Framing Example:**
+```json
+{
+  "name": "fixed_protocol_service",
+  "provider_type": "tcp",
+  "host": "legacy.example.com",
+  "port": 7777,
+  "framing_strategy": "fixed_length",
+  "fixed_message_length": 1024,
+  "request_data_format": "text",
+  "response_byte_format": null
 }
 ```
 
@@ -563,6 +627,27 @@ The `search_tools` method allows you to find relevant tools based on a query. It
 tools = client.search_tools(query="get current weather in London")
 for tool in tools:
     print(tool.name, tool.description)
+```
+
+## Testing
+
+The UTCP client includes comprehensive test suites for all transport implementations. Tests cover functionality, error handling, different configuration options, and edge cases.
+
+### Running Tests
+
+To run all tests:
+```bash
+python -m pytest
+```
+
+To run tests for a specific transport (e.g., TCP):
+```bash
+python -m pytest tests/client/transport_interfaces/test_tcp_transport.py -v
+```
+
+To run tests with coverage:
+```bash
+python -m pytest --cov=utcp tests/
 ```
 
 ## Build
