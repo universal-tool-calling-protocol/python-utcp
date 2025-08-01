@@ -14,6 +14,7 @@ from utcp.client.transport_interfaces.streamable_http_transport import Streamabl
 from utcp.client.transport_interfaces.mcp_transport import MCPTransport
 from utcp.client.transport_interfaces.text_transport import TextTransport
 from utcp.client.transport_interfaces.graphql_transport import GraphQLClientTransport
+from utcp.client.transport_interfaces.websocket_transport import WebSocketClientTransport
 from utcp.client.transport_interfaces.tcp_transport import TCPTransport
 from utcp.client.transport_interfaces.udp_transport import UDPTransport
 from utcp.client.utcp_client_config import UtcpClientConfig, UtcpVariableNotFound
@@ -116,6 +117,7 @@ class UtcpClient(UtcpClientInterface):
         "mcp": MCPTransport(),
         "text": TextTransport(),
         "graphql": GraphQLClientTransport(),
+        "websocket": WebSocketClientTransport(),
         "tcp": TCPTransport(),
         "udp": UDPTransport(),
     }

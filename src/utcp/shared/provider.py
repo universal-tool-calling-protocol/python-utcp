@@ -77,12 +77,25 @@ class CliProvider(Provider):
     auth: None = None
 
 class WebSocketProvider(Provider):
-    """Options specific to WebSocket tools"""
+    """Options specific to WebSocket tools
+    
+    For request data handling:
+    - If request_data_format is 'json', arguments will be formatted as a JSON object and sent
+    - If request_data_format is 'text', the request_data_template can contain placeholders
+      in the format UTCP_ARG_argname_UTCP_ARG which will be replaced with the value of 
+      the argument named 'argname'
+    - If message_format is provided, it supports {tool_name}, {arguments}, {request_id} placeholders
+      for maximum flexibility with existing WebSocket services
+    """
 
     provider_type: Literal["websocket"] = "websocket"
     url: str
     protocol: Optional[str] = None
     keep_alive: bool = True
+    request_data_format: Literal["json", "text"] = "json"
+    request_data_template: Optional[str] = None
+    message_format: Optional[str] = Field(default=None, description="Custom message format template for tool calls. Supports {tool_name}, {arguments}, {request_id} placeholders.")
+    timeout: int = 30000
     auth: Optional[Auth] = None
     headers: Optional[Dict[str, str]] = None
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers for the initial connection.")
