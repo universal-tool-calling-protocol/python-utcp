@@ -24,6 +24,7 @@ from utcp.client.tool_search_strategy import ToolSearchStrategy
 from utcp.shared.provider import Provider, HttpProvider, CliProvider, SSEProvider, \
     StreamableHttpProvider, WebSocketProvider, GRPCProvider, GraphQLProvider, \
     TCPProvider, UDPProvider, WebRTCProvider, MCPProvider, TextProvider
+from utcp.client.variable_substitutor import DefaultVariableSubstitutor, VariableSubstitutor
 
 class UtcpClientInterface(ABC):
     """
@@ -80,6 +81,32 @@ class UtcpClientInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_required_variables_for_manual_and_tools(self, manual_provider: Provider) -> List[str]:
+        """
+        Get the required variables for a manual provider and its tools.
+
+        Args:
+            manual_provider: The manual provider.
+
+        Returns:
+            A list of required variables for the manual provider and its tools.
+        """
+        pass
+
+    @abstractmethod
+    def get_required_variables_for_tool(self, tool_name: str) -> List[str]:
+        """
+        Get the required variables for a registered tool.
+
+        Args:
+            tool_name: The name of a registered tool.
+
+        Returns:
+            A list of required variables for the tool.
+        """
+        pass
+
 class UtcpClient(UtcpClientInterface):
     transports: Dict[str, ClientTransportInterface] = {
         "http": HttpClientTransport(),
@@ -93,13 +120,14 @@ class UtcpClient(UtcpClientInterface):
         "udp": UDPTransport(),
     }
 
-    def __init__(self, config: UtcpClientConfig, tool_repository: ToolRepository, search_strategy: ToolSearchStrategy):
+    def __init__(self, config: UtcpClientConfig, tool_repository: ToolRepository, search_strategy: ToolSearchStrategy, variable_substitutor: VariableSubstitutor):
         """
         Use 'create' class method to create a new instance instead, as it supports loading UtcpClientConfig.
         """
         self.tool_repository = tool_repository
         self.search_strategy = search_strategy
         self.config = config
+        self.variable_substitutor = variable_substitutor
 
     @classmethod
     async def create(cls, config: Optional[Union[Dict[str, Any], UtcpClientConfig]] = None, tool_repository: Optional[ToolRepository] = None, search_strategy: Optional[ToolSearchStrategy] = None) -> 'UtcpClient':
@@ -123,7 +151,7 @@ class UtcpClient(UtcpClientInterface):
         elif isinstance(config, dict):
             config = UtcpClientConfig.model_validate(config)
 
-        client = cls(config, tool_repository, search_strategy)
+        client = cls(config, tool_repository, search_strategy, DefaultVariableSubstitutor())
 
         # If a providers file is used, configure TextTransport to resolve relative paths from its directory
         if config.providers_file_path:
@@ -133,7 +161,7 @@ class UtcpClient(UtcpClientInterface):
         if client.config.variables:
             config_without_vars = client.config.model_copy()
             config_without_vars.variables = None
-            client.config.variables = client._replace_vars_in_obj(client.config.variables, config_without_vars)
+            client.config.variables = client.variable_substitutor.substitute(client.config.variables, config_without_vars)
 
         await client.load_providers(config.providers_file_path)
         # for provider in providers:
@@ -207,7 +235,6 @@ class UtcpClient(UtcpClientInterface):
                     provider = provider_class.model_validate(provider_data)
                     
                     # Apply variable substitution and register provider
-                    provider = self._substitute_provider_variables(provider)
                     tools = await self.register_tool_provider(provider)
                     print(f"Successfully registered provider '{provider.name}' with {len(tools)} tools")
                     return provider
@@ -225,44 +252,60 @@ class UtcpClient(UtcpClientInterface):
                 
         return registered_providers
             
-    def _get_variable(self, key: str, config: UtcpClientConfig) -> str:
-        if config.variables and key in config.variables:
-            return config.variables[key]
-        if config.load_variables_from:
-            for var_loader in config.load_variables_from:
-                var = var_loader.get(key)
-                if var:
-                    return var
-        try:
-            env_var = os.environ.get(key)
-            if env_var:
-                return env_var
-        except Exception:
-            pass
-        
-        raise UtcpVariableNotFound(key)
-        
-    def _replace_vars_in_obj(self, obj: Any, config: UtcpClientConfig) -> Any:
-        if isinstance(obj, dict):
-            return {k: self._replace_vars_in_obj(v, config) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._replace_vars_in_obj(elem, config) for elem in obj]
-        elif isinstance(obj, str):
-            # Use a regular expression to find all variables in the string, supporting ${VAR} and $VAR formats
-            def replacer(match):
-                # The first group that is not None is the one that matched
-                var_name = next(g for g in match.groups() if g is not None)
-                return self._get_variable(var_name, config)
-
-            return re.sub(r'\${(\w+)}|\$(\w+)', replacer, obj)
-        else:
-            return obj
-
-    def _substitute_provider_variables(self, provider: Provider) -> Provider:
+    def _substitute_provider_variables(self, provider: Provider, provider_name: Optional[str] = None) -> Provider:
         provider_dict = provider.model_dump()
 
-        processed_dict = self._replace_vars_in_obj(provider_dict, self.config)
+        processed_dict = self.variable_substitutor.substitute(provider_dict, self.config, provider_name)
         return provider.__class__(**processed_dict)
+
+    async def get_required_variables_for_manual_and_tools(self, manual_provider: Provider) -> List[str]:
+        """
+        Get the required variables for a manual provider and its tools.
+
+        Args:
+            manual_provider: The provider to validate.
+
+        Returns:
+            A list of required variables for the provider.
+
+        Raises:
+            ValueError: If the provider type is not supported.
+            UtcpVariableNotFound: If a variable is not found in the environment or in the configuration.
+        """
+        manual_provider.name = re.sub(r'[^\w]', '_', manual_provider.name)
+        variables_for_provider = self.variable_substitutor.find_required_variables(manual_provider.model_dump(), manual_provider.name)
+        if len(variables_for_provider) > 0:
+            try:
+                manual_provider = self._substitute_provider_variables(manual_provider, manual_provider.name)
+            except UtcpVariableNotFound as e:
+                return variables_for_provider
+            return variables_for_provider
+        if manual_provider.provider_type not in self.transports:
+            raise ValueError(f"Provider type not supported: {manual_provider.provider_type}")
+        tools: List[Tool] = await self.transports[manual_provider.provider_type].register_tool_provider(manual_provider)
+        for tool in tools:
+            variables_for_provider.extend(self.variable_substitutor.find_required_variables(tool.tool_provider.model_dump(), manual_provider.name))
+        return variables_for_provider
+
+    async def get_required_variables_for_tool(self, tool_name: str) -> List[str]:
+        """
+        Get the required variables for a tool.
+
+        Args:
+            tool_name: The name of the tool to validate.
+
+        Returns:
+            A list of required variables for the tool.
+
+        Raises:
+            ValueError: If the provider type is not supported.
+            UtcpVariableNotFound: If a variable is not found in the environment or in the configuration.
+        """
+        provider_name = tool_name.split(".")[0]
+        tool = await self.tool_repository.get_tool(tool_name)
+        if tool is None:
+            raise ValueError(f"Tool not found: {tool_name}")
+        return self.variable_substitutor.find_required_variables(tool.tool_provider.model_dump(), provider_name)
 
     async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
         """
@@ -278,8 +321,9 @@ class UtcpClient(UtcpClientInterface):
             ValueError: If the provider type is not supported.
             UtcpVariableNotFound: If a variable is not found in the environment or in the configuration.
         """
-        manual_provider = self._substitute_provider_variables(manual_provider)
-        manual_provider.name = manual_provider.name.replace(".", "_")
+        # Replace all non-word characters with underscore
+        manual_provider.name = re.sub(r'[^\w]', '_', manual_provider.name)
+        manual_provider = self._substitute_provider_variables(manual_provider, manual_provider.name)
         if manual_provider.provider_type not in self.transports:
             raise ValueError(f"Provider type not supported: {manual_provider.provider_type}")
         tools: List[Tool] = await self.transports[manual_provider.provider_type].register_tool_provider(manual_provider)
@@ -320,18 +364,17 @@ class UtcpClient(UtcpClientInterface):
             ValueError: If the tool is not found.
             UtcpVariableNotFound: If a variable is not found in the environment or in the configuration.
         """
-        provider_name = tool_name.split(".")[0]
-        provider = await self.tool_repository.get_provider(provider_name)
-        if provider is None:
-            raise ValueError(f"Provider not found: {provider_name}")
-        tools = await self.tool_repository.get_tools_by_provider(provider_name)
-        tool = next((t for t in tools if t.name == tool_name), None)
+        manual_provider_name = tool_name.split(".")[0]
+        manual_provider = await self.tool_repository.get_provider(manual_provider_name)
+        if manual_provider is None:
+            raise ValueError(f"Provider not found: {manual_provider_name}")
+        tool = await self.tool_repository.get_tool(tool_name)
         if tool is None:
             raise ValueError(f"Tool not found: {tool_name}")
 
         tool_provider = tool.tool_provider
 
-        tool_provider = self._substitute_provider_variables(tool_provider)
+        tool_provider = self._substitute_provider_variables(tool_provider, manual_provider_name)
 
         return await self.transports[tool_provider.provider_type].call_tool(tool_name, arguments, tool_provider)
 
