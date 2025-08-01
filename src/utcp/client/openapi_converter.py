@@ -124,7 +124,7 @@ class OpenApiConverter:
             location = scheme.get("in", "header")  # Default to header if not specified
             param_name = scheme.get("name", "Authorization")  # Default name
             return ApiKeyAuth(
-                api_key=f"${{{self.provider_name.upper()}_API_KEY}}",  # Placeholder for environment variable
+                api_key="${API_KEY}",  # Placeholder for environment variable
                 var_name=param_name,
                 location=location
             )
@@ -132,8 +132,8 @@ class OpenApiConverter:
         elif scheme_type == "basic":
             # OpenAPI 2.0 format: type: basic
             return BasicAuth(
-                username=f"${{{self.provider_name.upper()}_USERNAME}}",
-                password=f"${{{self.provider_name.upper()}_PASSWORD}}"
+                username="${USERNAME}",
+                password="${PASSWORD}"
             )
         
         elif scheme_type == "http":
@@ -142,13 +142,13 @@ class OpenApiConverter:
             if http_scheme == "basic":
                 # For basic auth, use conventional environment variable names
                 return BasicAuth(
-                    username=f"${{{self.provider_name.upper()}_USERNAME}}",
-                    password=f"${{{self.provider_name.upper()}_PASSWORD}}"
+                    username="${USERNAME}",
+                    password="${PASSWORD}"
                 )
             elif http_scheme == "bearer":
                 # Treat bearer tokens as API keys
                 return ApiKeyAuth(
-                    api_key=f"Bearer ${{{self.provider_name.upper()}_API_KEY}}",
+                    api_key="Bearer ${API_KEY}",
                     var_name="Authorization",
                     location="header"
                 )
@@ -166,8 +166,8 @@ class OpenApiConverter:
                         if token_url:
                             return OAuth2Auth(
                                 token_url=token_url,
-                                client_id=f"${{{self.provider_name.upper()}_CLIENT_ID}}",
-                                client_secret=f"${{{self.provider_name.upper()}_CLIENT_SECRET}}",
+                                client_id="${CLIENT_ID}",
+                                client_secret="${CLIENT_SECRET}",
                                 scope=" ".join(flow_config.get("scopes", {}).keys()) or None
                             )
             
@@ -178,8 +178,8 @@ class OpenApiConverter:
                 if token_url and flow_type in ["accessCode", "application", "clientCredentials"]:
                     return OAuth2Auth(
                         token_url=token_url,
-                        client_id=f"${{{self.provider_name.upper()}_CLIENT_ID}}",
-                        client_secret=f"${{{self.provider_name.upper()}_CLIENT_SECRET}}",
+                        client_id="${CLIENT_ID}",
+                        client_secret="${CLIENT_SECRET}",
                         scope=" ".join(scheme.get("scopes", {}).keys()) or None
                     )
         
