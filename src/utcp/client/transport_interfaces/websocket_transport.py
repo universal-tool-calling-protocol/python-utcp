@@ -240,45 +240,35 @@ class WebSocketClientTransport(ClientTransportInterface):
                             try:
                                 response_data = json.loads(msg.data)
                                 
-                                # Check if response contains tools (matching UDP pattern)
-                                if isinstance(response_data, dict) and 'tools' in response_data:
-                                    tools_data = response_data['tools']
-                                    
-                                    # Parse tools
-                                    tools = []
-                                    for tool_data in tools_data:
+                                # Response data for a /utcp endpoint NEEDS to be a UtcpManual
+                                if isinstance(response_data, dict):
+                                    # Check if it's a UtcpManual format with tools
+                                    if 'tools' in response_data:
                                         try:
-                                            # Create individual provider for each tool
-                                            # This allows tools to have different endpoints, auth, etc.
-                                            tool_provider = WebSocketProvider(
-                                                name=f"{manual_provider.name}_{tool_data['name']}",
-                                                url=tool_data.get("url", manual_provider.url),
-                                                protocol=tool_data.get("protocol", manual_provider.protocol),
-                                                keep_alive=tool_data.get("keep_alive", manual_provider.keep_alive),
-                                                request_data_format=tool_data.get("request_data_format", manual_provider.request_data_format),
-                                                request_data_template=tool_data.get("request_data_template", manual_provider.request_data_template),
-                                                message_format=tool_data.get("message_format", manual_provider.message_format),
-                                                timeout=tool_data.get("timeout", manual_provider.timeout),
-                                                auth=tool_data.get("auth", manual_provider.auth),
-                                                headers=tool_data.get("headers", manual_provider.headers),
-                                                header_fields=tool_data.get("header_fields", manual_provider.header_fields)
-                                            )
+                                            # Parse as UtcpManual
+                                            utcp_manual = UtcpManual(**response_data)
+                                            tools = utcp_manual.tools
                                             
-                                            tool = Tool(
-                                                name=tool_data["name"],
-                                                description=tool_data.get("description", ""),
-                                                inputs=ToolInputOutputSchema(**tool_data.get("inputs", {})),
-                                                outputs=ToolInputOutputSchema(**tool_data.get("outputs", {})),
-                                                tags=tool_data.get("tags", []),
-                                                tool_provider=tool_provider
-                                            )
-                                            tools.append(tool)
+                                            self._log_info(f"Discovered {len(tools)} tools from WebSocket provider '{manual_provider.name}'")
+                                            return tools
                                         except Exception as e:
-                                            self._log_error(f"Invalid tool definition in WebSocket provider '{manual_provider.name}': {e}")
-                                            continue
-                                    
-                                    self._log_info(f"Discovered {len(tools)} tools from WebSocket provider '{manual_provider.name}'")
-                                    return tools
+                                            self._log_error(f"Invalid UtcpManual response from WebSocket provider '{manual_provider.name}': {e}")
+                                            return []
+                                    else:
+                                        # Try to parse individual tools directly (fallback for backward compatibility)
+                                        tools_data = response_data.get('tools', [])
+                                        tools = []
+                                        for tool_data in tools_data:
+                                            try:
+                                                # Tools should come with their own tool_provider
+                                                tool = Tool(**tool_data)
+                                                tools.append(tool)
+                                            except Exception as e:
+                                                self._log_error(f"Invalid tool definition in WebSocket provider '{manual_provider.name}': {e}")
+                                                continue
+                                        
+                                        self._log_info(f"Discovered {len(tools)} tools from WebSocket provider '{manual_provider.name}'")
+                                        return tools
                                 else:
                                     self._log_info(f"No tools found in WebSocket provider '{manual_provider.name}' response")
                                     return []
