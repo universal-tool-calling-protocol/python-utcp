@@ -15,6 +15,8 @@ class OpenApiConverter:
     def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, provider_name: Optional[str] = None):
         self.spec = openapi_spec
         self.spec_url = spec_url
+        # Single counter for all placeholder variables
+        self.placeholder_counter = 0
         # If provider_name is None then get the first word in spec.info.title
         if provider_name is None:
             title = openapi_spec.get("info", {}).get("title", "openapi_provider")
@@ -23,6 +25,23 @@ class OpenApiConverter:
             self.provider_name = ''.join('_' if c in invalid_chars else c for c in title)
         else:
             self.provider_name = provider_name
+            
+    def _increment_placeholder_counter(self) -> int:
+        """Increments the global counter and returns the new value.
+            
+        Returns:
+            The new counter value after incrementing
+        """
+        self.placeholder_counter += 1
+        return self.placeholder_counter
+    
+    def _get_placeholder(self, placeholder_name: str) -> str:
+        """Returns a placeholder string using the current counter value.
+        
+        Args:
+            placeholder_name: The name of the placeholder variable
+        """
+        return f"${{{placeholder_name}_{self.placeholder_counter}}}"
 
     def convert(self) -> UtcpManual:
         """Parses the OpenAPI specification and returns a UtcpManual."""
@@ -123,17 +142,26 @@ class OpenApiConverter:
             # For API key auth, use the parameter name from the OpenAPI spec
             location = scheme.get("in", "header")  # Default to header if not specified
             param_name = scheme.get("name", "Authorization")  # Default name
+            # Use the current counter value for the placeholder
+            api_key_placeholder = self._get_placeholder("API_KEY")
+            # Increment the counter after using it
+            self._increment_placeholder_counter()
             return ApiKeyAuth(
-                api_key="${API_KEY}",  # Placeholder for environment variable
+                api_key=api_key_placeholder,
                 var_name=param_name,
                 location=location
             )
         
         elif scheme_type == "basic":
             # OpenAPI 2.0 format: type: basic
+            # Use the current counter value for both placeholders
+            username_placeholder = self._get_placeholder("USERNAME")
+            password_placeholder = self._get_placeholder("PASSWORD")
+            # Increment the counter after using it
+            self._increment_placeholder_counter()
             return BasicAuth(
-                username="${USERNAME}",
-                password="${PASSWORD}"
+                username=username_placeholder,
+                password=password_placeholder
             )
         
         elif scheme_type == "http":
@@ -141,14 +169,23 @@ class OpenApiConverter:
             http_scheme = scheme.get("scheme", "").lower()
             if http_scheme == "basic":
                 # For basic auth, use conventional environment variable names
+                # Use the current counter value for both placeholders
+                username_placeholder = self._get_placeholder("USERNAME")
+                password_placeholder = self._get_placeholder("PASSWORD")
+                # Increment the counter after using it
+                self._increment_placeholder_counter()
                 return BasicAuth(
-                    username="${USERNAME}",
-                    password="${PASSWORD}"
+                    username=username_placeholder,
+                    password=password_placeholder
                 )
             elif http_scheme == "bearer":
                 # Treat bearer tokens as API keys
+                # Use the current counter value for the placeholder
+                api_key_placeholder = self._get_placeholder("API_KEY")
+                # Increment the counter after using it
+                self._increment_placeholder_counter()
                 return ApiKeyAuth(
-                    api_key="Bearer ${API_KEY}",
+                    api_key=f"Bearer {api_key_placeholder}",
                     var_name="Authorization",
                     location="header"
                 )
@@ -164,10 +201,15 @@ class OpenApiConverter:
                     if flow_type in ["authorizationCode", "accessCode", "clientCredentials", "application"]:
                         token_url = flow_config.get("tokenUrl")
                         if token_url:
+                            # Use the current counter value for both placeholders
+                            client_id_placeholder = self._get_placeholder("CLIENT_ID")
+                            client_secret_placeholder = self._get_placeholder("CLIENT_SECRET")
+                            # Increment the counter after using it
+                            self._increment_placeholder_counter()
                             return OAuth2Auth(
                                 token_url=token_url,
-                                client_id="${CLIENT_ID}",
-                                client_secret="${CLIENT_SECRET}",
+                                client_id=client_id_placeholder,
+                                client_secret=client_secret_placeholder,
                                 scope=" ".join(flow_config.get("scopes", {}).keys()) or None
                             )
             
@@ -176,10 +218,15 @@ class OpenApiConverter:
                 flow_type = scheme.get("flow", "")
                 token_url = scheme.get("tokenUrl")
                 if token_url and flow_type in ["accessCode", "application", "clientCredentials"]:
+                    # Use the current counter value for both placeholders
+                    client_id_placeholder = self._get_placeholder("CLIENT_ID")
+                    client_secret_placeholder = self._get_placeholder("CLIENT_SECRET")
+                    # Increment the counter after using it
+                    self._increment_placeholder_counter()
                     return OAuth2Auth(
                         token_url=token_url,
-                        client_id="${CLIENT_ID}",
-                        client_secret="${CLIENT_SECRET}",
+                        client_id=client_id_placeholder,
+                        client_secret=client_secret_placeholder,
                         scope=" ".join(scheme.get("scopes", {}).keys()) or None
                     )
         

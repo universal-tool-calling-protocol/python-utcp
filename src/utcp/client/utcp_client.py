@@ -164,12 +164,6 @@ class UtcpClient(UtcpClientInterface):
             client.config.variables = client.variable_substitutor.substitute(client.config.variables, config_without_vars)
 
         await client.load_providers(config.providers_file_path)
-        # for provider in providers:
-        #     print(f"Registering provider '{provider.name}' with {len(provider.tools)} tools")
-        #     try:
-        #         await client.register_tool_provider(provider)
-        #     except Exception as e:
-        #         print(f"Error registering provider '{provider.name}': {str(e)}")
         
         return client
 
