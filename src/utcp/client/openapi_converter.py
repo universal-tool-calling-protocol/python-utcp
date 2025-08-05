@@ -1,6 +1,7 @@
 import json
 from typing import Any, Dict, List, Optional, Tuple
 import sys
+import uuid
 from utcp.shared.tool import Tool, ToolInputOutputSchema
 from utcp.shared.utcp_manual import UtcpManual
 from urllib.parse import urlparse
@@ -19,7 +20,7 @@ class OpenApiConverter:
         self.placeholder_counter = 0
         # If provider_name is None then get the first word in spec.info.title
         if provider_name is None:
-            title = openapi_spec.get("info", {}).get("title", "openapi_provider")
+            title = openapi_spec.get("info", {}).get("title", "openapi_provider_" + uuid.uuid4().hex)
             # Replace characters that are invalid for identifiers
             invalid_chars = " -.,!?'\"\\/()[]{}#@$%^&*+=~`|;:<>"
             self.provider_name = ''.join('_' if c in invalid_chars else c for c in title)
@@ -45,6 +46,7 @@ class OpenApiConverter:
 
     def convert(self) -> UtcpManual:
         """Parses the OpenAPI specification and returns a UtcpManual."""
+        self.placeholder_counter = 0
         tools = []
         servers = self.spec.get("servers")
         if servers:
@@ -245,7 +247,7 @@ class OpenApiConverter:
         outputs = self._extract_outputs(operation)
         auth = self._extract_auth(operation)
 
-        provider_name = self.spec.get("info", {}).get("title", "openapi_provider")
+        provider_name = self.spec.get("info", {}).get("title", "openapi_provider_" + uuid.uuid4().hex)
 
         # Combine base URL and path, ensuring no double slashes
         full_url = base_url.rstrip('/') + '/' + path.lstrip('/')

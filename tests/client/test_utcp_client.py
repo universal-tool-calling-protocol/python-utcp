@@ -177,6 +177,11 @@ async def utcp_client(mock_tool_repository, mock_search_strategy):
     
     client = UtcpClient(config, mock_tool_repository, mock_search_strategy, variable_substitutor)
     
+    # Clear the repository before each test to ensure clean state
+    client.tool_repository.providers.clear()
+    client.tool_repository.tools.clear()
+    client.tool_repository.provider_tools.clear()
+    
     return client
 
 
@@ -668,7 +673,7 @@ class TestUtcpClientEdgeCases:
 
     @pytest.mark.asyncio
     async def test_register_provider_with_existing_name(self, utcp_client, sample_tools):
-        """Test registering a provider with an existing name."""
+        """Test registering a provider with an existing name should raise an error."""
         provider1 = HttpProvider(
             name="duplicate_name",
             url="https://api.example1.com/tool",
@@ -686,13 +691,14 @@ class TestUtcpClientEdgeCases:
         # Register first provider
         await utcp_client.register_tool_provider(provider1)
         
-        # Register second provider with same name (should overwrite)
-        await utcp_client.register_tool_provider(provider2)
+        # Attempting to register second provider with same name should raise an error
+        with pytest.raises(ValueError, match="Provider duplicate_name already registered"):
+            await utcp_client.register_tool_provider(provider2)
         
-        # Should have the second provider
+        # Should still have the first provider
         saved_provider = await utcp_client.tool_repository.get_provider("duplicate_name")
-        assert saved_provider.url == "https://api.example2.com/tool"
-        assert saved_provider.http_method == "GET"
+        assert saved_provider.url == "https://api.example1.com/tool"
+        assert saved_provider.http_method == "POST"
 
     @pytest.mark.asyncio
     async def test_complex_mcp_provider(self, utcp_client):

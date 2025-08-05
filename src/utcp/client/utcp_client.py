@@ -317,6 +317,8 @@ class UtcpClient(UtcpClientInterface):
         """
         # Replace all non-word characters with underscore
         manual_provider.name = re.sub(r'[^\w]', '_', manual_provider.name)
+        if await self.tool_repository.get_provider(manual_provider.name) is not None:
+            raise ValueError(f"Provider {manual_provider.name} already registered, please use a different name or deregister the existing provider")
         manual_provider = self._substitute_provider_variables(manual_provider, manual_provider.name)
         if manual_provider.provider_type not in self.transports:
             raise ValueError(f"Provider type not supported: {manual_provider.provider_type}")
