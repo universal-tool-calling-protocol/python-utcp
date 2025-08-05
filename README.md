@@ -196,13 +196,51 @@ UTCP supports several authentication methods to secure tool access. The `auth` o
 
 #### API Key (`ApiKeyAuth`)
 
-Authentication using a static API key, typically sent in a request header.
+Authentication using a static API key that can be sent in different locations.
 
 ```json
 {
   "auth_type": "api_key",
   "api_key": "YOUR_SECRET_API_KEY",
-  "var_name": "X-API-Key"
+  "var_name": "X-API-Key",
+  "location": "header"
+}
+```
+
+**Key Fields:**
+* `api_key`: Your secret API key
+* `var_name`: The name of the parameter (header name, query parameter name, or cookie name)
+* `location`: Where to send the API key - `"header"` (default), `"query"`, or `"cookie"`
+
+**Examples:**
+
+*Header-based API key (most common):*
+```json
+{
+  "auth_type": "api_key",
+  "api_key": "sk-1234567890abcdef",
+  "var_name": "Authorization", 
+  "location": "header"
+}
+```
+
+*Query parameter-based API key:*
+```json
+{
+  "auth_type": "api_key",
+  "api_key": "abc123def456",
+  "var_name": "api_key",
+  "location": "query"
+}
+```
+
+*Cookie-based API key:*
+```json
+{
+  "auth_type": "api_key",
+  "api_key": "session_token_xyz",
+  "var_name": "auth_token",
+  "location": "cookie"
 }
 ```
 
@@ -243,8 +281,8 @@ Providers are at the heart of UTCP's flexibility. They define the communication 
 *   `websocket`: WebSocket bidirectional connection (work in progress)
 *   `grpc`: gRPC (Google Remote Procedure Call) (work in progress)
 *   `graphql`: GraphQL query language (work in progress)
-*   `tcp`: Raw TCP socket (work in progress)
-*   `udp`: User Datagram Protocol (work in progress)
+*   `tcp`: Raw TCP socket
+*   `udp`: User Datagram Protocol
 *   `webrtc`: Web Real-Time Communication (work in progress)
 *   `mcp`: Model Context Protocol (for interoperability)
 *   `text`: Local text file
@@ -266,6 +304,11 @@ For connecting to standard RESTful APIs.
   "url": "https://api.example.com/utcp",
   "http_method": "POST",
   "content_type": "application/json",
+  "headers": {
+    "User-Agent": "MyApp/1.0"
+  },
+  "body_field": "LLM_generated_param_to_be_sent_as_body",
+  "header_fields": ["LLM_generated_param_to_be_sent_as_header"],
   "auth": {
     "auth_type": "oauth2",
     "token_url": "https://api.example.com/oauth/token",
@@ -274,6 +317,15 @@ For connecting to standard RESTful APIs.
   }
 }
 ```
+
+**Key HttpProvider Fields:**
+* `http_method`: HTTP method - `"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"` (default: `"GET"`)
+* `url`: The endpoint URL (supports path parameters with `{param}` syntax)
+* `content_type`: Content-Type header for request body (default: `"application/json"`)
+* `headers`: Static headers to include in all requests
+* `body_field`: Name of the input field to use as request body (default: `"body"`)
+* `header_fields`: List of input fields to send as request headers
+* `auth`: Authentication configuration
 
 #### Automatic OpenAPI Conversion
 
@@ -289,6 +341,53 @@ UTCP simplifies integration with existing web services by automatically converti
 
 When the client registers this provider, it will fetch the OpenAPI spec from the URL, convert all defined endpoints into UTCP `Tool` objects, and make them available for searching and calling.
 
+#### URL Path Parameters
+
+HTTP-based providers (HTTP, SSE, HTTP Stream) support dynamic URL path parameters that can be substituted from tool arguments. This enables integration with RESTful APIs that use path-based resource identification.
+
+**URL Template Format:**
+Path parameters are specified in the URL using curly braces: `{parameter_name}`
+
+**Example:**
+```json
+{
+  "name": "openlibrary_api",
+  "provider_type": "http",
+  "url": "https://openlibrary.org/api/volumes/brief/{key_type}/{value}.json",
+  "http_method": "GET"
+}
+```
+
+**How it works:**
+1. When calling a tool, parameters matching the path parameter names are extracted from the tool arguments
+2. These parameters are substituted into the URL template
+3. The used parameters are removed from the arguments (so they don't become query parameters)
+4. Any remaining arguments become query parameters
+
+**Example usage:**
+```python
+# Tool call arguments
+arguments = {
+    "key_type": "isbn",
+    "value": "9780140328721", 
+    "format": "json"
+}
+
+# Results in URL: https://openlibrary.org/api/volumes/brief/isbn/9780140328721.json?format=json
+```
+
+**Multiple Path Parameters:**
+URLs can contain multiple path parameters:
+```json
+{
+  "url": "https://api.example.com/users/{user_id}/posts/{post_id}/comments/{comment_id}"
+}
+```
+
+**Error Handling:**
+- If a required path parameter is missing from the tool arguments, an error is raised
+- All path parameters must be provided for the tool call to succeed
+
 ### Server-Sent Events (SSE) Provider
 
 For tools that stream data using SSE. The `url` should point to the discovery endpoint.
@@ -297,10 +396,32 @@ For tools that stream data using SSE. The `url` should point to the discovery en
 {
   "name": "live_updates_service",
   "provider_type": "sse",
-  "url": "https://api.example.com/utcp",
-  "event_type": "message"
+  "url": "https://api.example.com/stream",
+  "event_type": "message",
+  "reconnect": true,
+  "retry_timeout": 30000,
+  "headers": {
+    "Accept": "text/event-stream"
+  },
+  "body_field": null,
+  "header_fields": ["LLM_generated_param_to_be_sent_as_header"],
+  "auth": {
+    "auth_type": "api_key",
+    "api_key": "your_api_key",
+    "var_name": "Authorization",
+    "location": "header"
+  }
 }
 ```
+
+**Key SSEProvider Fields:**
+* `url`: The SSE endpoint URL (supports path parameters)
+* `event_type`: Filter for specific SSE event types (optional)
+* `reconnect`: Whether to automatically reconnect on disconnect (default: `true`)
+* `retry_timeout`: Retry timeout in milliseconds (default: `30000`)
+* `headers`: Static headers for the SSE connection
+* `body_field`: Input field for connection request body (optional)
+* `header_fields`: Input fields to send as headers for initial connection
 
 ### HTTP Stream Provider
 
@@ -310,10 +431,33 @@ For tools that use HTTP chunked transfer encoding to stream data. The `url` shou
 {
   "name": "streaming_data_source",
   "provider_type": "http_stream",
-  "url": "https://api.example.com/utcp",
-  "http_method": "GET"
+  "url": "https://api.example.com/stream",
+  "http_method": "POST",
+  "content_type": "application/octet-stream",
+  "chunk_size": 4096,
+  "timeout": 60000,
+  "headers": {
+    "Accept": "application/octet-stream"
+  },
+  "body_field": "data",
+  "header_fields": ["LLM_generated_param_to_be_sent_as_header"],
+  "auth": {
+    "auth_type": "basic",
+    "username": "your_username",
+    "password": "your_password"
+  }
 }
 ```
+
+**Key StreamableHttpProvider Fields:**
+* `http_method`: HTTP method - `"GET"` or `"POST"` (default: `"GET"`)
+* `url`: The streaming endpoint URL (supports path parameters)
+* `content_type`: Content-Type for streaming data (default: `"application/octet-stream"`, also supports `"application/x-ndjson"`, `"application/json"`)
+* `chunk_size`: Size of chunks in bytes (default: `4096`)
+* `timeout`: Timeout in milliseconds (default: `60000`)
+* `headers`: Static headers for the stream connection
+* `body_field`: Input field for request body (optional)
+* `header_fields`: Input fields to send as headers
 
 ### CLI Provider
 
@@ -323,13 +467,24 @@ For wrapping local command-line tools.
 {
   "name": "my_cli_tool",
   "provider_type": "cli",
-  "command_name": "my-command -utcp"
+  "command_name": "my-command --utcp",
+  "env_vars": {
+    "MY_API_KEY": "${API_KEY}",
+    "DEBUG": "1"
+  },
+  "working_dir": "/path/to/working/directory"
 }
 ```
 
+**Key CliProvider Fields:**
+* `command_name`: The command to execute (should support UTCP discovery)
+* `env_vars`: Environment variables to set when executing (optional)
+* `working_dir`: Working directory for command execution (optional)
+* `auth`: Always `null` (CLI tools don't use UTCP auth)
+
 ### WebSocket Provider (work in progress)
 
-For tools that communicate over a WebSocket connection. Tool discovery may need to be handled via a separate HTTP endpoint.
+For tools that communicate over a WebSocket connection.
 
 ```json
 {
@@ -357,40 +512,150 @@ For connecting to gRPC services.
 
 ### GraphQL Provider (work in progress)
 
-For interacting with GraphQL APIs. The `url` should point to the discovery endpoint.
+For interacting with GraphQL APIs.
 
 ```json
 {
   "name": "my_graphql_api",
   "provider_type": "graphql",
-  "url": "https://api.example.com/utcp",
-  "operation_type": "query"
+  "url": "https://api.example.com/graphql",
+  "operation_type": "query",
+  "operation_name": "GetUserData",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "header_fields": ["LLM_generated_param_to_be_sent_as_header"],
+  "auth": {
+    "auth_type": "oauth2",
+    "token_url": "https://api.example.com/oauth/token",
+    "client_id": "graphql_client",
+    "client_secret": "secret_123"
+  }
 }
 ```
 
-### TCP Provider (work in progress)
+**Key GraphQLProvider Fields:**
+* `url`: The GraphQL endpoint URL
+* `operation_type`: Type of GraphQL operation - `"query"`, `"mutation"`, `"subscription"` (default: `"query"`)
+* `operation_name`: Name of the GraphQL operation (optional)
+* `headers`: Static headers for GraphQL requests
+* `header_fields`: Input fields to send as headers
 
-For raw TCP socket communication.
+### TCP Provider
 
+For TCP socket communication. Supports multiple framing strategies, JSON and text-based request formats, and configurable response handling.
+
+**Basic Example:**
 ```json
 {
-  "name": "raw_tcp_service",
+  "name": "tcp_service",
   "provider_type": "tcp",
   "host": "localhost",
-  "port": 12345
+  "port": 12345,
+  "timeout": 30000,
+  "request_data_format": "json",
+  "framing_strategy": "stream",
+  "response_byte_format": "utf-8"
 }
 ```
 
-### UDP Provider (work in progress)
+**Key TCP Provider Fields:**
 
-For UDP socket communication.
+* `host`: The hostname or IP address of the TCP server
+* `port`: The TCP port number
+* `timeout`: Timeout in milliseconds (default: 30000)
+* `request_data_format`: Either `"json"` for structured data or `"text"` for template-based formatting (default: `"json"`)
+* `request_data_template`: Template string for text format with `UTCP_ARG_argname_UTCP_ARG` placeholders
+* `response_byte_format`: Encoding for response bytes - `"utf-8"`, `"ascii"`, etc., or `null` for raw bytes (default: `"utf-8"`)
+* `framing_strategy`: Message framing strategy: `"stream"`, `"length_prefix"`, `"delimiter"`, or `"fixed_length"` (default: `"stream"`)
+* `length_prefix_bytes`: For length-prefix framing: 1, 2, 4, or 8 bytes (default: 4)
+* `length_prefix_endian`: For length-prefix framing: `"big"` or `"little"` (default: `"big"`)
+* `message_delimiter`: For delimiter framing: delimiter string like `"\n"`, `"\r\n"`, `"\x00"` (default: `"\x00"`)
+* `fixed_message_length`: For fixed-length framing: exact message length in bytes
+* `max_response_size`: For stream framing: maximum bytes to read (default: 65536)
+
+**Length-Prefix Framing Example:**
+```json
+{
+  "name": "binary_tcp_service",
+  "provider_type": "tcp",
+  "host": "192.168.1.50",
+  "port": 8080,
+  "framing_strategy": "length_prefix",
+  "length_prefix_bytes": 4,
+  "length_prefix_endian": "big",
+  "request_data_format": "json",
+  "response_byte_format": "utf-8"
+}
+```
+
+**Delimiter Framing Example:**
+```json
+{
+  "name": "line_based_tcp_service",
+  "provider_type": "tcp",
+  "host": "tcp.example.com",
+  "port": 9999,
+  "framing_strategy": "delimiter",
+  "message_delimiter": "\n",
+  "request_data_format": "text",
+  "request_data_template": "GET UTCP_ARG_resource_UTCP_ARG",
+  "response_byte_format": "ascii"
+}
+```
+
+**Fixed-Length Framing Example:**
+```json
+{
+  "name": "fixed_protocol_service",
+  "provider_type": "tcp",
+  "host": "legacy.example.com",
+  "port": 7777,
+  "framing_strategy": "fixed_length",
+  "fixed_message_length": 1024,
+  "request_data_format": "text",
+  "response_byte_format": null
+}
+```
+
+### UDP Provider
+
+For UDP socket communication. Supports both JSON and text-based request formats with configurable response handling.
 
 ```json
 {
   "name": "udp_telemetry_service",
   "provider_type": "udp",
   "host": "localhost",
-  "port": 54321
+  "port": 54321,
+  "timeout": 30000,
+  "request_data_format": "json",
+  "number_of_response_datagrams": 1,
+  "response_byte_format": "utf-8"
+}
+```
+
+**Key UDP Provider Fields:**
+
+* `host`: The hostname or IP address of the UDP server
+* `port`: The UDP port number
+* `timeout`: Timeout in milliseconds (default: 30000)
+* `request_data_format`: Either `"json"` for structured data or `"text"` for template-based formatting (default: `"json"`)
+* `request_data_template`: Template string for text format with `UTCP_ARG_argname_UTCP_ARG` placeholders
+* `number_of_response_datagrams`: Number of UDP response packets to expect (default: 0 for no response)
+* `response_byte_format`: Encoding for response bytes - `"utf-8"`, `"ascii"`, etc., or `null` for raw bytes (default: `"utf-8"`)
+
+**Text Format Example:**
+```json
+{
+  "name": "legacy_udp_service",
+  "provider_type": "udp",
+  "host": "192.168.1.100",
+  "port": 9999,
+  "request_data_format": "text",
+  "request_data_template": "CMD:UTCP_ARG_command_UTCP_ARG;VALUE:UTCP_ARG_value_UTCP_ARG",
+  "number_of_response_datagrams": 2,
+  "response_byte_format": "ascii"
 }
 ```
 
@@ -411,9 +676,10 @@ For peer-to-peer communication using WebRTC.
 
 For interoperability with the Model Context Protocol (MCP). This provider can connect to MCP servers via `stdio` or `http`.
 
+**HTTP MCP Server Example:**
 ```json
 {
-  "name": "my_mcp_service",
+  "name": "my_mcp_http_service",
   "provider_type": "mcp",
   "config": {
     "mcpServers": {
@@ -432,40 +698,39 @@ For interoperability with the Model Context Protocol (MCP). This provider can co
 }
 ```
 
-### Text Provider
-
-For loading tool definitions from a local text file. This is useful for defining a collection of tools that may use various other providers.
-
+**Stdio MCP Server Example:**
 ```json
 {
-  "name": "my_local_tools",
-  "signaling_server": "wss://signaling.example.com",
-  "peer_id": "unique-peer-id"
-}
-```
-
-### MCP Provider
-
-For interoperability with Model Context Protocol (MCP) servers.
-
-```json
-{
-  "name": "my_mcp_server",
+  "name": "my_mcp_stdio_service",
   "provider_type": "mcp",
   "config": {
     "mcpServers": {
-      "server_one": {
+      "local-server": {
+        "transport": "stdio",
         "command": "python",
-        "args": ["-m", "my_mcp_server.main"]
+        "args": ["-m", "my_mcp_server.main"],
+        "env": {
+          "API_KEY": "${MCP_API_KEY}",
+          "DEBUG": "1"
+        }
       }
     }
   }
 }
 ```
 
+**Key MCPProvider Fields:**
+* `config`: MCP configuration object containing server definitions
+* `config.mcpServers`: Dictionary of server name to server configuration
+* `auth`: OAuth2 authentication (optional, only for HTTP servers)
+
+**MCP Server Types:**
+* **HTTP**: `{"transport": "http", "url": "server_url"}`
+* **Stdio**: `{"transport": "stdio", "command": "cmd", "args": [...], "env": {...}}`
+
 ### Text Provider
 
-For loading tool definitions from a local file. This is useful for defining a collection of tools from different providers in a single place.
+For loading tool definitions from a local text file. This is useful for defining a collection of tools that may use various other providers.
 
 ```json
 {
@@ -475,13 +740,39 @@ For loading tool definitions from a local file. This is useful for defining a co
 }
 ```
 
+**Key TextProvider Fields:**
+* `file_path`: Path to the file containing tool definitions (required)
+* `auth`: Always `null` (text files don't require authentication)
+
+**Use Cases:**
+- Define tools that produce static output files
+- Create tool collections that reference other providers
+- Download manuals from a remote server to allow inspection of tools before calling them and guarantee security for high-risk environments
+
+
+
 ### Authentication
 
 UTCP supports several authentication methods, which can be configured on a per-provider basis:
 
-*   **API Key**: `ApiKeyAuth` - Authentication using an API key sent in a header.
-*   **Basic Auth**: `BasicAuth` - Authentication using a username and password.
-*   **OAuth2**: `OAuth2Auth` - Authentication using the OAuth2 protocol.
+*   **API Key**: `ApiKeyAuth` - Authentication using an API key that can be sent in headers, query parameters, or cookies
+*   **Basic Auth**: `BasicAuth` - Authentication using a username and password
+*   **OAuth2**: `OAuth2Auth` - Authentication using the OAuth2 client credentials flow with automatic token management
+
+#### Enhanced Authentication Features
+
+**Flexible API Key Placement:**
+- Headers (most common): `"location": "header"`
+- Query parameters: `"location": "query"` 
+- Cookies: `"location": "cookie"`
+
+**OAuth2 Automatic Token Management:**
+- Supports both body-based and header-based OAuth2 token requests
+- Automatic token caching and reuse
+- Fallback mechanisms for different OAuth2 server implementations
+
+**Comprehensive HTTP Transport Support:**
+All HTTP-based transports (HTTP, SSE, HTTP Stream) support the full range of authentication methods with proper configuration handling during both tool discovery and tool execution.
 
 ## UTCP Client Architecture
 
@@ -535,6 +826,27 @@ The `search_tools` method allows you to find relevant tools based on a query. It
 tools = client.search_tools(query="get current weather in London")
 for tool in tools:
     print(tool.name, tool.description)
+```
+
+## Testing
+
+The UTCP client includes comprehensive test suites for all transport implementations. Tests cover functionality, error handling, different configuration options, and edge cases.
+
+### Running Tests
+
+To run all tests:
+```bash
+python -m pytest
+```
+
+To run tests for a specific transport (e.g., TCP):
+```bash
+python -m pytest tests/client/transport_interfaces/test_tcp_transport.py -v
+```
+
+To run tests with coverage:
+```bash
+python -m pytest --cov=utcp tests/
 ```
 
 ## Build

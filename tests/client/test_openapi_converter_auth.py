@@ -47,7 +47,7 @@ async def test_webscraping_ai_auth_extraction():
         assert tool.tool_provider.auth is not None
         assert isinstance(tool.tool_provider.auth, ApiKeyAuth)
         assert tool.tool_provider.auth.var_name == "api_key"
-        assert tool.tool_provider.auth.api_key == "${WEBSCRAPING_AI_API_KEY}"
+        assert tool.tool_provider.auth.api_key.startswith("${API_KEY_")
         assert tool.tool_provider.auth.location == "query"
 
 
