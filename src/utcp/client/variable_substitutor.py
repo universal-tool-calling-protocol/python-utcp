@@ -12,7 +12,7 @@ class VariableSubstitutor(ABC):
         pass
 
     @abstractmethod
-    def find_required_variables(self, obj: Any, config: UtcpClientConfig, provider_name: Optional[str] = None) -> List[str]:
+    def find_required_variables(self, obj: dict | list | str, provider_name: str) -> List[str]:
         pass
     
 class DefaultVariableSubstitutor(VariableSubstitutor):

@@ -139,7 +139,7 @@ class TCPProvider(Provider):
         description="Strategy for framing TCP messages"
     )
     # Length-prefix framing options
-    length_prefix_bytes: int = Field(
+    length_prefix_bytes: Literal[1, 2, 4, 8] = Field(
         default=4,
         description="Number of bytes for length prefix (1, 2, 4, or 8). Used with 'length_prefix' framing."
     )
@@ -182,7 +182,7 @@ class UDPProvider(Provider):
     provider_type: Literal["udp"] = "udp"
     host: str
     port: int
-    number_of_response_datagrams: int = 0
+    number_of_response_datagrams: int = 1
     request_data_format: Literal["json", "text"] = "json"
     request_data_template: Optional[str] = None
     response_byte_format: Optional[str] = Field(default="utf-8", description="Encoding to decode response bytes. If None, returns raw bytes.")
