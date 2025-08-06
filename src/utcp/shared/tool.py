@@ -1,3 +1,17 @@
+"""Tool definitions and schema generation for UTCP.
+
+This module provides the core tool definition models and utilities for
+automatic schema generation from Python functions. It supports both
+manual tool definitions and decorator-based automatic tool creation.
+
+Key Components:
+    - Tool: The main tool definition model
+    - ToolInputOutputSchema: JSON Schema for tool inputs and outputs
+    - ToolContext: Global tool registry
+    - @utcp_tool: Decorator for automatic tool creation from functions
+    - Schema generation utilities for Python type hints
+"""
+
 import inspect
 from typing import Dict, Any, Optional, List, Set, Tuple, get_type_hints, get_origin, get_args, Union
 from pydantic import BaseModel, Field
@@ -5,6 +19,25 @@ from utcp.shared.provider import ProviderUnion
 
 
 class ToolInputOutputSchema(BaseModel):
+    """JSON Schema definition for tool inputs and outputs.
+
+    Represents a JSON Schema object that defines the structure and validation
+    rules for tool parameters (inputs) or return values (outputs). Compatible
+    with JSON Schema Draft 7.
+
+    Attributes:
+        type: The JSON Schema type (object, array, string, number, boolean, null).
+        properties: Dictionary of property definitions for object types.
+        required: List of required property names for object types.
+        description: Human-readable description of the schema.
+        title: Title for the schema.
+        items: Schema definition for array item types.
+        enum: List of allowed values for enumeration types.
+        minimum: Minimum value for numeric types.
+        maximum: Maximum value for numeric types.
+        format: String format specification (e.g., "date", "email"). None for strings.
+    """
+    
     type: str = Field(default="object")
     properties: Dict[str, Any] = Field(default_factory=dict)
     required: Optional[List[str]] = None
@@ -17,6 +50,22 @@ class ToolInputOutputSchema(BaseModel):
     format: Optional[str] = None  # For string formats
 
 class Tool(BaseModel):
+    """Definition of a UTCP tool.
+
+    Represents a callable tool with its metadata, input/output schemas,
+    and provider configuration. Tools are the fundamental units of
+    functionality in the UTCP ecosystem.
+
+    Attributes:
+        name: Unique identifier for the tool, typically in format "provider.tool_name".
+        description: Human-readable description of what the tool does.
+        inputs: JSON Schema defining the tool's input parameters.
+        outputs: JSON Schema defining the tool's return value structure.
+        tags: List of tags for categorization and search.
+        average_response_size: Optional hint about typical response size in bytes.
+        tool_provider: Provider configuration for accessing this tool.
+    """
+    
     name: str
     description: str = ""
     inputs: ToolInputOutputSchema = Field(default_factory=ToolInputOutputSchema)
@@ -26,22 +75,61 @@ class Tool(BaseModel):
     tool_provider: ProviderUnion
 
 class ToolContext:
+    """Global registry for UTCP tools.
+
+    Maintains a centralized collection of all registered tools in the current
+    process. Used by the @utcp_tool decorator to automatically register tools
+    and by servers to discover available tools.
+
+    Note:
+        This is a class-level registry using static methods. All tools
+        registered here are globally available within the process.
+    """
+    
     tools: List[Tool] = []
 
     @staticmethod
-    def add_tool(tool: Tool):
-        """Add a tool to the UTCP server."""
+    def add_tool(tool: Tool) -> None:
+        """Add a tool to the global tool registry.
 
+        Args:
+            tool: The tool definition to register.
+
+        Note:
+            Prints registration information for debugging purposes.
+        """
         print(f"Adding tool: {tool.name} with provider: {tool.tool_provider.name if tool.tool_provider else 'None'}")
         ToolContext.tools.append(tool)
 
     @staticmethod
     def get_tools() -> List[Tool]:
-        """Get the list of tools available in the UTCP server."""
+        """Get all tools from the global registry.
+
+        Returns:
+            List of all registered Tool objects.
+        """
         return ToolContext.tools
 
-########## UTCP Tool Decorator ##########
-def python_type_to_json_type(py_type):
+def python_type_to_json_type(py_type) -> str:
+    """Convert Python type annotations to JSON Schema type strings.
+
+    Maps Python type hints to their corresponding JSON Schema type names.
+    Handles generic types, unions, and optional types.
+
+    Args:
+        py_type: Python type annotation to convert.
+
+    Returns:
+        JSON Schema type string (e.g., "string", "number", "array", "object").
+
+    Examples:
+        >>> python_type_to_json_type(str)
+        "string"
+        >>> python_type_to_json_type(List[int])
+        "array"
+        >>> python_type_to_json_type(Optional[str])
+        "string"
+    """
     origin = get_origin(py_type)
     args = get_args(py_type)
 
@@ -76,9 +164,21 @@ def python_type_to_json_type(py_type):
     return mapping.get(py_type, "object")
 
 def get_docstring_description_input(func) -> Dict[str, Optional[str]]:
-    """
-    Extracts descriptions for parameters from the function docstring.
-    Returns a dict mapping param names to their descriptions.
+    """Extract parameter descriptions from function docstring.
+
+    Parses the function's docstring to extract descriptions for each parameter.
+    Looks for lines that start with parameter names followed by descriptions.
+
+    Args:
+        func: The function to extract parameter descriptions from.
+
+    Returns:
+        Dictionary mapping parameter names to their descriptions.
+        Parameters without descriptions are omitted.
+
+    Example:
+        For a function with docstring containing "param1: Description of param1",
+        returns {"param1": "Description of param1"}.
     """
     doc = func.__doc__
     if not doc:
@@ -93,9 +193,21 @@ def get_docstring_description_input(func) -> Dict[str, Optional[str]]:
     return descriptions
 
 def get_docstring_description_output(func) -> Dict[str, Optional[str]]:
-    """
-    Extracts the return value description from the function docstring.
-    Returns a dict with key 'return' and its description.
+    """Extract return value description from function docstring.
+
+    Parses the function's docstring to find the return value description.
+    Looks for lines starting with "Returns:" or "Return:".
+
+    Args:
+        func: The function to extract return description from.
+
+    Returns:
+        Dictionary with "return" key mapped to the description,
+        or empty dict if no return description is found.
+
+    Example:
+        For a docstring with "Returns: The computed result",
+        returns {"return": "The computed result"}.
     """
     doc = func.__doc__
     if not doc:
@@ -110,7 +222,21 @@ def get_docstring_description_output(func) -> Dict[str, Optional[str]]:
                 return {"return": doc.splitlines()[i + 1].strip()}
     return {}
 
-def get_param_description(cls, param_name=None):
+def get_param_description(cls, param_name: Optional[str] = None) -> str:
+    """Extract parameter description from class docstring or field metadata.
+
+    Attempts to find description for a parameter from various sources:
+    1. Class docstring lines starting with parameter name
+    2. Pydantic field descriptions
+    3. Class-level description or docstring as fallback
+
+    Args:
+        cls: The class to extract description from.
+        param_name: Optional specific parameter name to get description for.
+
+    Returns:
+        Description string for the parameter or class.
+    """
     # Try to get description for a specific param if available
     if param_name:
         # Check if there's a class variable or annotation with description
@@ -124,12 +250,46 @@ def get_param_description(cls, param_name=None):
     # Fallback to class-level description
     return getattr(cls, "description", "") or (getattr(cls, "__doc__", "") or "")
 
-def is_optional(t):
+def is_optional(t) -> bool:
+    """Check if a type annotation represents an optional type.
+
+    Determines if a type is Optional[T] (equivalent to Union[T, None]).
+
+    Args:
+        t: Type annotation to check.
+
+    Returns:
+        True if the type is optional (Union with None), False otherwise.
+
+    Examples:
+        >>> is_optional(Optional[str])
+        True
+        >>> is_optional(str)
+        False
+        >>> is_optional(Union[str, None])
+        True
+    """
     origin = get_origin(t)
     args = get_args(t)
     return origin is Union and type(None) in args
 
-def recurse_type(param_type):
+def recurse_type(param_type) -> Dict[str, Any]:
+    """Recursively convert Python type to JSON Schema object.
+
+    Creates a complete JSON Schema representation of a Python type,
+    including nested objects, arrays, and their properties.
+
+    Args:
+        param_type: Python type annotation to convert.
+
+    Returns:
+        Dictionary representing the JSON Schema for the type.
+        Includes type, properties, items, required fields, and descriptions.
+
+    Examples:
+        >>> recurse_type(List[str])
+        {"type": "array", "items": {"type": "string"}, "description": "An array of items"}
+    """
     json_type = python_type_to_json_type(param_type)
 
     # Handle array/list types
@@ -176,7 +336,20 @@ def recurse_type(param_type):
         "description": ""
     }
 
-def type_to_json_schema(param_type, param_name=None, param_description=None):
+def type_to_json_schema(param_type, param_name: Optional[str] = None, param_description: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Convert Python type to JSON Schema with description handling.
+
+    Creates a JSON Schema representation of a Python type with appropriate
+    descriptions from parameter documentation or auto-generated fallbacks.
+
+    Args:
+        param_type: Python type annotation to convert.
+        param_name: Optional parameter name for description lookup.
+        param_description: Optional dictionary of parameter descriptions.
+
+    Returns:
+        JSON Schema dictionary with type, description, and structure information.
+    """
     json_type = python_type_to_json_type(param_type)
 
     # Recurse for object and dict types
@@ -199,7 +372,22 @@ def type_to_json_schema(param_type, param_name=None, param_description=None):
     
     return val
 
-def generate_input_schema(func, title, description):
+def generate_input_schema(func, title: Optional[str], description: Optional[str]) -> ToolInputOutputSchema:
+    """Generate input schema for a function's parameters.
+
+    Analyzes a function's signature and type hints to create a JSON Schema
+    that describes the function's input parameters. Extracts parameter
+    descriptions from the function's docstring.
+
+    Args:
+        func: Function to generate input schema for.
+        title: Optional title for the schema.
+        description: Optional description for the schema.
+
+    Returns:
+        ToolInputOutputSchema object describing the function's input parameters.
+        Includes parameter types, required fields, and descriptions.
+    """
     sig = inspect.signature(func)
     type_hints = get_type_hints(func)
 
@@ -231,7 +419,22 @@ def generate_input_schema(func, title, description):
 
     return schema
 
-def generate_output_schema(func, title, description):
+def generate_output_schema(func, title: Optional[str], description: Optional[str]) -> ToolInputOutputSchema:
+    """Generate output schema for a function's return value.
+
+    Analyzes a function's return type annotation to create a JSON Schema
+    that describes the function's output. Extracts return value description
+    from the function's docstring.
+
+    Args:
+        func: Function to generate output schema for.
+        title: Optional title for the schema.
+        description: Optional description for the schema.
+
+    Returns:
+        ToolInputOutputSchema object describing the function's return value.
+        Contains "result" property with the return type and description.
+    """
     type_hints = get_type_hints(func)
     func_name = func.__name__
     func_description = description or func.__doc__ or ""
@@ -270,6 +473,43 @@ def utcp_tool(
     inputs: Optional[ToolInputOutputSchema] = None,
     outputs: Optional[ToolInputOutputSchema] = None,
 ):
+    """Decorator to convert Python functions into UTCP tools.
+
+    Automatically generates tool definitions with input/output schemas from
+    function signatures and type hints. Registers the tool in the global
+    ToolContext for discovery.
+
+    Args:
+        tool_provider: Provider configuration for accessing this tool.
+        name: Optional custom name for the tool. Defaults to function name.
+        description: Optional description. Defaults to function docstring.
+        tags: Optional list of tags for categorization. Defaults to ["utcp"].
+        inputs: Optional manual input schema. Auto-generated if not provided.
+        outputs: Optional manual output schema. Auto-generated if not provided.
+
+    Returns:
+        Decorator function that transforms the target function into a UTCP tool.
+
+    Examples:
+        >>> @utcp_tool(HttpProvider(url="https://api.example.com"))
+        ... def get_weather(location: str) -> dict:
+        ...     pass
+
+        >>> @utcp_tool(
+        ...     tool_provider=CliProvider(command_name="curl"),
+        ...     name="fetch_url",
+        ...     description="Fetch content from a URL",
+        ...     tags=["http", "utility"]
+        ... )
+        ... def fetch(url: str) -> str:
+        ...     pass
+
+    Note:
+        The decorated function gains additional attributes:
+        - input(): Returns the input schema
+        - output(): Returns the output schema  
+        - tool_definition(): Returns the complete Tool object
+    """
     def decorator(func):
         if tool_provider.name is None:
             tool_provider.name = f"{func.__name__}_provider"

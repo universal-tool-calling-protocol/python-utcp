@@ -1,9 +1,34 @@
+"""Abstract interface for tool and provider storage.
+
+This module defines the contract for implementing tool repositories that store
+and manage UTCP tools and their associated providers. Different implementations
+can provide various storage backends such as in-memory, database, or file-based
+storage.
+"""
+
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from utcp.shared.provider import Provider
 from utcp.shared.tool import Tool
 
 class ToolRepository(ABC):
+    """Abstract interface for tool and provider storage implementations.
+
+    Defines the contract for repositories that manage the lifecycle and storage
+    of UTCP tools and providers. Repositories are responsible for:
+    - Persisting provider configurations and their associated tools
+    - Providing efficient lookup and retrieval operations
+    - Managing relationships between providers and tools
+    - Ensuring data consistency during operations
+
+    The repository interface supports both individual and bulk operations,
+    allowing for flexible implementation strategies ranging from simple
+    in-memory storage to sophisticated database backends.
+
+    Note:
+        All methods are async to support both synchronous and asynchronous
+        storage implementations.
+    """
     @abstractmethod
     async def save_provider_with_tools(self, provider: Provider, tools: List[Tool]) -> None:
         """

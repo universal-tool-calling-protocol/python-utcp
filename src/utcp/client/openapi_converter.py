@@ -1,3 +1,22 @@
+"""OpenAPI specification converter for UTCP tool generation.
+
+This module provides functionality to convert OpenAPI specifications (both 2.0
+and 3.0) into UTCP tool definitions. It handles schema resolution, authentication
+mapping, and proper tool creation from REST API specifications.
+
+Key Features:
+    - OpenAPI 2.0 and 3.0 specification support
+    - Automatic JSON reference ($ref) resolution
+    - Authentication scheme mapping (API key, Basic, OAuth2)
+    - Input/output schema extraction from OpenAPI schemas
+    - URL path parameter handling
+    - Request body and header field mapping
+    - Provider name generation from specification metadata
+
+The converter creates UTCP tools that can be used to interact with REST APIs
+defined by OpenAPI specifications, providing a bridge between OpenAPI and UTCP.
+"""
+
 import json
 from typing import Any, Dict, List, Optional, Tuple
 import sys
@@ -11,9 +30,45 @@ from utcp.shared.auth import Auth, ApiKeyAuth, BasicAuth, OAuth2Auth
 
 
 class OpenApiConverter:
-    """Converts an OpenAPI JSON specification into a UtcpManual."""
+    """Converts OpenAPI specifications into UTCP tool definitions.
+
+    Processes OpenAPI 2.0 and 3.0 specifications to generate equivalent UTCP
+    tools, handling schema resolution, authentication mapping, and proper
+    HTTP provider configuration. Each operation in the OpenAPI spec becomes
+    a UTCP tool with appropriate input/output schemas.
+
+    Features:
+        - Complete OpenAPI specification parsing
+        - Recursive JSON reference ($ref) resolution  
+        - Authentication scheme conversion (API key, Basic, OAuth2)
+        - Input parameter and request body handling
+        - Response schema extraction
+        - URL template and path parameter support
+        - Provider name normalization
+        - Placeholder variable generation for configuration
+
+    Architecture:
+        The converter works by iterating through all paths and operations
+        in the OpenAPI spec, extracting relevant information for each
+        operation, and creating corresponding UTCP tools with HTTP providers.
+
+    Attributes:
+        spec: The parsed OpenAPI specification dictionary.
+        spec_url: Optional URL where the specification was retrieved from.
+        placeholder_counter: Counter for generating unique placeholder variables.
+        provider_name: Normalized name for the provider derived from the spec.
+    """
 
     def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, provider_name: Optional[str] = None):
+        """Initialize the OpenAPI converter.
+
+        Args:
+            openapi_spec: Parsed OpenAPI specification as a dictionary.
+            spec_url: Optional URL where the specification was retrieved from.
+                Used for base URL determination if servers are not specified.
+            provider_name: Optional custom name for the provider. If not
+                provided, derives name from the specification title.
+        """
         self.spec = openapi_spec
         self.spec_url = spec_url
         # Single counter for all placeholder variables

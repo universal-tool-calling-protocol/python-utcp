@@ -1,7 +1,23 @@
-"""
-Command Line Interface (CLI) transport for UTCP client.
+"""Command Line Interface (CLI) transport for UTCP client.
 
-This transport executes command-line tools and processes.
+This module provides the CLI transport implementation that enables UTCP clients
+to interact with command-line tools and processes. It handles tool discovery
+through startup commands, tool execution with proper argument formatting,
+and output processing with JSON parsing capabilities.
+
+Key Features:
+    - Asynchronous command execution with timeout handling
+    - Tool discovery via startup commands that output UTCP manuals
+    - Flexible argument formatting for command-line flags
+    - Environment variable support for authentication and configuration
+    - JSON output parsing with fallback to raw text
+    - Cross-platform command parsing (Windows/Unix)
+    - Working directory control for command execution
+
+Security:
+    - Command execution is isolated through subprocess
+    - Environment variables can be controlled per provider
+    - Working directory can be restricted
 """
 import asyncio
 import json
@@ -20,11 +36,28 @@ from utcp.shared.utcp_manual import UtcpManual
 
 class CliTransport(ClientTransportInterface):
     """Transport implementation for CLI-based tool providers.
-    
-    This transport executes command-line tools and processes. It supports:
-    - Tool discovery via startup commands that output tool definitions
-    - Tool execution by running commands with arguments
-    - Basic authentication via environment variables or command-line flags
+
+    Handles communication with command-line tools by executing processes
+    and managing their input/output. Supports both tool discovery and
+    execution phases with comprehensive error handling and timeout management.
+
+    Features:
+        - Asynchronous subprocess execution with proper cleanup
+        - Tool discovery through startup commands returning UTCP manuals
+        - Flexible argument formatting for various CLI conventions
+        - Environment variable injection for authentication
+        - JSON output parsing with graceful fallback to text
+        - Cross-platform command parsing and execution
+        - Configurable working directories and timeouts
+        - Process lifecycle management with proper termination
+
+    Architecture:
+        CLI tools are discovered by executing the provider's command_name
+        and parsing the output for UTCP manual JSON. Tool calls execute
+        the same command with formatted arguments and return processed output.
+
+    Attributes:
+        _log: Logger function for debugging and error reporting.
     """
     
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
