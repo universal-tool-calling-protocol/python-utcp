@@ -1,3 +1,10 @@
+"""Tag-based tool search strategy implementation.
+
+This module provides a search strategy that ranks tools based on tag matches
+and description keyword matches. It implements a weighted scoring system where
+explicit tag matches receive higher scores than description word matches.
+"""
+
 from utcp.client.tool_search_strategy import ToolSearchStrategy
 from typing import List, Dict, Tuple
 from utcp.shared.tool import Tool
@@ -6,25 +13,73 @@ import re
 import asyncio
 
 class TagSearchStrategy(ToolSearchStrategy):
+    """Tag-based search strategy for UTCP tools.
+
+    Implements a weighted scoring algorithm that matches search queries against
+    tool tags and descriptions. Explicit tag matches receive full weight while
+    description word matches receive reduced weight.
+
+    Scoring Algorithm:
+        - Exact tag matches: Weight 1.0
+        - Tag word matches: Weight equal to description_weight
+        - Description word matches: Weight equal to description_weight
+        - Only considers description words longer than 2 characters
+
+    Examples:
+        >>> strategy = TagSearchStrategy(repository, description_weight=0.3)
+        >>> tools = await strategy.search_tools("weather api", limit=5)
+        >>> # Returns tools with "weather" or "api" tags/descriptions
+
+    Attributes:
+        tool_repository: Repository to search for tools.
+        description_weight: Weight multiplier for description matches (0.0-1.0).
+    """
 
     def __init__(self, tool_repository: ToolRepository, description_weight: float = 0.3):
+        """Initialize the tag search strategy.
+
+        Args:
+            tool_repository: Repository containing tools to search.
+            description_weight: Weight for description word matches relative to
+                tag matches. Should be between 0.0 and 1.0, where 1.0 gives
+                equal weight to tags and descriptions.
+
+        Raises:
+            ValueError: If description_weight is not between 0.0 and 1.0.
+        """
+        if not 0.0 <= description_weight <= 1.0:
+            raise ValueError("description_weight must be between 0.0 and 1.0")
+            
         self.tool_repository = tool_repository
         # Weight for description words vs explicit tags (explicit tags have weight of 1.0)
         self.description_weight = description_weight
 
     async def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
-        """
-        Return tools ordered by tag occurrences in the query.
-        
-        Uses both explicit tags and words from tool descriptions (with less weight).
-        
+        """Search tools using tag and description matching.
+
+        Implements a weighted scoring system that ranks tools based on how well
+        their tags and descriptions match the search query. Normalizes the query
+        and uses word-based matching with configurable weights.
+
+        Scoring Details:
+            - Exact tag matches in query: +1.0 points
+            - Individual tag words matching query words: +description_weight points
+            - Description words matching query words: +description_weight points
+            - Only description words > 2 characters are considered
+
         Args:
-            query: The search query string
-            limit: Maximum number of tools to return
-            
+            query: Search query string. Case-insensitive, word-based matching.
+            limit: Maximum number of tools to return. Must be >= 0.
+
         Returns:
-            List of tools ordered by relevance to the query
+            List of Tool objects ranked by relevance score (highest first).
+            Empty list if no tools match or repository is empty.
+
+        Raises:
+            ValueError: If limit is negative.
         """
+        if limit < 0:
+            raise ValueError("limit must be non-negative")
         # Normalize query to lowercase and split into words
         query_lower = query.lower()
         # Extract words from the query, filtering out non-word characters

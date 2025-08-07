@@ -1,3 +1,17 @@
+"""HTTP transport implementation for UTCP client.
+
+This module provides the HTTP transport implementation that handles communication
+with HTTP-based tool providers. It supports RESTful APIs, authentication methods,
+URL path parameters, and automatic tool discovery through various formats.
+
+Key Features:
+    - Multiple authentication methods (API key, Basic, OAuth2)
+    - URL path parameter substitution
+    - Automatic tool discovery from UTCP manuals, OpenAPI specs, and YAML
+    - Security enforcement (HTTPS or localhost only)
+    - Request/response handling with proper error management
+"""
+
 from typing import Dict, Any, List
 import aiohttp
 import json
@@ -15,7 +29,34 @@ from typing import Optional, Callable
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 
 class HttpClientTransport(ClientTransportInterface):
+    """HTTP transport implementation for UTCP client.
+
+    Handles communication with HTTP-based tool providers, supporting various
+    authentication methods, URL path parameters, and automatic tool discovery.
+    Enforces security by requiring HTTPS or localhost connections.
+
+    Features:
+        - RESTful API communication with configurable HTTP methods
+        - Multiple authentication: API key (header/query/cookie), Basic, OAuth2
+        - URL path parameter substitution from tool arguments
+        - Tool discovery from UTCP manuals, OpenAPI specs, and YAML
+        - Request body and header field mapping from tool arguments
+        - OAuth2 token caching and automatic refresh
+        - Security validation of connection URLs
+
+    Attributes:
+        _session: Optional aiohttp ClientSession for connection reuse.
+        _oauth_tokens: Cache of OAuth2 tokens by client_id.
+        _log: Logger function for debugging and error reporting.
+    """
+
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
+        """Initialize the HTTP transport.
+
+        Args:
+            logger: Optional logging function that accepts log messages.
+                Defaults to a no-op function if not provided.
+        """
         self._session: Optional[aiohttp.ClientSession] = None
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 

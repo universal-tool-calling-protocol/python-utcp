@@ -1,3 +1,17 @@
+"""Main UTCP client implementation.
+
+This module provides the primary client interface for the Universal Tool Calling
+Protocol. The UtcpClient class manages multiple transport implementations,
+tool repositories, search strategies, and provider configurations.
+
+Key Features:
+    - Multi-transport support (HTTP, CLI, WebSocket, etc.)
+    - Dynamic provider registration and deregistration
+    - Tool discovery and search capabilities
+    - Variable substitution for configuration
+    - Pluggable tool repositories and search strategies
+"""
+
 from pathlib import Path
 import re
 import os
@@ -27,8 +41,17 @@ from utcp.shared.provider import Provider, HttpProvider, CliProvider, SSEProvide
 from utcp.client.variable_substitutor import DefaultVariableSubstitutor, VariableSubstitutor
 
 class UtcpClientInterface(ABC):
-    """
-    Interface for a UTCP client.
+    """Abstract interface for UTCP client implementations.
+
+    Defines the core contract for UTCP clients, including provider management,
+    tool execution, search capabilities, and variable handling. This interface
+    allows for different client implementations while maintaining consistency.
+
+    The interface supports:
+    - Provider lifecycle management (register/deregister)
+    - Tool discovery and execution
+    - Tool search and filtering
+    - Configuration variable validation
     """
     @abstractmethod
     def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
@@ -108,6 +131,40 @@ class UtcpClientInterface(ABC):
         pass
 
 class UtcpClient(UtcpClientInterface):
+    """Main implementation of the UTCP client.
+
+    The UtcpClient is the primary entry point for interacting with UTCP tool
+    providers. It manages multiple transport implementations, handles provider
+    registration, executes tool calls, and provides search capabilities.
+
+    Key Features:
+        - Multi-transport architecture supporting HTTP, CLI, WebSocket, etc.
+        - Dynamic provider registration from configuration files
+        - Variable substitution for secure credential management
+        - Pluggable tool repositories and search strategies
+        - Comprehensive error handling and validation
+
+    Architecture:
+        - Transport Layer: Handles protocol-specific communication
+        - Repository Layer: Manages tool and provider storage
+        - Search Layer: Provides tool discovery and filtering
+        - Configuration Layer: Manages settings and variable substitution
+
+    Usage:
+        >>> client = await UtcpClient.create({
+        ...     "providers_file_path": "./providers.json"
+        ... })
+        >>> tools = await client.search_tools("weather")
+        >>> result = await client.call_tool("api.get_weather", {"city": "NYC"})
+
+    Attributes:
+        transports: Dictionary mapping provider types to transport implementations.
+        tool_repository: Storage backend for tools and providers.
+        search_strategy: Algorithm for tool search and ranking.
+        config: Client configuration including file paths and settings.
+        variable_substitutor: Handler for environment variable substitution.
+    """
+    
     transports: Dict[str, ClientTransportInterface] = {
         "http": HttpClientTransport(),
         "cli": CliTransport(),
@@ -153,17 +210,17 @@ class UtcpClient(UtcpClientInterface):
 
         client = cls(config, tool_repository, search_strategy, DefaultVariableSubstitutor())
 
-        # If a providers file is used, configure TextTransport to resolve relative paths from its directory
-        if config.providers_file_path:
-            providers_dir = os.path.dirname(os.path.abspath(config.providers_file_path))
-            client.transports["text"] = TextTransport(base_path=providers_dir)
-        
         if client.config.variables:
             config_without_vars = client.config.model_copy()
             config_without_vars.variables = None
             client.config.variables = client.variable_substitutor.substitute(client.config.variables, config_without_vars)
 
-        await client.load_providers(config.providers_file_path)
+        # If a providers file is used, configure TextTransport to resolve relative paths from its directory
+        if config.providers_file_path:
+            providers_dir = os.path.dirname(os.path.abspath(config.providers_file_path))
+            client.transports["text"] = TextTransport(base_path=providers_dir)
+        
+            await client.load_providers(config.providers_file_path)
         
         return client
 
