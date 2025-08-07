@@ -15,7 +15,7 @@ The configuration system enables:
 
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Literal, TypedDict
+from typing import Optional, List, Dict, Annotated, Union, Literal
 from dotenv import dotenv_values
 
 class UtcpVariableNotFound(Exception):
@@ -51,7 +51,7 @@ class UtcpVariablesConfig(BaseModel, ABC):
     Attributes:
         type: Type identifier for the variable loader.
     """
-    type: Literal["dotenv"] = "dotenv"
+    type: str
 
     @abstractmethod
     def get(self, key: str) -> Optional[str]:
@@ -81,6 +81,7 @@ class UtcpDotEnv(UtcpVariablesConfig):
         api_key = loader.get("API_KEY")
         ```
     """
+    type: Literal["dotenv"] = "dotenv"
     env_file_path: str
 
     def get(self, key: str) -> Optional[str]:
@@ -93,6 +94,13 @@ class UtcpDotEnv(UtcpVariablesConfig):
             Variable value if found in the file, None otherwise.
         """
         return dotenv_values(self.env_file_path).get(key)
+
+UtcpVariablesConfigUnion = Annotated[
+    Union[
+        UtcpDotEnv
+    ],
+    Field(discriminator="type")
+]
 
 class UtcpClientConfig(BaseModel):
     """Configuration model for UTCP client setup.
@@ -128,4 +136,4 @@ class UtcpClientConfig(BaseModel):
     """
     variables: Optional[Dict[str, str]] = Field(default_factory=dict)
     providers_file_path: Optional[str] = None
-    load_variables_from: Optional[List[UtcpVariablesConfig]] = None
+    load_variables_from: Optional[List[UtcpVariablesConfigUnion]] = None

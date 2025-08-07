@@ -210,17 +210,17 @@ class UtcpClient(UtcpClientInterface):
 
         client = cls(config, tool_repository, search_strategy, DefaultVariableSubstitutor())
 
-        # If a providers file is used, configure TextTransport to resolve relative paths from its directory
-        if config.providers_file_path:
-            providers_dir = os.path.dirname(os.path.abspath(config.providers_file_path))
-            client.transports["text"] = TextTransport(base_path=providers_dir)
-        
         if client.config.variables:
             config_without_vars = client.config.model_copy()
             config_without_vars.variables = None
             client.config.variables = client.variable_substitutor.substitute(client.config.variables, config_without_vars)
 
-        await client.load_providers(config.providers_file_path)
+        # If a providers file is used, configure TextTransport to resolve relative paths from its directory
+        if config.providers_file_path:
+            providers_dir = os.path.dirname(os.path.abspath(config.providers_file_path))
+            client.transports["text"] = TextTransport(base_path=providers_dir)
+        
+            await client.load_providers(config.providers_file_path)
         
         return client
 
