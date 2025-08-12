@@ -21,13 +21,12 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 import sys
 import uuid
-from utcp.shared.tool import Tool, ToolInputOutputSchema
-from utcp.shared.utcp_manual import UtcpManual
 from urllib.parse import urlparse
-
-from utcp.shared.provider import HttpProvider
-from utcp.shared.auth import Auth, ApiKeyAuth, BasicAuth, OAuth2Auth
-
+from utcp.data.auth import Auth, ApiKeyAuth, BasicAuth, OAuth2Auth
+from utcp.data.utcp_manual import UtcpManual
+from utcp.data.tool import Tool, JsonSchema
+from utcp.data.call_template import CallTemplate
+from utcp_http.http_call_template import HttpCallTemplate
 
 class OpenApiConverter:
     """Converts OpenAPI specifications into UTCP tool definitions.
@@ -307,7 +306,7 @@ class OpenApiConverter:
         # Combine base URL and path, ensuring no double slashes
         full_url = base_url.rstrip('/') + '/' + path.lstrip('/')
 
-        provider = HttpProvider(
+        provider = HttpCallTemplate(
             name=provider_name,
             provider_type="http",
             http_method=method.upper(),
@@ -326,7 +325,7 @@ class OpenApiConverter:
             tool_provider=provider
         )
 
-    def _extract_inputs(self, operation: Dict[str, Any]) -> Tuple[ToolInputOutputSchema, List[str], Optional[str]]:
+    def _extract_inputs(self, operation: Dict[str, Any]) -> Tuple[JsonSchema, List[str], Optional[str]]:
         """Extracts input schema, header fields, and body field from an OpenAPI operation."""
         properties = {}
         required = []
@@ -368,21 +367,21 @@ class OpenApiConverter:
                 if resolved_body.get("required"):
                     required.append(body_field)
 
-        schema = ToolInputOutputSchema(properties=properties, required=required if required else None)
+        schema = JsonSchema(properties=properties, required=required if required else None)
         return schema, header_fields, body_field
 
-    def _extract_outputs(self, operation: Dict[str, Any]) -> ToolInputOutputSchema:
+    def _extract_outputs(self, operation: Dict[str, Any]) -> JsonSchema:
         """Extracts the output schema from an OpenAPI operation, resolving refs."""
         success_response = operation.get("responses", {}).get("200") or operation.get("responses", {}).get("201")
         if not success_response:
-            return ToolInputOutputSchema()
+            return JsonSchema()
 
         resolved_response = self._resolve_schema(success_response)
         content = resolved_response.get("content", {})
         json_schema = content.get("application/json", {}).get("schema")
 
         if not json_schema:
-            return ToolInputOutputSchema()
+            return JsonSchema()
 
         resolved_json_schema = self._resolve_schema(json_schema)
         schema_args = {
@@ -402,4 +401,4 @@ class OpenApiConverter:
             if attr in resolved_json_schema:
                 schema_args[attr] = resolved_json_schema.get(attr)
                 
-        return ToolInputOutputSchema(**schema_args)
+        return JsonSchema(**schema_args)

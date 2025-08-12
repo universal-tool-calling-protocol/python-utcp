@@ -1,7 +1,6 @@
 import inspect
 from typing import Dict, Any, Optional, List, Set, Tuple, get_type_hints, get_origin, get_args, Union
-from pydantic import BaseModel, Field
-from utcp.shared.provider import ProviderUnion
+from pydantic import BaseModel
 from utcp.data.tool import Tool, JsonSchema
 from utcp.data.call_template import CallTemplate
 
@@ -29,7 +28,7 @@ class ToolContext:
         Note:
             Prints registration information for debugging purposes.
         """
-        print(f"Adding tool: {tool.name} with provider: {tool.tool_call_template.name if tool.tool_call_template else 'None'}")
+        print(f"Adding tool: {tool.name} with call template: {tool.tool_call_template.name if tool.tool_call_template else 'None'}")
         ToolContext.tools.append(tool)
 
     @staticmethod
@@ -420,20 +419,6 @@ def utcp_tool(
 
     Returns:
         Decorator function that transforms the target function into a UTCP tool.
-
-    Examples:
-        >>> @utcp_tool(HttpProvider(url="https://api.example.com"))
-        ... def get_weather(location: str) -> dict:
-        ...     pass
-
-        >>> @utcp_tool(
-        ...     tool_call_template=CliProvider(command_name="curl"),
-        ...     name="fetch_url",
-        ...     description="Fetch content from a URL",
-        ...     tags=["http", "utility"]
-        ... )
-        ... def fetch(url: str) -> str:
-        ...     pass
 
     Note:
         The decorated function gains additional attributes:
