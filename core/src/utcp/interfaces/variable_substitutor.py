@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional, List
 from utcp.data.utcp_client_config import UtcpClientConfig
-from utcp.data.utcp_client_config import UtcpVariableNotFound
 
 class VariableSubstitutor(ABC):
     """Abstract interface for variable substitution implementations.

@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from utcp.data.call_template import CallTemplate
 from utcp.data.tool import Tool
+from utcp.data.utcp_manual import UtcpManual
 
 class ConcurrentToolRepository(ABC):
     """Abstract interface for tool and provider storage implementations.
@@ -30,40 +31,43 @@ class ConcurrentToolRepository(ABC):
         All methods are async to support both synchronous and asynchronous
         storage implementations.
     """
+    tool_repository_implementations: Dict[str, 'ConcurrentToolRepository'] = {}
+    default_repository = "in_memory"
+
     @abstractmethod
-    async def save_manual_call_template_with_tools(self, manual_call_template: CallTemplate, tools: List[Tool]) -> None:
+    async def save_manual(self, manual_call_template: CallTemplate, manual: UtcpManual) -> None:
         """
-        Save a manual call template and its tools in the repository.
+        Save a manual and its tools in the repository.
 
         Args:
             manual_call_template: The call template associated with the manual to save.
-            tools: The tools from the manual.
+            manual: The manual to save.
         """
         pass
 
     @abstractmethod
-    async def remove_manual_call_template(self, manual_call_template_name: str) -> None:
+    async def remove_manual(self, manual_name: str) -> bool:
         """
-        Remove a manual call template and its tools from the repository.
+        Remove a manual and its tools from the repository.
 
         Args:
-            manual_call_template_name: The name of the manual call template to remove.
+            manual_name: The name of the manual to remove.
 
-        Raises:
-            ValueError: If the manual call template is not found.
+        Returns:
+            True if the manual was removed, False otherwise.
         """
         pass
 
     @abstractmethod
-    async def remove_tool(self, tool_name: str) -> None:
+    async def remove_tool(self, tool_name: str) -> bool:
         """
         Remove a tool from the repository.
 
         Args:
             tool_name: The name of the tool to remove.
 
-        Raises:
-            ValueError: If the tool is not found.
+        Returns:
+            True if the tool was removed, False otherwise.
         """
         pass
 
@@ -91,15 +95,38 @@ class ConcurrentToolRepository(ABC):
         pass
     
     @abstractmethod
-    async def get_tools_by_manual_call_template(self, manual_call_template_name: str) -> Optional[List[Tool]]:
+    async def get_tools_by_manual(self, manual_name: str) -> Optional[List[Tool]]:
         """
-        Get tools associated with a specific manual call template.
+        Get tools associated with a specific manual.
 
         Args:
-            manual_call_template_name: The name of the manual call template.
+            manual_name: The name of the manual.
 
         Returns:
-            A list of tools associated with the manual call template, or None if the manual call template is not found.
+            A list of tools associated with the manual, or None if the manual is not found.
+        """
+        pass
+
+    @abstractmethod
+    async def get_manual(self, manual_name: str) -> Optional[UtcpManual]:
+        """
+        Get a manual from the repository.
+
+        Args:
+            manual_name: The name of the manual to retrieve.
+
+        Returns:
+            The manual if found, otherwise None.
+        """
+        pass
+
+    @abstractmethod
+    async def get_manuals(self) -> List[UtcpManual]:
+        """
+        Get all manuals from the repository.
+
+        Returns:
+            A list of manuals.
         """
         pass
 

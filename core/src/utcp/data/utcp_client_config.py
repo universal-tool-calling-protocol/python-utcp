@@ -3,6 +3,9 @@ from typing import Optional, List, Dict
 from utcp.data.variable_loader import VariableLoader, VariableLoaderSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
+from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
+from utcp.data.call_template import CallTemplate, CallTemplateSerializer
 
 class UtcpClientConfig(BaseModel):
     """Configuration model for UTCP client setup.
@@ -28,17 +31,21 @@ class UtcpClientConfig(BaseModel):
     Example:
         ```python
         config = UtcpClientConfig(
-            variables={"API_BASE": "https://api.example.com"},
-            providers_file_path="providers.yaml",
+            variables={"MANUAL__NAME_API_KEY_NAME": "$REMAPPED_API_KEY"},
             load_variables_from=[
                 VariableLoaderSerializer().validate_dict({"type": "dotenv", "env_file_path": ".env"})
-            ]
+            ],
+            tool_repository="in_memory",
+            tool_search_strategy="tag_and_description_word_match",
+            manual_call_templates=[]
         )
         ```
     """
     variables: Optional[Dict[str, str]] = Field(default_factory=dict)
-    providers_file_path: Optional[str] = None
     load_variables_from: Optional[List[VariableLoader]] = None
+    tool_repository: str = ConcurrentToolRepository.default_repository
+    tool_search_strategy: str = ToolSearchStrategy.default_strategy
+    manual_call_templates: List[CallTemplate] = []
 
     @field_serializer("load_variables_from")
     def serialize_load_variables_from(cls, v):
@@ -48,6 +55,15 @@ class UtcpClientConfig(BaseModel):
     @classmethod
     def validate_load_variables_from(cls, v):
         return [VariableLoaderSerializer().validate_dict(v) for v in v]
+
+    @field_serializer("manual_call_templates")
+    def serialize_manual_call_templates(cls, v):
+        return [CallTemplateSerializer().to_dict(v) for v in v]
+    
+    @field_validator("manual_call_templates")
+    @classmethod
+    def validate_manual_call_templates(cls, v):
+        return [CallTemplateSerializer().validate_dict(v) for v in v]
 
 class UtcpClientConfigSerializer(Serializer[UtcpClientConfig]):
     def to_dict(self, obj: UtcpClientConfig) -> dict:

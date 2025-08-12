@@ -1,9 +1,10 @@
 from typing import List, Dict, Optional
 
-from utcp.implementations.async_rwlock import AsyncRWLock
+from core.src.utcp.data.utcp_manual import UtcpManual
+from utcp.python_specific_tooling.async_rwlock import AsyncRWLock
 from utcp.data.call_template import CallTemplate
 from utcp.data.tool import Tool
-from utcp.interfaces.tool_repository import ConcurrentToolRepository
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
 
 class InMemToolRepository(ConcurrentToolRepository):
     """Thread-safe in-memory implementation of `ConcurrentToolRepository`.
@@ -20,58 +21,56 @@ class InMemToolRepository(ConcurrentToolRepository):
         # Tool name -> Tool
         self._tools_by_name: Dict[str, Tool] = {}
 
-        # Manual call template name -> List[Tool]
-        self._tools_by_manual: Dict[str, List[Tool]] = {}
+        # Manual name -> UtcpManual
+        self._manuals: Dict[str, UtcpManual] = {}
 
-        # Manual call template name -> CallTemplate
-        self._manuals_by_name: Dict[str, CallTemplate] = {}
+        # Manual name -> CallTemplate
+        self._manual_call_templates: Dict[str, CallTemplate] = {}
 
-    async def save_manual_call_template_with_tools(self, manual_call_template: CallTemplate, tools: List[Tool]) -> None:
-        """Save a manual call template and replace its tools atomically."""
+    async def save_manual(self, manual_call_template: CallTemplate, manual: UtcpManual) -> None:
         async with self._rwlock.write():
             manual_name = manual_call_template.name
 
             # Remove old tools for this manual from the global index
-            old_tools = self._tools_by_manual.get(manual_name, [])
-            for t in old_tools:
-                self._tools_by_name.pop(t.name, None)
+            old_manual = self._manuals.get(manual_name)
+            if old_manual is not None:
+                for t in old_manual.tools:
+                    self._tools_by_name.pop(t.name, None)
 
             # Save/replace manual and its tools
-            self._manuals_by_name[manual_name] = manual_call_template
-            self._tools_by_manual[manual_name] = list(tools)
+            self._manual_call_templates[manual_name] = manual_call_template
+            self._manuals[manual_name] = manual
 
             # Index tools globally by name
-            for t in tools:
+            for t in manual.tools:
                 self._tools_by_name[t.name] = t
 
-    async def remove_manual_call_template(self, manual_call_template_name: str) -> None:
-        """Remove a manual call template and all its tools."""
+    async def remove_manual(self, manual_name: str) -> bool:
         async with self._rwlock.write():
-            if manual_call_template_name not in self._manuals_by_name:
-                raise ValueError(f"Manual call template '{manual_call_template_name}' not found")
-
             # Remove tools of this manual
-            for t in self._tools_by_manual.get(manual_call_template_name, []):
-                self._tools_by_name.pop(t.name, None)
+            old_manual = self._manuals.get(manual_name)
+            if old_manual is not None:
+                for t in old_manual.tools:
+                    self._tools_by_name.pop(t.name, None)
+            else:
+                return False
 
             # Remove manual and mapping
-            self._tools_by_manual.pop(manual_call_template_name, None)
-            self._manuals_by_name.pop(manual_call_template_name, None)
+            self._manuals.pop(manual_name, None)
+            self._manual_call_templates.pop(manual_name, None)
+            return True
 
-    async def remove_tool(self, tool_name: str) -> None:
-        """Remove a single tool by name from the repository.
-
-        If the tool is part of a manual's tool list, it will be removed from that list as well.
-        """
+    async def remove_tool(self, tool_name: str) -> bool:
         async with self._rwlock.write():
             tool = self._tools_by_name.pop(tool_name, None)
             if tool is None:
-                raise ValueError(f"Tool '{tool_name}' not found")
+                return False
 
             # Remove from any manual lists
-            for manual, lst in list(self._tools_by_manual.items()):
-                if lst:
-                    self._tools_by_manual[manual] = [t for t in lst if t.name != tool_name]
+            for manual in self._manuals.values():
+                if tool in manual.tools:
+                    manual.tools.remove(tool)
+            return True
 
     async def get_tool(self, tool_name: str) -> Optional[Tool]:
         async with self._rwlock.read():
@@ -81,15 +80,23 @@ class InMemToolRepository(ConcurrentToolRepository):
         async with self._rwlock.read():
             return list(self._tools_by_name.values())
 
-    async def get_tools_by_manual_call_template(self, manual_call_template_name: str) -> Optional[List[Tool]]:
+    async def get_tools_by_manual(self, manual_name: str) -> Optional[List[Tool]]:
         async with self._rwlock.read():
-            tools = self._tools_by_manual.get(manual_call_template_name)
-            return list(tools) if tools is not None else None
+            manual = self._manuals.get(manual_name)
+            return manual.tools if manual is not None else None
+
+    async def get_manual(self, manual_name: str) -> Optional[UtcpManual]:
+        async with self._rwlock.read():
+            return self._manuals.get(manual_name)
+
+    async def get_manuals(self) -> List[UtcpManual]:
+        async with self._rwlock.read():
+            return list(self._manuals.values())
 
     async def get_manual_call_template(self, manual_call_template_name: str) -> Optional[CallTemplate]:
         async with self._rwlock.read():
-            return self._manuals_by_name.get(manual_call_template_name)
+            return self._manual_call_templates.get(manual_call_template_name)
 
     async def get_manual_call_templates(self) -> List[CallTemplate]:
         async with self._rwlock.read():
-            return list(self._manuals_by_name.values())
+            return list(self._manual_call_templates.values())

@@ -6,8 +6,9 @@ tag-based search, semantic search, or hybrid approaches.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Dict
 from utcp.data.tool import Tool
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
 
 class ToolSearchStrategy(ABC):
     """Abstract interface for tool search implementations.
@@ -23,15 +24,18 @@ class ToolSearchStrategy(ABC):
     - Limiting results appropriately
     - Providing consistent search behavior
     """
+    tool_search_strategy_implementations: Dict[str, 'ToolSearchStrategy'] = {}
+    default_strategy = "tag_and_description_word_match"
 
     @abstractmethod
-    async def search_tools(self, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = []) -> List[Tool]:
+    async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = []) -> List[Tool]:
         """Search for tools relevant to the query.
 
         Executes a search against the available tools and returns the most
         relevant matches ranked by the strategy's scoring algorithm.
 
         Args:
+            tool_repository: The tool repository to search within.
             query: The search query string. Format depends on the strategy
                 (e.g., keywords, tags, natural language).
             limit: Maximum number of tools to return. Use 0 for no limit.

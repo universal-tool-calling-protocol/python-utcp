@@ -8,7 +8,7 @@ explicit tag matches receive higher scores than description word matches.
 from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
 from typing import List, Tuple, Optional
 from utcp.data.tool import Tool
-from utcp.interfaces.tool_repository import ConcurrentToolRepository
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
 import re
 import asyncio
 
