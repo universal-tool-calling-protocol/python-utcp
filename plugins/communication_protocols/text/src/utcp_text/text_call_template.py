@@ -1,21 +1,36 @@
-class TextProvider(CallTemplate):
-    """Provider configuration for text file-based tools.
+from typing import Literal
+from pydantic import Field
 
-    Reads tool definitions from local text files, useful for static tool
-    configurations or when tools generate output files at known locations.
+from utcp.data.call_template import CallTemplate
+from utcp.interfaces.serializer import Serializer
+from utcp.exceptions import UtcpSerializerValidationError
 
-    Use Cases:
-        - Static tool definitions from configuration files
-        - Tools that write results to predictable file locations
-        - Download manuals from a remote server to allow inspection of tools
-            before calling them and guarantee security for high-risk environments
+
+class TextCallTemplate(CallTemplate):
+    """Call template for text file-based manuals and tools.
+
+    Reads UTCP manuals or tool definitions from local JSON/YAML files. Useful for
+    static tool configurations or environments where manuals are distributed as files.
 
     Attributes:
-        type: Always "text" for text file providers.
-        file_path: Path to the file containing tool definitions.
-        auth: Always None - text providers don't support authentication.
+        type: Always "text" for text file call templates.
+        file_path: Path to the file containing the UTCP manual or tool definitions.
+        auth: Always None - text call templates don't support authentication.
     """
 
     type: Literal["text"] = "text"
-    file_path: str = Field(..., description="The path to the file containing the tool definitions.")
+    file_path: str = Field(..., description="The path to the file containing the UTCP manual or tool definitions.")
     auth: None = None
+
+
+class TextCallTemplateSerializer(Serializer[TextCallTemplate]):
+    """Serializer for TextCallTemplate."""
+
+    def to_dict(self, obj: TextCallTemplate) -> dict:
+        return obj.model_dump()
+
+    def validate_dict(self, obj: dict) -> TextCallTemplate:
+        try:
+            return TextCallTemplate.model_validate(obj)
+        except Exception as e:
+            raise UtcpSerializerValidationError("Invalid TextCallTemplate: " + str(e))

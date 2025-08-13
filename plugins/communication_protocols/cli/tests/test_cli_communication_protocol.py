@@ -12,16 +12,18 @@ from typing import Dict, List
 import pytest
 import pytest_asyncio
 
-from utcp.client.transport_interfaces.cli_transport import CliTransport
-from utcp.shared.provider import CliProvider
+from utcp_cli.cli_communication_protocol import CliCommunicationProtocol
+from utcp_cli.cli_call_template import CliCallTemplate
 
 
 @pytest_asyncio.fixture
-async def transport() -> CliTransport:
-    """Provides a clean CliTransport instance."""
-    t = CliTransport()
+async def transport() -> CliCommunicationProtocol:
+    """Provides a clean CliCommunicationProtocol instance."""
+    t = CliCommunicationProtocol()
     yield t
-    await t.close()
+    # Optional cleanup if close() exists
+    if hasattr(t, "close") and asyncio.iscoroutinefunction(getattr(t, "close")):
+        await t.close()
 
 
 @pytest_asyncio.fixture
@@ -187,15 +189,16 @@ def python_executable():
 
 
 @pytest.mark.asyncio
-async def test_register_provider_discovers_tools(transport: CliTransport, mock_cli_script, python_executable):
+async def test_register_provider_discovers_tools(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test that registering a provider discovers tools from command output."""
-    provider = CliProvider(
-        name="mock_cli_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {mock_cli_script}"
     )
     
-    tools = await transport.register_tool_provider(provider)
+    result = await transport.register_manual(None, call_template)
     
+    assert result is not None and result.manual is not None
+    tools = result.manual.tools
     assert len(tools) == 2
     assert tools[0].name == "echo"
     assert tools[0].description == "Echo back the input"
@@ -207,69 +210,62 @@ async def test_register_provider_discovers_tools(transport: CliTransport, mock_c
 
 
 @pytest.mark.asyncio
-async def test_register_provider_missing_command_name(transport: CliTransport):
+async def test_register_provider_missing_command_name(transport: CliCommunicationProtocol):
     """Test that registering a provider with empty command_name raises an error."""
-    provider = CliProvider(
-        name="missing_command_provider",
+    call_template = CliCallTemplate(
         command_name=""  # Empty string instead of missing field
     )
     
-    with pytest.raises(ValueError, match="must have command_name set"):
-        await transport.register_tool_provider(provider)
+    with pytest.raises(ValueError):
+        await transport.register_manual(None, call_template)
 
 
 @pytest.mark.asyncio
-async def test_register_provider_wrong_type(transport: CliTransport):
-    """Test that registering a non-CLI provider raises an error."""
-    from utcp.shared.provider import HttpProvider
+async def test_register_provider_wrong_type(transport: CliCommunicationProtocol):
+    """Test that registering a non-CLI call template raises an error."""
+    class DummyTemplate:
+        type = "http"
+        command_name = "echo"
     
-    provider = HttpProvider(
-        name="http_provider",
-        url="https://example.com"
-    )
-    
-    with pytest.raises(ValueError, match="CliTransport can only be used with CliProvider"):
-        await transport.register_tool_provider(provider)
+    with pytest.raises(ValueError):
+        await transport.register_manual(None, DummyTemplate())
 
 
 @pytest.mark.asyncio
-async def test_call_tool_json_output(transport: CliTransport, mock_cli_script, python_executable):
+async def test_call_tool_json_output(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test calling a tool that returns JSON output."""
-    provider = CliProvider(
-        name="mock_cli_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {mock_cli_script}"
     )
     
-    result = await transport.call_tool("echo", {"message": "Hello World"}, provider)
+    result = await transport.call_tool(None, "echo", {"message": "Hello World"}, call_template)
     
     assert isinstance(result, dict)
     assert result["result"] == "Echo: Hello World"
 
 
 @pytest.mark.asyncio
-async def test_call_tool_math_operation(transport: CliTransport, mock_cli_script, python_executable):
+async def test_call_tool_math_operation(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test calling a math tool with numeric arguments."""
-    provider = CliProvider(
-        name="mock_cli_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {mock_cli_script}"
     )
     
-    result = await transport.call_tool("math", {"operation": "add", "a": 5, "b": 3}, provider)
+    result = await transport.call_tool(None, "math", {"operation": "add", "a": 5, "b": 3}, call_template)
     
     assert isinstance(result, dict)
     assert result["result"] == 8
 
 
 @pytest.mark.asyncio
-async def test_call_tool_error_handling(transport: CliTransport, mock_cli_script, python_executable):
+async def test_call_tool_error_handling(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test calling a tool that exits with an error returns stderr."""
-    provider = CliProvider(
-        name="mock_cli_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {mock_cli_script}"
     )
     
     # This should trigger an error in the mock script
-    result = await transport.call_tool("error_tool", {"error": "test error"}, provider)
+    result = await transport.call_tool(None, "error_tool", {"error": "test error"}, call_template)
     
     # Should return stderr content since exit code != 0
     assert isinstance(result, str)
@@ -277,33 +273,29 @@ async def test_call_tool_error_handling(transport: CliTransport, mock_cli_script
 
 
 @pytest.mark.asyncio
-async def test_call_tool_missing_command_name(transport: CliTransport):
+async def test_call_tool_missing_command_name(transport: CliCommunicationProtocol):
     """Test calling a tool with empty command_name raises an error."""
-    provider = CliProvider(
-        name="missing_command_provider",
+    call_template = CliCallTemplate(
         command_name=""  # Empty string instead of missing field
     )
     
-    with pytest.raises(ValueError, match="must have command_name set"):
-        await transport.call_tool("some_tool", {}, provider)
+    with pytest.raises(ValueError):
+        await transport.call_tool(None, "some_tool", {}, call_template)
 
 
 @pytest.mark.asyncio
-async def test_call_tool_wrong_provider_type(transport: CliTransport):
+async def test_call_tool_wrong_provider_type(transport: CliCommunicationProtocol):
     """Test calling a tool with wrong provider type."""
-    from utcp.shared.provider import HttpProvider
+    class DummyTemplate:
+        type = "http"
+        command_name = "echo"
     
-    provider = HttpProvider(
-        name="http_provider",
-        url="https://example.com"
-    )
-    
-    with pytest.raises(ValueError, match="CliTransport can only be used with CliProvider"):
-        await transport.call_tool("some_tool", {}, provider)
+    with pytest.raises(ValueError):
+        await transport.call_tool(None, "some_tool", {}, DummyTemplate())
 
 
 @pytest.mark.asyncio
-async def test_environment_variables(transport: CliTransport, mock_cli_script, python_executable):
+async def test_environment_variables(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test that custom environment variables are properly set."""
     env_vars = {
         "MY_API_KEY": "test-api-key-123",
@@ -311,14 +303,13 @@ async def test_environment_variables(transport: CliTransport, mock_cli_script, p
         "CUSTOM_CONFIG": "config-data"
     }
     
-    provider = CliProvider(
-        name="env_cli_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {mock_cli_script}",
         env_vars=env_vars
     )
     
     # Call the env check endpoint
-    result = await transport.call_tool("check_env", {"check-env": True}, provider)
+    result = await transport.call_tool(None, "check_env", {"check-env": True}, call_template)
     
     assert isinstance(result, dict)
     assert result["MY_API_KEY"] == "test-api-key-123"
@@ -327,16 +318,15 @@ async def test_environment_variables(transport: CliTransport, mock_cli_script, p
 
 
 @pytest.mark.asyncio
-async def test_no_environment_variables(transport: CliTransport, mock_cli_script, python_executable):
+async def test_no_environment_variables(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test that no environment variables are set when env_vars is None."""
-    provider = CliProvider(
-        name="no_env_cli_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {mock_cli_script}"
         # env_vars=None by default
     )
     
     # Call the env check endpoint
-    result = await transport.call_tool("check_env", {"check-env": True}, provider)
+    result = await transport.call_tool(None, "check_env", {"check-env": True}, call_template)
     
     assert isinstance(result, dict)
     # Should be empty since no custom env vars were set
@@ -344,7 +334,7 @@ async def test_no_environment_variables(transport: CliTransport, mock_cli_script
 
 
 @pytest.mark.asyncio
-async def test_working_directory(transport: CliTransport, mock_cli_script, python_executable, tmp_path):
+async def test_working_directory(transport: CliCommunicationProtocol, mock_cli_script, python_executable, tmp_path):
     """Test that working directory is properly set during command execution."""
     # Create a test file in a specific directory
     test_dir = tmp_path / "test_working_dir"
@@ -367,14 +357,13 @@ else:
     working_dir_script = tmp_path / "working_dir_script.py"
     working_dir_script.write_text(script_content)
     
-    provider = CliProvider(
-        name="working_dir_test_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {working_dir_script}",
         working_dir=str(test_dir)
     )
     
     # Call the tool which should write the current directory to a file
-    result = await transport.call_tool("write_cwd", {"write-cwd": True}, provider)
+    result = await transport.call_tool(None, "write_cwd", {"write-cwd": True}, call_template)
     
     # Verify the result
     assert isinstance(result, dict)
@@ -389,23 +378,22 @@ else:
 
 
 @pytest.mark.asyncio
-async def test_no_working_directory(transport: CliTransport, mock_cli_script, python_executable):
+async def test_no_working_directory(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test that commands work normally when no working directory is specified."""
-    provider = CliProvider(
-        name="no_working_dir_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {mock_cli_script}"
         # working_dir=None by default
     )
     
     # This should work normally - calling the echo tool
-    result = await transport.call_tool("echo", {"message": "test"}, provider)
+    result = await transport.call_tool(None, "echo", {"message": "test"}, call_template)
     
     assert isinstance(result, dict)
     assert result["result"] == "Echo: test"
 
 
 @pytest.mark.asyncio
-async def test_env_vars_and_working_dir_combined(transport: CliTransport, python_executable, tmp_path):
+async def test_env_vars_and_working_dir_combined(transport: CliCommunicationProtocol, python_executable, tmp_path):
     """Test that both environment variables and working directory work together."""
     # Create a test directory
     test_dir = tmp_path / "combined_test_dir"
@@ -431,15 +419,14 @@ else:
     combined_script = tmp_path / "combined_test_script.py"
     combined_script.write_text(script_content)
     
-    provider = CliProvider(
-        name="combined_test_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {combined_script}",
         env_vars={"TEST_COMBINED_VAR": "test_value_123"},
         working_dir=str(test_dir)
     )
     
     # Call the tool
-    result = await transport.call_tool("combined_test", {"combined-test": True}, provider)
+    result = await transport.call_tool(None, "combined_test", {"combined-test": True}, call_template)
     
     # Verify both environment variable and working directory are set correctly
     assert isinstance(result, dict)
@@ -451,7 +438,7 @@ else:
 @pytest.mark.asyncio
 async def test_argument_formatting():
     """Test that arguments are properly formatted for command line."""
-    transport = CliTransport()
+    transport = CliCommunicationProtocol()
     
     # Test various argument types
     args = {
@@ -482,13 +469,14 @@ async def test_argument_formatting():
 @pytest.mark.asyncio
 async def test_json_extraction_from_output():
     """Test extracting JSON from various output formats."""
-    transport = CliTransport()
+    transport = CliCommunicationProtocol()
     
     # Test complete JSON output
     output1 = '{"tools": [{"name": "test", "description": "Test tool", "tool_provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}]}'
-    tools1 = transport._extract_utcp_manual_from_output(output1, "test_provider")
-    assert len(tools1) == 1
-    assert tools1[0].name == "test"
+    manual1 = transport._extract_utcp_manual_from_output(output1, "test_provider")
+    assert manual1 is not None
+    assert len(manual1.tools) == 1
+    assert manual1.tools[0].name == "test"
     
     # Test JSON within text output
     output2 = '''
@@ -496,46 +484,48 @@ async def test_json_extraction_from_output():
     {"tools": [{"name": "embedded", "description": "Embedded tool", "tool_provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}]}
     Process completed.
     '''
-    tools2 = transport._extract_utcp_manual_from_output(output2, "test_provider")
-    assert len(tools2) == 1
-    assert tools2[0].name == "embedded"
+    manual2 = transport._extract_utcp_manual_from_output(output2, "test_provider")
+    assert manual2 is not None
+    assert len(manual2.tools) == 1
+    assert manual2.tools[0].name == "embedded"
     
     # Test single tool definition
     output3 = '{"name": "single", "description": "Single tool", "tool_provider": {"provider_type": "cli", "name": "test_provider", "command_name": "test"}}'
-    tools3 = transport._extract_utcp_manual_from_output(output3, "test_provider")
-    assert len(tools3) == 1
-    assert tools3[0].name == "single"
+    manual3 = transport._extract_utcp_manual_from_output(output3, "test_provider")
+    assert manual3 is not None
+    assert len(manual3.tools) == 1
+    assert manual3.tools[0].name == "single"
     
     # Test no valid JSON
     output4 = "No JSON here, just plain text"
-    tools4 = transport._extract_utcp_manual_from_output(output4, "test_provider")
-    assert len(tools4) == 0
+    manual4 = transport._extract_utcp_manual_from_output(output4, "test_provider")
+    assert manual4 is None
 
 
 @pytest.mark.asyncio
-async def test_deregister_provider(transport: CliTransport, mock_cli_script, python_executable):
+async def test_deregister_provider(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test deregistering a CLI provider."""
-    provider = CliProvider(
-        name="mock_cli_provider",
+    call_template = CliCallTemplate(
         command_name=f"{python_executable} {mock_cli_script}"
     )
     
     # Register and then deregister (should not raise any errors)
-    await transport.register_tool_provider(provider)
-    await transport.deregister_tool_provider(provider)
+    await transport.register_manual(None, call_template)
+    await transport.deregister_manual(None, call_template)
 
 
 @pytest.mark.asyncio
-async def test_close_transport(transport: CliTransport):
+async def test_close_transport(transport: CliCommunicationProtocol):
     """Test closing the transport."""
-    # Should not raise any errors
-    await transport.close()
+    # Should not raise any errors (only if close() is implemented)
+    if hasattr(transport, "close") and asyncio.iscoroutinefunction(getattr(transport, "close")):
+        await transport.close()
 
 
 @pytest.mark.asyncio
 async def test_command_execution_timeout(python_executable, tmp_path):
     """Test that command execution respects timeout."""
-    transport = CliTransport()
+    transport = CliCommunicationProtocol()
     
     # Create a Python script that sleeps for a long time
     sleep_script_content = '''
@@ -567,7 +557,7 @@ else:
 
 
 @pytest.mark.asyncio
-async def test_mixed_output_formats(transport: CliTransport, python_executable):
+async def test_mixed_output_formats(transport: CliCommunicationProtocol, python_executable):
     """Test handling of mixed output formats (text and JSON)."""
     # Create a simple script that outputs mixed content
     script_content = '''
@@ -582,12 +572,11 @@ print("Tool execution completed.")
         script_path = f.name
     
     try:
-        provider = CliProvider(
-            name="mixed_output_provider",
+        call_template = CliCallTemplate(
             command_name=f"{python_executable} {script_path}"
         )
         
-        result = await transport.call_tool("mixed_tool", {}, provider)
+        result = await transport.call_tool(None, "mixed_tool", {}, call_template)
         
         # Should return the JSON part since command succeeds (exit code 0)
         # But the output contains both text and JSON

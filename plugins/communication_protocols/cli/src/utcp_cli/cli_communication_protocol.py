@@ -24,17 +24,17 @@ import json
 import logging
 import os
 import shlex
-import subprocess
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable, Union
+from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
 
-from utcp.client.client_transport_interface import ClientTransportInterface
-from utcp.shared.provider import Provider, CliProvider
-from utcp.shared.tool import Tool
-from utcp.shared.utcp_manual import UtcpManual
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.data.tool import Tool
+from utcp.data.utcp_manual import UtcpManual, UtcpManualSerializer
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp_cli.cli_call_template import CliCallTemplate, CliCallTemplateSerializer
 
 
-class CliTransport(ClientTransportInterface):
+class CliCommunicationProtocol(CommunicationProtocol):
     """Transport implementation for CLI-based tool providers.
 
     Handles communication with command-line tools by executing processes
@@ -70,13 +70,13 @@ class CliTransport(ClientTransportInterface):
     
     def _log_info(self, message: str):
         """Log informational messages."""
-        self._log(f"[CliTransport] {message}")
+        self._log(f"[CliCommunicationProtocol] {message}")
         
     def _log_error(self, message: str):
         """Log error messages."""
-        logging.error(f"[CliTransport Error] {message}")
+        logging.error(f"[CliCommunicationProtocol Error] {message}")
     
-    def _prepare_environment(self, provider: CliProvider) -> Dict[str, str]:
+    def _prepare_environment(self, provider: CliCallTemplate) -> Dict[str, str]:
         """Prepare environment variables for command execution.
         
         Args:
@@ -156,70 +156,95 @@ class CliTransport(ClientTransportInterface):
             self._log_error(f"Error executing command {' '.join(command)}: {e}")
             raise
     
-    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
-        """Register a CLI provider and discover its tools.
+    async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
+        """Register a CLI manual and discover its tools.
         
-        Executes the provider's command_name and looks for UTCPManual JSON in the output.
-        
-        Args:
-            manual_provider: The CliProvider to register
-            
-        Returns:
-            List of tools discovered from the CLI provider
-            
-        Raises:
-            ValueError: If provider is not a CliProvider or command_name is not set
+        Executes the call template's command_name and looks for a UTCP manual JSON in the output.
         """
-        if not isinstance(manual_provider, CliProvider):
-            raise ValueError("CliTransport can only be used with CliProvider")
-        
-        if not manual_provider.command_name:
-            raise ValueError(f"CliProvider '{manual_provider.name}' must have command_name set")
-        
-        self._log_info(f"Registering CLI provider '{manual_provider.name}' with command '{manual_provider.command_name}'")
-        
+        if not isinstance(manual_call_template, CliCallTemplate):
+            raise ValueError("CliCommunicationProtocol can only be used with CliCallTemplate")
+
+        if not manual_call_template.command_name:
+            raise ValueError(f"CliCallTemplate '{manual_call_template.name}' must have command_name set")
+
+        self._log_info(
+            f"Registering CLI manual '{manual_call_template.name}' with command '{manual_call_template.command_name}'"
+        )
+
         try:
-            env = self._prepare_environment(manual_provider)
+            env = self._prepare_environment(manual_call_template)
             # Parse command string into proper arguments
             # Use posix=False on Windows, posix=True on Unix-like systems
-            command = shlex.split(manual_provider.command_name, posix=(os.name != 'nt'))
-            
+            command = shlex.split(manual_call_template.command_name, posix=(os.name != 'nt'))
+
             self._log_info(f"Executing command for tool discovery: {' '.join(command)}")
-            
+
             stdout, stderr, return_code = await self._execute_command(
                 command,
                 env,
                 timeout=30.0,
-                working_dir=manual_provider.working_dir
+                working_dir=manual_call_template.working_dir,
             )
-            
+
             # Get output based on exit code
             output = stdout if return_code == 0 else stderr
-            
+
             if not output.strip():
-                self._log_info(f"No output from command '{manual_provider.command_name}'")
-                return []
-            
-            # Try to find UTCPManual JSON within the output
-            tools = self._extract_utcp_manual_from_output(output, manual_provider.name)
-            
-            self._log_info(f"Discovered {len(tools)} tools from CLI provider '{manual_provider.name}'")
-            return tools
-            
+                self._log_info(
+                    f"No output from command '{manual_call_template.command_name}'"
+                )
+                return RegisterManualResult(
+                    success=False,
+                    manual_call_template=manual_call_template,
+                    manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                    errors=[
+                        f"No output from discovery command for CLI provider '{manual_call_template.name}'"
+                    ],
+                )
+
+            # Try to parse UTCPManual from the output
+            utcp_manual = self._extract_utcp_manual_from_output(
+                output, manual_call_template.name
+            )
+
+            if utcp_manual is None:
+                error_msg = (
+                    f"Could not parse UTCP manual from CLI provider '{manual_call_template.name}' output"
+                )
+                self._log_error(error_msg)
+                return RegisterManualResult(
+                    success=False,
+                    manual_call_template=manual_call_template,
+                    manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                    errors=[error_msg],
+                )
+
+            self._log_info(
+                f"Discovered {len(utcp_manual.tools)} tools from CLI provider '{manual_call_template.name}'"
+            )
+            return RegisterManualResult(
+                success=True,
+                manual_call_template=manual_call_template,
+                manual=utcp_manual,
+                errors=[],
+            )
+
         except Exception as e:
-            self._log_error(f"Error discovering tools from CLI provider '{manual_provider.name}': {e}")
-            return []
+            error_msg = f"Error discovering tools from CLI provider '{manual_call_template.name}': {e}"
+            self._log_error(error_msg)
+            return RegisterManualResult(
+                success=False,
+                manual_call_template=manual_call_template,
+                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                errors=[error_msg],
+            )
     
-    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
-        """Deregister a CLI provider.
-        
-        This is a no-op for CLI providers since they are stateless.
-        
-        Args:
-            manual_provider: The provider to deregister
-        """
-        if isinstance(manual_provider, CliProvider):
-            self._log_info(f"Deregistering CLI provider '{manual_provider.name}' (no-op)")
+    async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
+        """Deregister a CLI manual (no-op)."""
+        if isinstance(manual_call_template, CliCallTemplate):
+            self._log_info(
+                f"Deregistering CLI manual '{manual_call_template.name}' (no-op)"
+            )
     
     def _format_arguments(self, arguments: Dict[str, Any]) -> List[str]:
         """Format arguments for command-line execution.
@@ -244,45 +269,110 @@ class CliTransport(ClientTransportInterface):
                 args.extend([f"--{key}", str(value)])
         return args
     
-    def _extract_utcp_manual_from_output(self, output: str, provider_name: str) -> List[Tool]:
-        """Extract UTCPManual JSON from command output.
+    def _extract_utcp_manual_from_output(self, output: str, provider_name: str) -> Optional[UtcpManual]:
+        """Extract a UTCP manual from command output.
         
-        Searches for JSON content that matches UTCPManual format within the output text.
-        
-        Args:
-            output: The command output to search
-            provider_name: Name of the provider for logging
-            
-        Returns:
-            List of tools found in the output
+        Tries to parse the output as a UTCP manual. If it instead looks like a list of tools,
+        wraps them in a basic UtcpManual structure.
         """
-        tools = []
-        
         # Try to parse the entire output as JSON first
         try:
             data = json.loads(output.strip())
+            if isinstance(data, dict) and "utcp_version" in data and "tools" in data:
+                try:
+                    return UtcpManualSerializer().validate_dict(data)
+                except Exception as e:
+                    self._log_error(
+                        f"Invalid UTCP manual format from provider '{provider_name}': {e}"
+                    )
+                    # Fallback: try to parse tools from possibly-legacy structure
+                    tools = self._parse_tool_data(data, provider_name)
+                    if tools:
+                        return UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=tools)
+                    return None
+            # Fallback: try to parse as tools
             tools = self._parse_tool_data(data, provider_name)
             if tools:
-                return tools
+                return UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=tools)
         except json.JSONDecodeError:
             pass
-        
-        # Look for JSON objects within the output text
+
+        # Look for JSON objects within the output text and aggregate tools
+        aggregated_tools: List[Tool] = []
         lines = output.split('\n')
         for line in lines:
             line = line.strip()
             if line.startswith('{') and line.endswith('}'):
                 try:
                     data = json.loads(line)
+                    # If a full manual is found in a line, return it immediately
+                    if isinstance(data, dict) and "utcp_version" in data and "tools" in data:
+                        try:
+                            return UtcpManualSerializer().validate_dict(data)
+                        except Exception as e:
+                            self._log_error(
+                                f"Invalid UTCP manual format from provider '{provider_name}': {e}"
+                            )
+                            # Fallback: try to parse tools from possibly-legacy structure
+                            tools = self._parse_tool_data(data, provider_name)
+                            if tools:
+                                return UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=tools)
+                            return None
                     found_tools = self._parse_tool_data(data, provider_name)
-                    tools.extend(found_tools)
+                    aggregated_tools.extend(found_tools)
                 except json.JSONDecodeError:
                     continue
+
+        if aggregated_tools:
+            return UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=aggregated_tools)
+
+        return None
+    
+    def _build_tool_from_dict(self, tool_data: Any, provider_name: str) -> Optional[Tool]:
+        """Build a Tool object from a dictionary, supporting legacy keys.
         
-        return tools
+        This maps legacy 'tool_provider' into the new 'tool_call_template'
+        using the appropriate call template serializers.
+        """
+        try:
+            if isinstance(tool_data, dict):
+                # If already new-style and call template is a dict, validate it
+                if "tool_call_template" in tool_data and isinstance(tool_data["tool_call_template"], dict):
+                    td = dict(tool_data)
+                    td["tool_call_template"] = CallTemplateSerializer().validate_dict(td["tool_call_template"])
+                    return Tool(**td)
+                
+                # Legacy style: 'tool_provider'
+                if "tool_provider" in tool_data and isinstance(tool_data["tool_provider"], dict):
+                    provider = tool_data["tool_provider"]
+                    provider_type = provider.get("provider_type") or provider.get("type")
+                    # Normalize to call template dict
+                    call_template_dict = {k: v for k, v in provider.items() if k != "provider_type"}
+                    call_template_dict["type"] = provider_type
+                    
+                    # Validate based on type
+                    if provider_type == "cli":
+                        call_template = CliCallTemplateSerializer().validate_dict(call_template_dict)
+                    else:
+                        call_template = CallTemplateSerializer().validate_dict(call_template_dict)
+                    
+                    td = dict(tool_data)
+                    td.pop("tool_provider", None)
+                    td["tool_call_template"] = call_template
+                    return Tool(**td)
+                
+                # Already a Tool-like dict with correct fields
+                return Tool(**tool_data)
+        except Exception as e:
+            self._log_error(f"Invalid tool definition from provider '{provider_name}': {e}")
+            return None
+        return None
     
     def _parse_tool_data(self, data: Any, provider_name: str) -> List[Tool]:
         """Parse tool data from JSON.
+        
+        Supports both the new format (with 'tool_call_template') and the
+        legacy format (with 'tool_provider').
         
         Args:
             data: JSON data to parse
@@ -291,41 +381,36 @@ class CliTransport(ClientTransportInterface):
         Returns:
             List of tools parsed from the data
         """
+        tools: List[Tool] = []
         if isinstance(data, dict):
-            if 'tools' in data:
-                # Standard UTCP manual format
-                try:
-                    utcp_manual = UtcpManual(**data)
-                    return utcp_manual.tools
-                except Exception as e:
-                    self._log_error(f"Invalid UTCP manual format from provider '{provider_name}': {e}")
-                    return []
+            if 'tools' in data and isinstance(data['tools'], list):
+                for item in data['tools']:
+                    built = self._build_tool_from_dict(item, provider_name)
+                    if built is not None:
+                        tools.append(built)
+                return tools
             elif 'name' in data and 'description' in data:
-                # Single tool definition
-                try:
-                    return [Tool(**data)]
-                except Exception as e:
-                    self._log_error(f"Invalid tool definition from provider '{provider_name}': {e}")
-                    return []
+                built = self._build_tool_from_dict(data, provider_name)
+                return [built] if built is not None else []
         elif isinstance(data, list):
-            # Array of tool definitions
-            try:
-                return [Tool(**tool_data) for tool_data in data]
-            except Exception as e:
-                self._log_error(f"Invalid tool array from provider '{provider_name}': {e}")
-                return []
+            for item in data:
+                built = self._build_tool_from_dict(item, provider_name)
+                if built is not None:
+                    tools.append(built)
+            return tools
         
-        return []
+        return tools
     
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
+    async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Call a CLI tool.
         
         Executes the command specified by provider.command_name with the provided arguments.
         
         Args:
+            caller: The UTCP client that is calling this method.
             tool_name: Name of the tool to call
             arguments: Arguments for the tool call
-            tool_provider: The CliProvider containing the tool
+            tool_call_template: The CliCallTemplate for the tool
             
         Returns:
             The output from the command execution based on exit code:
@@ -335,16 +420,16 @@ class CliTransport(ClientTransportInterface):
         Raises:
             ValueError: If provider is not a CliProvider or command_name is not set
         """
-        if not isinstance(tool_provider, CliProvider):
-            raise ValueError("CliTransport can only be used with CliProvider")
+        if not isinstance(tool_call_template, CliCallTemplate):
+            raise ValueError("CliCommunicationProtocol can only be used with CliCallTemplate")
         
-        if not tool_provider.command_name:
-            raise ValueError(f"CliProvider '{tool_provider.name}' must have command_name set")
+        if not tool_call_template.command_name:
+            raise ValueError(f"CliCallTemplate '{tool_call_template.name}' must have command_name set")
         
         # Build the command
         # Parse command string into proper arguments
         # Use posix=False on Windows, posix=True on Unix-like systems
-        command = shlex.split(tool_provider.command_name, posix=(os.name != 'nt'))
+        command = shlex.split(tool_call_template.command_name, posix=(os.name != 'nt'))
         
         # Add formatted arguments
         if arguments:
@@ -353,13 +438,13 @@ class CliTransport(ClientTransportInterface):
         self._log_info(f"Executing CLI tool '{tool_name}': {' '.join(command)}")
         
         try:
-            env = self._prepare_environment(tool_provider)
+            env = self._prepare_environment(tool_call_template)
             
             stdout, stderr, return_code = await self._execute_command(
                 command,
                 env,
                 timeout=60.0,  # Longer timeout for tool execution
-                working_dir=tool_provider.working_dir
+                working_dir=tool_call_template.working_dir
             )
             
             # Get output based on exit code
@@ -387,6 +472,10 @@ class CliTransport(ClientTransportInterface):
         except Exception as e:
             self._log_error(f"Error executing CLI tool '{tool_name}': {e}")
             raise
+
+    async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+        """Streaming calls are not supported for CLI protocol."""
+        raise NotImplementedError("Streaming is not supported by the CLI communication protocol.")
     
     async def close(self) -> None:
         """Close the transport.
