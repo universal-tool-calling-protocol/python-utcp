@@ -187,33 +187,40 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                             # TODO: For now, we'll create an empty manual - OpenAPI conversion needs to be updated separately
                             # converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, provider_name=manual_call_template.name)
                             # utcp_manual = converter.convert()
-                            utcp_manual = UtcpManual(tools=[])
+                            utcp_manual = UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[])
                         
                         return RegisterManualResult(
+                            success=True,
                             manual_call_template=manual_call_template,
                             manual=utcp_manual,
-                            success=True
+                            errors=[]
                         )
                 except aiohttp.ClientResponseError as e:
-                    logging.error(f"Error connecting to HTTP provider '{manual_call_template.name}': \n{e}")
+                    error_msg = f"Error connecting to HTTP provider '{manual_call_template.name}': {e}"
+                    logging.error(error_msg)
                     return RegisterManualResult(
+                        success=False,
                         manual_call_template=manual_call_template,
-                        manual=UtcpManual(tools=[]),
-                        success=False
+                        manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                        errors=[error_msg]
                     )
                 except (json.JSONDecodeError, yaml.YAMLError) as e:
-                    logging.error(f"Error parsing spec from HTTP provider '{manual_call_template.name}': \n{e}")
+                    error_msg = f"Error parsing spec from HTTP provider '{manual_call_template.name}': {e}"
+                    logging.error(error_msg)
                     return RegisterManualResult(
+                        success=False,
                         manual_call_template=manual_call_template,
-                        manual=UtcpManual(tools=[]),
-                        success=False
+                        manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                        errors=[error_msg]
                     )
         except Exception as e:
-            logging.error(f"Unexpected error discovering tools from HTTP provider '{manual_call_template.name}': \n{e}")
+            error_msg = f"Unexpected error discovering tools from HTTP provider '{manual_call_template.name}': {e}"
+            logging.error(error_msg)
             return RegisterManualResult(
+                success=False,
                 manual_call_template=manual_call_template,
-                manual=UtcpManual(tools=[]),
-                success=False
+                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                errors=[error_msg]
             )
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:

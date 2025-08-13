@@ -22,10 +22,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import sys
 import uuid
 from urllib.parse import urlparse
-from utcp.data.auth import Auth, ApiKeyAuth, BasicAuth, OAuth2Auth
+from utcp.data.auth import Auth
+from utcp.data.auth_implementations import ApiKeyAuth, BasicAuth, OAuth2Auth
 from utcp.data.utcp_manual import UtcpManual
 from utcp.data.tool import Tool, JsonSchema
-from utcp.data.call_template import CallTemplate
 from utcp_http.http_call_template import HttpCallTemplate
 
 class OpenApiConverter:
@@ -33,7 +33,7 @@ class OpenApiConverter:
 
     Processes OpenAPI 2.0 and 3.0 specifications to generate equivalent UTCP
     tools, handling schema resolution, authentication mapping, and proper
-    HTTP provider configuration. Each operation in the OpenAPI spec becomes
+    HTTP call_template configuration. Each operation in the OpenAPI spec becomes
     a UTCP tool with appropriate input/output schemas.
 
     Features:
@@ -49,37 +49,37 @@ class OpenApiConverter:
     Architecture:
         The converter works by iterating through all paths and operations
         in the OpenAPI spec, extracting relevant information for each
-        operation, and creating corresponding UTCP tools with HTTP providers.
+        operation, and creating corresponding UTCP tools with HTTP call_templates.
 
     Attributes:
         spec: The parsed OpenAPI specification dictionary.
         spec_url: Optional URL where the specification was retrieved from.
         placeholder_counter: Counter for generating unique placeholder variables.
-        provider_name: Normalized name for the provider derived from the spec.
+        call_template_name: Normalized name for the call_template derived from the spec.
     """
 
-    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, provider_name: Optional[str] = None):
+    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, call_template_name: Optional[str] = None):
         """Initialize the OpenAPI converter.
 
         Args:
             openapi_spec: Parsed OpenAPI specification as a dictionary.
             spec_url: Optional URL where the specification was retrieved from.
                 Used for base URL determination if servers are not specified.
-            provider_name: Optional custom name for the provider. If not
+            call_template_name: Optional custom name for the call_template. If not
                 provided, derives name from the specification title.
         """
         self.spec = openapi_spec
         self.spec_url = spec_url
         # Single counter for all placeholder variables
         self.placeholder_counter = 0
-        # If provider_name is None then get the first word in spec.info.title
-        if provider_name is None:
-            title = openapi_spec.get("info", {}).get("title", "openapi_provider_" + uuid.uuid4().hex)
+        # If call_template_name is None then get the first word in spec.info.title
+        if call_template_name is None:
+            title = openapi_spec.get("info", {}).get("title", "openapi_call_template_" + uuid.uuid4().hex)
             # Replace characters that are invalid for identifiers
             invalid_chars = " -.,!?'\"\\/()[]{}#@$%^&*+=~`|;:<>"
-            self.provider_name = ''.join('_' if c in invalid_chars else c for c in title)
+            self.call_template_name = ''.join('_' if c in invalid_chars else c for c in title)
         else:
-            self.provider_name = provider_name
+            self.call_template_name = call_template_name
             
     def _increment_placeholder_counter(self) -> int:
         """Increments the global counter and returns the new value.
@@ -122,39 +122,6 @@ class OpenApiConverter:
 
         return UtcpManual(tools=tools)
 
-    def _resolve_ref(self, ref: str) -> Dict[str, Any]:
-        """Resolves a local JSON reference."""
-        if not ref.startswith('#/'):
-            raise ValueError(f"External or non-local references are not supported: {ref}")
-        
-        parts = ref[2:].split('/')
-        node = self.spec
-        for part in parts:
-            try:
-                node = node[part]
-            except (KeyError, TypeError):
-                raise ValueError(f"Reference not found: {ref}")
-        return node
-
-    def _resolve_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively resolves all $refs in a schema object."""
-        if isinstance(schema, dict):
-            if "$ref" in schema:
-                resolved_ref = self._resolve_ref(schema["$ref"])
-                # The resolved reference could itself contain refs, so we recurse
-                return self._resolve_schema(resolved_ref)
-            
-            # Resolve refs in nested properties
-            new_schema = {}
-            for key, value in schema.items():
-                new_schema[key] = self._resolve_schema(value)
-            return new_schema
-        
-        if isinstance(schema, list):
-            return [self._resolve_schema(item) for item in schema]
-
-        return schema
-
     def _extract_auth(self, operation: Dict[str, Any]) -> Optional[Auth]:
         """Extracts authentication information from OpenAPI operation and global security schemes."""
         # First check for operation-level security requirements
@@ -189,6 +156,37 @@ class OpenApiConverter:
         
         # OpenAPI 2.0 format
         return self.spec.get("securityDefinitions", {})
+
+    def _resolve_ref_path(self, ref: str, visited: Optional[set] = None) -> Dict[str, Any]:
+        """Resolves a JSON reference path like '#/components/schemas/X' with cycle detection.
+
+        If a cycle is detected, returns a dict that preserves the original
+        reference ({"$ref": ref}) instead of erasing it.
+        """
+        if not isinstance(ref, str) or not ref.startswith("#/"):
+            return {}
+        visited = visited or set()
+        if ref in visited:
+            # Break cycles but keep the reference in place
+            return {"$ref": ref}
+        visited.add(ref)
+        parts = ref[2:].split("/")
+        node: Any = self.spec
+        try:
+            for part in parts:
+                node = node[part]
+            # Recursively resolve if nested $ref exists
+            if isinstance(node, dict) and "$ref" in node:
+                return self._resolve_ref_path(node["$ref"], visited)
+            return node if isinstance(node, dict) else {}
+        except Exception:
+            return {}
+
+    def _resolve_ref_obj(self, obj: Any, visited: Optional[set] = None) -> Any:
+        """If obj is a $ref dict, resolves it; otherwise returns obj."""
+        if isinstance(obj, dict) and "$ref" in obj:
+            return self._resolve_ref_path(obj["$ref"], visited)
+        return obj
     
     def _create_auth_from_scheme(self, scheme: Dict[str, Any], scheme_name: str) -> Optional[Auth]:
         """Creates an Auth object from an OpenAPI security scheme."""
@@ -297,18 +295,17 @@ class OpenApiConverter:
         description = operation.get("summary") or operation.get("description", "")
         tags = operation.get("tags", [])
 
-        inputs, header_fields, body_field = self._extract_inputs(operation)
+        inputs, header_fields, body_field = self._extract_inputs(path, operation)
         outputs = self._extract_outputs(operation)
         auth = self._extract_auth(operation)
 
-        provider_name = self.spec.get("info", {}).get("title", "openapi_provider_" + uuid.uuid4().hex)
+        call_template_name = self.spec.get("info", {}).get("title", "call_template_" + uuid.uuid4().hex)
 
         # Combine base URL and path, ensuring no double slashes
         full_url = base_url.rstrip('/') + '/' + path.lstrip('/')
 
-        provider = HttpCallTemplate(
-            name=provider_name,
-            provider_type="http",
+        call_template = HttpCallTemplate(
+            name=call_template_name,
             http_method=method.upper(),
             url=full_url,
             body_field=body_field if body_field else None,
@@ -322,19 +319,31 @@ class OpenApiConverter:
             inputs=inputs,
             outputs=outputs,
             tags=tags,
-            tool_provider=provider
+            tool_call_template=call_template
         )
 
-    def _extract_inputs(self, operation: Dict[str, Any]) -> Tuple[JsonSchema, List[str], Optional[str]]:
-        """Extracts input schema, header fields, and body field from an OpenAPI operation."""
-        properties = {}
+    def _extract_inputs(self, path: str, operation: Dict[str, Any]) -> Tuple[JsonSchema, List[str], Optional[str]]:
+        """Extracts input schema, header fields, and body field from an OpenAPI operation.
+
+        - Merges path-level and operation-level parameters
+        - Resolves $ref for parameters
+        - Supports OpenAPI 2.0 body parameters and 3.0 requestBody
+        """
+        properties: Dict[str, Any] = {}
         required = []
         header_fields = []
         body_field = None
 
-        # Handle parameters (query, header, path, cookie)
-        for param in operation.get("parameters", []):
-            param = self._resolve_schema(param)
+        # Merge path-level and operation-level parameters
+        path_item = self.spec.get("paths", {}).get(path, {}) if path else {}
+        all_params = []
+        all_params.extend(path_item.get("parameters", []) or [])
+        all_params.extend(operation.get("parameters", []) or [])
+
+        # Handle parameters (query, header, path, cookie, body)
+        for param in all_params:
+            if isinstance(param, dict) and "$ref" in param:
+                param = self._resolve_ref_path(param["$ref"], set()) or {}
             param_name = param.get("name")
             if not param_name:
                 continue
@@ -342,11 +351,31 @@ class OpenApiConverter:
             if param.get("in") == "header":
                 header_fields.append(param_name)
 
-            schema = self._resolve_schema(param.get("schema", {}))
+            # OpenAPI 2.0 body parameter
+            if param.get("in") == "body":
+                body_field = "body"
+                json_schema = self._resolve_ref_obj(param.get("schema", {}), set()) or {}
+                properties[body_field] = {
+                    "description": param.get("description", "Request body"),
+                    **json_schema,
+                }
+                if param.get("required"):
+                    required.append(body_field)
+                continue
+
+            # Non-body parameter
+            schema = self._resolve_ref_obj(param.get("schema", {}), set()) or {}
+            if not schema:
+                # OpenAPI 2.0 non-body params use top-level type/items
+                if "type" in param:
+                    schema["type"] = param.get("type")
+                if "items" in param:
+                    schema["items"] = param.get("items")
+                if "enum" in param:
+                    schema["enum"] = param.get("enum")
             properties[param_name] = {
-                "type": schema.get("type", "string"),
                 "description": param.get("description", ""),
-                **schema
+                **schema,
             }
             if param.get("required"):
                 required.append(param_name)
@@ -354,17 +383,17 @@ class OpenApiConverter:
         # Handle request body
         request_body = operation.get("requestBody")
         if request_body:
-            resolved_body = self._resolve_schema(request_body)
-            content = resolved_body.get("content", {})
+            content = request_body.get("content", {})
             json_schema = content.get("application/json", {}).get("schema")
+            json_schema = self._resolve_ref_obj(json_schema, set()) if json_schema else None
             if json_schema:
                 # Add a single 'body' field to represent the request body
                 body_field = "body"
                 properties[body_field] = {
-                    "description": resolved_body.get("description", "Request body"),
-                    **self._resolve_schema(json_schema)
+                    "description": json_schema.get("description", "Request body"),
+                    **json_schema
                 }
-                if resolved_body.get("required"):
+                if json_schema.get("required"):
                     required.append(body_field)
 
         schema = JsonSchema(properties=properties, required=required if required else None)
@@ -372,33 +401,45 @@ class OpenApiConverter:
 
     def _extract_outputs(self, operation: Dict[str, Any]) -> JsonSchema:
         """Extracts the output schema from an OpenAPI operation, resolving refs."""
-        success_response = operation.get("responses", {}).get("200") or operation.get("responses", {}).get("201")
+        responses = operation.get("responses", {}) or {}
+        success_response = responses.get("200") or responses.get("201") or responses.get("default")
         if not success_response:
             return JsonSchema()
 
-        resolved_response = self._resolve_schema(success_response)
-        content = resolved_response.get("content", {})
-        json_schema = content.get("application/json", {}).get("schema")
+        json_schema = None
+        if "content" in success_response:
+            content = success_response.get("content", {})
+            json_schema = content.get("application/json", {}).get("schema")
+            # Fallback to any content type if application/json missing
+            if json_schema is None and isinstance(content, dict):
+                for v in content.values():
+                    if isinstance(v, dict) and "schema" in v:
+                        json_schema = v.get("schema")
+                        break
+        elif "schema" in success_response:  # OpenAPI 2.0
+            json_schema = success_response.get("schema")
 
         if not json_schema:
             return JsonSchema()
 
-        resolved_json_schema = self._resolve_schema(json_schema)
+        # Resolve $ref in response schema
+        json_schema = self._resolve_ref_obj(json_schema, set()) or {}
+
         schema_args = {
-            "type": resolved_json_schema.get("type", "object"),
-            "properties": resolved_json_schema.get("properties", {}),
-            "required": resolved_json_schema.get("required"),
-            "description": resolved_json_schema.get("description"),
-            "title": resolved_json_schema.get("title"),
+            "type": json_schema.get("type", "object"),
+            "properties": json_schema.get("properties", {}),
+            "required": json_schema.get("required"),
+            "description": json_schema.get("description"),
+            "title": json_schema.get("title"),
         }
         
         # Handle array item types
-        if schema_args["type"] == "array" and "items" in resolved_json_schema:
-            schema_args["items"] = resolved_json_schema.get("items")
+        if schema_args["type"] == "array" and "items" in json_schema:
+            schema_args["items"] = json_schema.get("items")
             
         # Handle additional schema attributes
         for attr in ["enum", "minimum", "maximum", "format"]:
-            if attr in resolved_json_schema:
-                schema_args[attr] = resolved_json_schema.get(attr)
+            if attr in json_schema:
+                schema_args[attr] = json_schema.get(attr)
                 
         return JsonSchema(**schema_args)

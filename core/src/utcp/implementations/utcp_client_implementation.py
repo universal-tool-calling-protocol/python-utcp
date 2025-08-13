@@ -98,12 +98,16 @@ class UtcpClientImplementation(UtcpClient):
         manual_call_template = self._substitute_call_template_variables(manual_call_template, manual_call_template.name)
         if manual_call_template.type not in CommunicationProtocol.communication_protocols:
             raise ValueError(f"No registered communication protocol of type {manual_call_template.type} found, available types: {CommunicationProtocol.communication_protocols.keys()}")
-        manual: UtcpManual = await CommunicationProtocol.communication_protocols[manual_call_template.type].register_manual(self, manual_call_template)
-        for tool in manual.tools:
-            if not tool.name.startswith(manual_call_template.name + "."):
-                tool.name = manual_call_template.name + "." + tool.name
-        await self.tool_repository.save_manual(manual)
-        return RegisterManualResult(manual_call_template, manual, True)
+        
+        result = await CommunicationProtocol.communication_protocols[manual_call_template.type].register_manual(self, manual_call_template)
+        
+        if result.success:
+            for tool in result.manual.tools:
+                if not tool.name.startswith(manual_call_template.name + "."):
+                    tool.name = manual_call_template.name + "." + tool.name
+            await self.tool_repository.save_manual(result.manual)
+
+        return result
 
     async def register_manuals(self, manual_call_templates: List[CallTemplate]) -> List[RegisterManualResult]:
         # Create tasks for parallel CallTemplate registration
@@ -111,12 +115,20 @@ class UtcpClientImplementation(UtcpClient):
         for manual_call_template in manual_call_templates:
             async def try_register_manual(manual_call_template=manual_call_template):
                 try:
-                    tools = await self.register_manual(manual_call_template)
-                    logging.info(f"Successfully registered manual '{manual_call_template.name}' with {len(tools)} tools")
-                    return RegisterManualResult(manual_call_template, tools, True)
+                    result = await self.register_manual(manual_call_template)
+                    if result.success:
+                        logging.info(f"Successfully registered manual '{manual_call_template.name}' with {len(result.manual.tools)} tools")
+                    else:
+                        logging.error(f"Error registering manual '{manual_call_template.name}': {result.errors}")
+                    return result
                 except Exception as e:
                     logging.error(f"Error registering manual '{manual_call_template.name}': {str(e)}")
-                    return RegisterManualResult(manual_call_template, [], False)
+                    return RegisterManualResult(
+                        manual_call_template=manual_call_template, 
+                        manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                        success=False,
+                        errors=[str(e)]
+                    )
             
             tasks.append(try_register_manual())
         

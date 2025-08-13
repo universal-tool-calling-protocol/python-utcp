@@ -1,9 +1,9 @@
 import pytest
 import aiohttp
-from utcp.client.openapi_converter import OpenApiConverter
-from utcp.shared.utcp_manual import UtcpManual
-from utcp.shared.auth import ApiKeyAuth
-from utcp.shared.provider import HttpProvider
+from utcp_http.openapi_converter import OpenApiConverter
+from utcp.data.utcp_manual import UtcpManual
+from utcp.data.auth_implementations import ApiKeyAuth
+from utcp_http.http_call_template import HttpCallTemplate
 
 
 @pytest.mark.asyncio
@@ -22,11 +22,11 @@ async def test_webscraping_ai_spec_conversion():
     assert isinstance(utcp_manual, UtcpManual)
     assert len(utcp_manual.tools) == 4  # account, getHTML, getSelected, getSelectedMultiple
 
-    # Check that all tools are HTTP providers
+    # Check that all tools use HTTP call templates
     for tool in utcp_manual.tools:
-        assert isinstance(tool.tool_provider, HttpProvider)
-        assert tool.tool_provider.provider_type == "http"
-        assert tool.tool_provider.http_method == "GET"
+        assert isinstance(tool.tool_call_template, HttpCallTemplate)
+        assert tool.tool_call_template.type == "http"
+        assert tool.tool_call_template.http_method == "GET"
 
 
 @pytest.mark.asyncio
@@ -44,11 +44,11 @@ async def test_webscraping_ai_auth_extraction():
 
     # All tools should have API key authentication
     for tool in utcp_manual.tools:
-        assert tool.tool_provider.auth is not None
-        assert isinstance(tool.tool_provider.auth, ApiKeyAuth)
-        assert tool.tool_provider.auth.var_name == "api_key"
-        assert tool.tool_provider.auth.api_key.startswith("${API_KEY_")
-        assert tool.tool_provider.auth.location == "query"
+        assert tool.tool_call_template.auth is not None
+        assert isinstance(tool.tool_call_template.auth, ApiKeyAuth)
+        assert tool.tool_call_template.auth.var_name == "api_key"
+        assert tool.tool_call_template.auth.api_key.startswith("${API_KEY_")
+        assert tool.tool_call_template.auth.location == "query"
 
 
 @pytest.mark.asyncio
@@ -68,14 +68,14 @@ async def test_webscraping_ai_specific_tools():
     account_tool = next((tool for tool in utcp_manual.tools if tool.name == "account"), None)
     assert account_tool is not None
     assert account_tool.description == "Information about your account calls quota"
-    assert account_tool.tool_provider.url == "https://api.webscraping.ai/account"
+    assert account_tool.tool_call_template.url == "https://api.webscraping.ai/account"
     assert "Account" in account_tool.tags
 
     # Test getHTML tool
     html_tool = next((tool for tool in utcp_manual.tools if tool.name == "getHTML"), None)
     assert html_tool is not None
     assert html_tool.description == "Page HTML by URL"
-    assert html_tool.tool_provider.url == "https://api.webscraping.ai/html"
+    assert html_tool.tool_call_template.url == "https://api.webscraping.ai/html"
     assert "HTML" in html_tool.tags
     
     # Check that URL parameter is required
@@ -86,16 +86,16 @@ async def test_webscraping_ai_specific_tools():
     # Test getSelected tool
     selected_tool = next((tool for tool in utcp_manual.tools if tool.name == "getSelected"), None)
     assert selected_tool is not None
-    assert selected_tool.tool_provider.url == "https://api.webscraping.ai/selected"
+    assert selected_tool.tool_call_template.url == "https://api.webscraping.ai/selected"
     assert "selector" in selected_tool.inputs.properties
     assert "url" in selected_tool.inputs.properties
 
     # Test getSelectedMultiple tool
     selected_multiple_tool = next((tool for tool in utcp_manual.tools if tool.name == "getSelectedMultiple"), None)
     assert selected_multiple_tool is not None
-    assert selected_multiple_tool.tool_provider.url == "https://api.webscraping.ai/selected-multiple"
+    assert selected_multiple_tool.tool_call_template.url == "https://api.webscraping.ai/selected-multiple"
     assert "selectors" in selected_multiple_tool.inputs.properties
-    assert selected_multiple_tool.inputs.properties["selectors"]["type"] == "array"
+    assert selected_multiple_tool.inputs.properties["selectors"].type == "array"
 
 
 @pytest.mark.asyncio
@@ -117,17 +117,23 @@ async def test_webscraping_ai_parameter_resolution():
     
     # Check that referenced parameters are properly resolved
     assert "url" in html_tool.inputs.properties
-    assert html_tool.inputs.properties["url"]["description"] == "URL of the target page"
-    assert html_tool.inputs.properties["url"]["type"] == "string"
-    
+    url_schema = html_tool.inputs.properties.get("url")
+    assert url_schema is not None
+    assert url_schema.description == "URL of the target page"
+    assert url_schema.type == "string"
+
     assert "timeout" in html_tool.inputs.properties
-    assert html_tool.inputs.properties["timeout"]["description"].startswith("Maximum processing time in ms")
-    assert html_tool.inputs.properties["timeout"]["type"] == "integer"
-    assert html_tool.inputs.properties["timeout"]["default"] == 10000
-    
+    timeout_schema = html_tool.inputs.properties.get("timeout")
+    assert timeout_schema is not None
+    assert isinstance(timeout_schema.description, str) and timeout_schema.description.startswith("Maximum processing time in ms")
+    assert timeout_schema.type == "integer"
+    assert timeout_schema.default == 10000
+
     assert "js" in html_tool.inputs.properties
-    assert html_tool.inputs.properties["js"]["type"] == "boolean"
-    assert html_tool.inputs.properties["js"]["default"] is True
+    js_schema = html_tool.inputs.properties.get("js")
+    assert js_schema is not None
+    assert js_schema.type == "boolean"
+    assert js_schema.default is True
 
 
 @pytest.mark.asyncio
@@ -154,7 +160,7 @@ async def test_webscraping_ai_response_schemas():
     # Test getHTML tool output schema (should be string for HTML)
     html_tool = next((tool for tool in utcp_manual.tools if tool.name == "getHTML"), None)
     assert html_tool is not None
-    assert html_tool.outputs.type == "object"
+    assert html_tool.outputs.type == "string"
 
     # Test getSelectedMultiple tool output schema (should be array)
     selected_multiple_tool = next((tool for tool in utcp_manual.tools if tool.name == "getSelectedMultiple"), None)
@@ -162,4 +168,4 @@ async def test_webscraping_ai_response_schemas():
     assert selected_multiple_tool.outputs.type == "array"
     # Now we can check array item types with our enhanced schema
     assert selected_multiple_tool.outputs.items is not None
-    assert selected_multiple_tool.outputs.items.get("type") == "string"
+    assert selected_multiple_tool.outputs.items.type == "string"

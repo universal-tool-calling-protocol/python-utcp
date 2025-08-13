@@ -2,35 +2,15 @@ import pytest
 import pytest_asyncio
 import json
 import asyncio
-from unittest.mock import MagicMock
-
+import aiohttp
 from aiohttp import web
 
-from utcp.client.transport_interfaces.streamable_http_transport import StreamableHttpClientTransport
-from utcp.shared.provider import StreamableHttpProvider
-from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
+from utcp_http.streamable_http_communication_protocol import StreamableHttpCommunicationProtocol
+from utcp_http.streamable_http_call_template import StreamableHttpCallTemplate
+from utcp.data.auth_implementations import ApiKeyAuth, BasicAuth, OAuth2Auth
+from utcp.data.register_manual_response import RegisterManualResult
 
 # --- Test Data ---
-
-SAMPLE_TOOLS_JSON = {
-    "version": "1.0",
-    "tools": [
-        {
-            "name": "test_tool",
-            "description": "Test tool",
-            "inputs": {},
-            "outputs": {},
-            "tags": [],
-            "tool_provider": {
-                "provider_type": "http_stream",
-                "name": "test-streamable-http-provider-executor",
-                "url": "http://test-url/tool",
-                "http_method": "GET",
-                "content_type": "application/json"
-            }
-        }
-    ]
-}
 
 SAMPLE_NDJSON_RESPONSE = [
     {'status': 'running', 'progress': 0},
@@ -40,15 +20,10 @@ SAMPLE_NDJSON_RESPONSE = [
 
 # --- Fixtures ---
 
-@pytest.fixture
-def logger():
-    """Fixture for a mock logger."""
-    return MagicMock()
-
 @pytest_asyncio.fixture
-async def streamable_http_transport(logger):
-    """Fixture to create and properly tear down a StreamableHttpClientTransport instance."""
-    transport = StreamableHttpClientTransport(logger=logger)
+async def streamable_http_transport():
+    """Fixture to create and properly tear down a StreamableHttpCommunicationProtocol instance."""
+    transport = StreamableHttpCommunicationProtocol()
     yield transport
     await transport.close()
 
@@ -56,15 +31,16 @@ async def streamable_http_transport(logger):
 def app():
     """Fixture for the aiohttp test application."""
     async def discover(request):
-        execution_provider = {
-            "provider_type": "http_stream",
-            "name": "test-streamable-http-provider-executor",
+        execution_call_template = {
+            "type": "http_stream",
+            "name": "test-streamable-http-executor",
             "url": str(request.url.origin()) + "/stream-ndjson",
             "http_method": "GET",
             "content_type": "application/x-ndjson"
         }
         utcp_manual = {
-            "version": "1.0",
+            "utcp_version": "1.0.0",
+            "manual_version": "1.0.0",
             "tools": [
                 {
                     "name": "test_tool",
@@ -72,7 +48,7 @@ def app():
                     "inputs": {},
                     "outputs": {},
                     "tags": [],
-                    "tool_provider": execution_provider
+                    "tool_call_template": execution_call_template
                 }
             ]
         }
@@ -87,8 +63,7 @@ def app():
         await response.prepare(request)
         for item in SAMPLE_NDJSON_RESPONSE:
             await response.write(json.dumps(item).encode('utf-8') + b'\n')
-            await asyncio.sleep(0.01) # Simulate network delay
-        await response.write_eof()
+            await asyncio.sleep(0.01)  # Simulate network delay
         return response
 
     async def stream_binary(request):
@@ -100,7 +75,6 @@ def app():
         await response.prepare(request)
         await response.write(b'chunk1')
         await response.write(b'chunk2')
-        await response.write_eof()
         return response
 
     async def check_api_key_auth(request):
@@ -110,7 +84,7 @@ def app():
 
     async def check_basic_auth(request):
         auth_header = request.headers.get('Authorization')
-        if not auth_header or 'Basic dXNlcjpwYXNz' not in auth_header: # user:pass
+        if not auth_header or 'Basic dXNlcjpwYXNz' not in auth_header:  # user:pass
             return web.Response(status=401, text="Unauthorized: Invalid Basic Auth")
         return await stream_ndjson(request)
 
@@ -122,7 +96,7 @@ def app():
 
     async def oauth_token_header_handler(request):
         auth_header = request.headers.get('Authorization')
-        if auth_header and 'Basic dGVzdC1jbGllbnQ6dGVzdC1zZWNyZXQ=' in auth_header: # test-client:test-secret
+        if auth_header and 'Basic dGVzdC1jbGllbnQ6dGVzdC1zZWNyZXQ=' in auth_header:  # test-client:test-secret
             return web.json_response({'access_token': 'token-from-header', 'token_type': 'Bearer'})
         return web.Response(status=401, text="Invalid client credentials via header")
 
@@ -152,32 +126,42 @@ def app():
 # --- Test Cases ---
 
 @pytest.mark.asyncio
-async def test_register_tool_provider(streamable_http_transport, aiohttp_client, app):
-    """Test successful tool provider registration."""
+async def test_register_manual(streamable_http_transport, aiohttp_client, app):
+    """Test successful manual registration."""
     client = await aiohttp_client(app)
-    provider = StreamableHttpProvider(name="test-provider", url=f"{client.make_url('/discover')}")
-    tools = await streamable_http_transport.register_tool_provider(provider)
-    assert len(tools) == 1
-    assert tools[0].name == "test_tool"
+    call_template = StreamableHttpCallTemplate(name="test-provider", url=f"{client.make_url('/discover')}")
+    result = await streamable_http_transport.register_manual(None, call_template)
+    
+    assert isinstance(result, RegisterManualResult)
+    assert result.success
+    assert not result.errors
+    assert result.manual is not None
+    assert len(result.manual.tools) == 1
+    assert result.manual.tools[0].name == "test_tool"
 
 @pytest.mark.asyncio
-async def test_register_tool_provider_error(streamable_http_transport, aiohttp_client, app, logger):
-    """Test error handling during tool provider registration."""
+async def test_register_manual_error(streamable_http_transport, aiohttp_client, app):
+    """Test error handling during manual registration."""
     client = await aiohttp_client(app)
-    provider = StreamableHttpProvider(name="test-provider", url=f"{client.make_url('/error')}")
-    tools = await streamable_http_transport.register_tool_provider(provider)
-    assert tools == []
-    assert logger.call_count > 0
-    log_message = logger.call_args[0][0]
-    assert "Error discovering tools" in log_message
+    call_template = StreamableHttpCallTemplate(name="test-provider", url=f"{client.make_url('/error')}")
+    result = await streamable_http_transport.register_manual(None, call_template)
+    
+    assert isinstance(result, RegisterManualResult)
+    assert not result.success
+    assert result.errors
+    assert isinstance(result.errors[0], str)
+    assert result.manual is not None
+    assert len(result.manual.tools) == 0
 
 @pytest.mark.asyncio
-async def test_call_tool_ndjson_stream(streamable_http_transport, aiohttp_client, app):
+async def test_call_tool_streaming_ndjson(streamable_http_transport, aiohttp_client, app):
     """Test calling a tool that returns an NDJSON stream."""
     client = await aiohttp_client(app)
-    provider = StreamableHttpProvider(name="ndjson-provider", url=f"{client.make_url('/stream-ndjson')}", content_type='application/x-ndjson')
+    call_template = StreamableHttpCallTemplate(name="ndjson-provider", url=f"{client.make_url('/stream-ndjson')}", content_type='application/x-ndjson')
     
-    stream_iterator = await streamable_http_transport.call_tool("test_tool", {}, provider)
+    stream_iterator = streamable_http_transport.call_tool_streaming(
+        None, "test_tool", {}, call_template
+    )
     
     results = [item async for item in stream_iterator]
     
@@ -187,9 +171,14 @@ async def test_call_tool_ndjson_stream(streamable_http_transport, aiohttp_client
 async def test_call_tool_binary_stream(streamable_http_transport, aiohttp_client, app):
     """Test calling a tool that returns a binary stream."""
     client = await aiohttp_client(app)
-    provider = StreamableHttpProvider(name="binary-provider", url=f"{client.make_url('/stream-binary')}", content_type='application/octet-stream', chunk_size=6)
+    call_template = StreamableHttpCallTemplate(
+        name="binary-provider",
+        url=f"{client.make_url('/stream-binary')}",
+        content_type='application/octet-stream',
+        chunk_size=6
+    )
 
-    stream_iterator = await streamable_http_transport.call_tool("test_tool", {}, provider)
+    stream_iterator = streamable_http_transport.call_tool_streaming(None, "test_tool", {}, call_template)
 
     results = [chunk async for chunk in stream_iterator]
 
@@ -199,10 +188,15 @@ async def test_call_tool_binary_stream(streamable_http_transport, aiohttp_client
 async def test_call_tool_with_api_key(streamable_http_transport, aiohttp_client, app):
     """Test that the API key is correctly sent in the headers."""
     client = await aiohttp_client(app)
-    auth = ApiKeyAuth(var_name="X-API-Key", api_key="test-key")
-    provider = StreamableHttpProvider(name="auth-provider", url=f"{client.make_url('/auth-api-key')}", auth=auth, content_type='application/x-ndjson')
+    auth = ApiKeyAuth(var_name="X-API-Key", api_key="test-key", location="header")
+    call_template = StreamableHttpCallTemplate(
+        name="auth-provider",
+        url=f"{client.make_url('/auth-api-key')}",
+        auth=auth,
+        content_type='application/x-ndjson'
+    )
 
-    stream_iterator = await streamable_http_transport.call_tool("test_tool", {}, provider)
+    stream_iterator = streamable_http_transport.call_tool_streaming(None, "test_tool", {}, call_template)
     results = [item async for item in stream_iterator]
     
     assert results == SAMPLE_NDJSON_RESPONSE
@@ -212,9 +206,14 @@ async def test_call_tool_with_basic_auth(streamable_http_transport, aiohttp_clie
     """Test streaming with Basic authentication."""
     client = await aiohttp_client(app)
     auth = BasicAuth(username="user", password="pass")
-    provider = StreamableHttpProvider(name="basic-auth-provider", url=f"{client.make_url('/auth-basic')}", auth=auth, content_type='application/x-ndjson')
+    call_template = StreamableHttpCallTemplate(
+        name="basic-auth-provider",
+        url=f"{client.make_url('/auth-basic')}",
+        auth=auth,
+        content_type='application/x-ndjson'
+    )
 
-    stream_iterator = await streamable_http_transport.call_tool("test_tool", {}, provider)
+    stream_iterator = streamable_http_transport.call_tool_streaming(None, "test_tool", {}, call_template)
     results = [item async for item in stream_iterator]
     
     assert results == SAMPLE_NDJSON_RESPONSE
@@ -224,9 +223,14 @@ async def test_call_tool_with_oauth2_body(streamable_http_transport, aiohttp_cli
     """Test streaming with OAuth2 (credentials in body)."""
     client = await aiohttp_client(app)
     auth = OAuth2Auth(client_id="test-client", client_secret="test-secret", token_url=f"{client.make_url('/token')}")
-    provider = StreamableHttpProvider(name="oauth-provider", url=f"{client.make_url('/auth-oauth')}", auth=auth, content_type='application/x-ndjson')
+    call_template = StreamableHttpCallTemplate(
+        name="oauth-provider",
+        url=f"{client.make_url('/auth-oauth')}",
+        auth=auth,
+        content_type='application/x-ndjson'
+    )
 
-    stream_iterator = await streamable_http_transport.call_tool("test_tool", {}, provider)
+    stream_iterator = streamable_http_transport.call_tool_streaming(None, "test_tool", {}, call_template)
     results = [item async for item in stream_iterator]
     
     assert results == SAMPLE_NDJSON_RESPONSE
@@ -237,9 +241,103 @@ async def test_call_tool_with_oauth2_header_fallback(streamable_http_transport, 
     client = await aiohttp_client(app)
     # This token endpoint will fail for the body method, forcing a fallback.
     auth = OAuth2Auth(client_id="test-client", client_secret="test-secret", token_url=f"{client.make_url('/token-header')}")
-    provider = StreamableHttpProvider(name="oauth-fallback-provider", url=f"{client.make_url('/auth-oauth')}", auth=auth, content_type='application/x-ndjson')
+    call_template = StreamableHttpCallTemplate(
+        name="oauth-fallback-provider",
+        url=f"{client.make_url('/auth-oauth')}",
+        auth=auth,
+        content_type='application/x-ndjson'
+    )
 
-    stream_iterator = await streamable_http_transport.call_tool("test_tool", {}, provider)
+    stream_iterator = streamable_http_transport.call_tool_streaming(None, "test_tool", {}, call_template)
     results = [item async for item in stream_iterator]
     
     assert results == SAMPLE_NDJSON_RESPONSE
+
+@pytest.mark.asyncio
+async def test_call_tool_ndjson(streamable_http_transport, aiohttp_client, app):
+    """Non-streaming call should return full list for NDJSON."""
+    client = await aiohttp_client(app)
+    call_template = StreamableHttpCallTemplate(name="ndjson-provider", url=f"{client.make_url('/stream-ndjson')}", content_type='application/x-ndjson')
+
+    result = await streamable_http_transport.call_tool(None, "test_tool", {}, call_template)
+
+    assert result == SAMPLE_NDJSON_RESPONSE
+
+@pytest.mark.asyncio
+async def test_call_tool_binary(streamable_http_transport, aiohttp_client, app):
+    """Non-streaming call should return concatenated bytes for binary stream."""
+    client = await aiohttp_client(app)
+    call_template = StreamableHttpCallTemplate(
+        name="binary-provider",
+        url=f"{client.make_url('/stream-binary')}",
+        content_type='application/octet-stream',
+        chunk_size=6
+    )
+
+    result = await streamable_http_transport.call_tool(None, "test_tool", {}, call_template)
+
+    assert result == b'chunk1chunk2'
+
+@pytest.mark.asyncio
+async def test_call_tool_with_api_key_nonstream(streamable_http_transport, aiohttp_client, app):
+    """Non-streaming call with API key in header should behave like streaming."""
+    client = await aiohttp_client(app)
+    auth = ApiKeyAuth(var_name="X-API-Key", api_key="test-key", location="header")
+    call_template = StreamableHttpCallTemplate(
+        name="auth-provider",
+        url=f"{client.make_url('/auth-api-key')}",
+        auth=auth,
+        content_type='application/x-ndjson'
+    )
+
+    result = await streamable_http_transport.call_tool(None, "test_tool", {}, call_template)
+    
+    assert result == SAMPLE_NDJSON_RESPONSE
+
+@pytest.mark.asyncio
+async def test_call_tool_with_basic_auth_nonstream(streamable_http_transport, aiohttp_client, app):
+    """Non-streaming call with Basic auth should behave like streaming."""
+    client = await aiohttp_client(app)
+    auth = BasicAuth(username="user", password="pass")
+    call_template = StreamableHttpCallTemplate(
+        name="basic-auth-provider",
+        url=f"{client.make_url('/auth-basic')}",
+        auth=auth,
+        content_type='application/x-ndjson'
+    )
+
+    result = await streamable_http_transport.call_tool(None, "test_tool", {}, call_template)
+    
+    assert result == SAMPLE_NDJSON_RESPONSE
+
+@pytest.mark.asyncio
+async def test_call_tool_with_oauth2_body_nonstream(streamable_http_transport, aiohttp_client, app):
+    """Non-streaming call with OAuth2 (credentials in body) should behave like streaming."""
+    client = await aiohttp_client(app)
+    auth = OAuth2Auth(client_id="test-client", client_secret="test-secret", token_url=f"{client.make_url('/token')}")
+    call_template = StreamableHttpCallTemplate(
+        name="oauth-provider",
+        url=f"{client.make_url('/auth-oauth')}",
+        auth=auth,
+        content_type='application/x-ndjson'
+    )
+
+    result = await streamable_http_transport.call_tool(None, "test_tool", {}, call_template)
+    
+    assert result == SAMPLE_NDJSON_RESPONSE
+
+@pytest.mark.asyncio
+async def test_call_tool_with_oauth2_header_fallback_nonstream(streamable_http_transport, aiohttp_client, app):
+    """Non-streaming call with OAuth2 (fallback to Basic Auth header) should behave like streaming."""
+    client = await aiohttp_client(app)
+    auth = OAuth2Auth(client_id="test-client", client_secret="test-secret", token_url=f"{client.make_url('/token-header')}")
+    call_template = StreamableHttpCallTemplate(
+        name="oauth-fallback-provider",
+        url=f"{client.make_url('/auth-oauth')}",
+        auth=auth,
+        content_type='application/x-ndjson'
+    )
+
+    result = await streamable_http_transport.call_tool(None, "test_tool", {}, call_template)
+    
+    assert result == SAMPLE_NDJSON_RESPONSE

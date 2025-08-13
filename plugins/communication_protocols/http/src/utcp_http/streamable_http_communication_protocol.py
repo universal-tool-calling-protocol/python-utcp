@@ -134,34 +134,38 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     response_data = await response.json()
-                    utcp_manual = UtcpManualSerializer.validate_dict(response_data)
+                    utcp_manual = UtcpManualSerializer().validate_dict(response_data)
                     return RegisterManualResult(
+                        success=True,
+                        manual_call_template=manual_call_template,
                         manual=utcp_manual,
-                        tools=utcp_manual.tools,
                         errors=[]
                     )
         except aiohttp.ClientResponseError as e:
             error_msg = f"Error discovering tools from '{manual_call_template.name}': {e.status}, message='{e.message}', url='{e.request_info.url}'"
             logging.error(error_msg)
             return RegisterManualResult(
-                manual=None,
-                tools=[],
+                success=False,
+                manual_call_template=manual_call_template,
+                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
                 errors=[error_msg]
             )
         except (json.JSONDecodeError, aiohttp.ClientError) as e:
             error_msg = f"Error processing request for '{manual_call_template.name}': {e}"
             logging.error(error_msg)
             return RegisterManualResult(
-                manual=None,
-                tools=[],
+                success=False,
+                manual_call_template=manual_call_template,
+                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
                 errors=[error_msg]
             )
         except Exception as e:
             error_msg = f"An unexpected error occurred while discovering tools from '{manual_call_template.name}': {e}"
             logging.error(error_msg)
             return RegisterManualResult(
-                manual=None,
-                tools=[],
+                success=False,
+                manual_call_template=manual_call_template,
+                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
                 errors=[error_msg]
             )
 

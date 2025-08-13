@@ -13,12 +13,12 @@ from utcp.data.register_manual_response import RegisterManualResult
 from utcp.data.auth_implementations.api_key_auth import ApiKeyAuth
 from utcp.data.auth_implementations.basic_auth import BasicAuth
 from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
-from utcp_http.sse_call_template import SSECallTemplate
+from utcp_http.sse_call_template import SseCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 import logging
 
 
-class SSECommunicationProtocol(CommunicationProtocol):
+class SseCommunicationProtocol(CommunicationProtocol):
     """SSE communication protocol implementation for UTCP client.
     
     Handles Server-Sent Events based tool providers with streaming capabilities.
@@ -28,7 +28,7 @@ class SSECommunicationProtocol(CommunicationProtocol):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
         self._active_connections: Dict[str, tuple[aiohttp.ClientResponse, aiohttp.ClientSession]] = {}
 
-    def _apply_auth(self, provider: SSECallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
+    def _apply_auth(self, provider: SseCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
         
         Returns:
@@ -62,7 +62,7 @@ class SSECommunicationProtocol(CommunicationProtocol):
 
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
         """Register a manual and its tools from an SSE provider."""
-        if not isinstance(manual_call_template, SSECallTemplate):
+        if not isinstance(manual_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 
         try:
@@ -125,19 +125,20 @@ class SSECommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     response_data = await response.json()
-                    utcp_manual = UtcpManualSerializer.validate_dict(response_data)
+                    utcp_manual = UtcpManualSerializer().validate_dict(response_data)
                     return RegisterManualResult(
+                        success=True,
+                        manual_call_template=manual_call_template,
                         manual=utcp_manual,
-                        tools=utcp_manual.tools,
                         errors=[]
                     )
         except Exception as e:
-            error_msg = f"Error discovering tools from '{manual_call_template.name}': {e}"
-            logging.error(error_msg)
+            logging.error(f"Error discovering tools from '{manual_call_template.name}': {e}")
             return RegisterManualResult(
-                manual=None,
-                tools=[],
-                errors=[error_msg]
+                success=False,
+                manual_call_template=manual_call_template,
+                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                errors=[str(e)]
             )
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
@@ -150,7 +151,7 @@ class SSECommunicationProtocol(CommunicationProtocol):
 
     async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Execute a tool call through SSE transport."""
-        if not isinstance(tool_call_template, SSECallTemplate):
+        if not isinstance(tool_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
         
         event_list = []
@@ -160,7 +161,7 @@ class SSECommunicationProtocol(CommunicationProtocol):
     
     async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """Execute a tool call through SSE transport with streaming."""
-        if not isinstance(tool_call_template, SSECallTemplate):
+        if not isinstance(tool_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 
         request_headers = tool_call_template.headers.copy() if tool_call_template.headers else {}

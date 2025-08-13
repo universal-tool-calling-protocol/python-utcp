@@ -5,7 +5,7 @@ from utcp.exceptions import UtcpSerializerValidationError
 from typing import Optional, Dict, List, Literal
 from pydantic import Field
 
-class SSECallTemplate(CallTemplate):
+class SseCallTemplate(CallTemplate):
     """Provider configuration for Server-Sent Events (SSE) tools.
 
     Enables real-time streaming of events from server to client using the
@@ -36,14 +36,14 @@ class SSECallTemplate(CallTemplate):
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers for the initial connection.")
 
 
-class SSECallTemplateSerializer(Serializer[SSECallTemplate]):
+class SSECallTemplateSerializer(Serializer[SseCallTemplate]):
     """Serializer for SSECallTemplate."""
     
-    def to_dict(self, obj: SSECallTemplate) -> dict:
+    def to_dict(self, obj: SseCallTemplate) -> dict:
         return obj.model_dump()
     
-    def validate_dict(self, obj: dict) -> SSECallTemplate:
+    def validate_dict(self, obj: dict) -> SseCallTemplate:
         try:
-            return SSECallTemplate.model_validate(obj)
+            return SseCallTemplate.model_validate(obj)
         except Exception as e:
             raise UtcpSerializerValidationError("Invalid SSECallTemplate: " + str(e))

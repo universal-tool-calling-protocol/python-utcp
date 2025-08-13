@@ -8,37 +8,12 @@ from unittest.mock import MagicMock, patch, AsyncMock
 import aiohttp
 from aiohttp import web
 
-from utcp.client.transport_interfaces.sse_transport import SSEClientTransport
-from utcp.shared.provider import SSEProvider
-from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
+from utcp_http.sse_communication_protocol import SseCommunicationProtocol
+from utcp_http.sse_call_template import SseCallTemplate
+from utcp.data.auth_implementations import ApiKeyAuth, BasicAuth, OAuth2Auth
+from utcp.data.register_manual_response import RegisterManualResult
 
 # --- Test Data ---
-
-SAMPLE_TOOLS_JSON = {
-    "version": "1.0",
-    "tools": [
-        {
-            "name": "test_tool",
-            "description": "Test tool",
-            "inputs": {
-                "type": "object",
-                "properties": {"param1": {"type": "string"}}
-            },
-            "outputs": {
-                "type": "object",
-                "properties": {"result": {"type": "string"}}
-            },
-            "tags": [],
-            "tool_provider": {
-                "provider_type": "sse",
-                "name": "test-sse-provider-executor",
-                "url": "/events",
-                "http_method": "GET",
-                "content_type": "application/json"
-            }
-        }
-    ]
-}
 
 SAMPLE_SSE_EVENTS = [
     'id: 1\ndata: {"message": "First part"}\n\n',
@@ -49,15 +24,16 @@ SAMPLE_SSE_EVENTS = [
 # --- Test Server Handlers ---
 
 async def tools_handler(request):
-    execution_provider = {
-        "provider_type": "sse",
-        "name": "test-sse-provider-executor",
+    execution_call_template = {
+        "type": "sse",
+        "name": "test-sse-call-template-executor",
         "url": str(request.url.origin()) + "/events",
         "http_method": "GET",
         "content_type": "application/json"
     }
     utcp_manual = {
-        "version": "1.0",
+        "utcp_version": "1.0.0",
+        "manual_version": "1.0.0",
         "tools": [
             {
                 "name": "test_tool",
@@ -71,20 +47,22 @@ async def tools_handler(request):
                     "properties": {"result": {"type": "string"}}
                 },
                 "tags": [],
-                "tool_provider": execution_provider
+                "tool_call_template": execution_call_template
             }
         ]
     }
     return web.json_response(utcp_manual)
 
-async def sse_handler(request):
+async def events_handler(request):
+    if request.method not in ('GET', 'POST'):
+        return web.Response(status=405)
+
     # Check auth
     if 'X-API-Key' in request.headers and request.headers['X-API-Key'] != 'test-api-key':
         return web.Response(status=401, text="Invalid API Key")
     if 'Authorization' in request.headers:
         auth_header = request.headers['Authorization']
         if auth_header.startswith('Basic'):
-            # Basic dXNlcjpwYXNz
             if auth_header != f"Basic {base64.b64encode(b'user:pass').decode()}":
                 return web.Response(status=401, text="Invalid Basic Auth")
         elif auth_header.startswith('Bearer'):
@@ -105,7 +83,6 @@ async def sse_handler(request):
     return response
 
 async def token_handler(request):
-    # OAuth2 token endpoint (credentials in body)
     data = await request.post()
     if data.get('client_id') == 'client-id' and data.get('client_secret') == 'client-secret':
         return web.json_response({
@@ -116,16 +93,14 @@ async def token_handler(request):
     return web.json_response({"error": "invalid_client"}, status=401)
 
 async def token_header_auth_handler(request):
-    # OAuth2 token endpoint (credentials in header)
     auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Basic '):
-        return web.json_response({"error": "missing_auth"}, status=401)
-    
-    return web.json_response({
-        "access_token": "test-access-token-header",
-        "token_type": "Bearer",
-        "expires_in": 3600
-    })
+    if auth_header == f"Basic {base64.b64encode(b'client-id:client-secret').decode()}":
+        return web.json_response({
+            "access_token": "test-access-token-header",
+            "token_type": "Bearer",
+            "expires_in": 3600
+        })
+    return web.json_response({"error": "invalid_client"}, status=401)
 
 async def error_handler(request):
     return web.Response(status=500, text="Internal Server Error")
@@ -133,88 +108,89 @@ async def error_handler(request):
 # --- Pytest Fixtures ---
 
 @pytest.fixture
-def logger():
-    return MagicMock()
-
-@pytest_asyncio.fixture
-async def sse_transport(logger):
-    """Fixture to create and properly tear down an SSEClientTransport instance."""
-    transport = SSEClientTransport(logger=logger)
+def sse_transport():
+    """Fixture to create and properly tear down an SseCommunicationProtocol instance."""
+    transport = SseCommunicationProtocol()
     yield transport
-    await transport.close()
+    asyncio.run(transport.close())
 
 @pytest.fixture
 def app():
-    application = web.Application()
-    application.router.add_get("/tools", tools_handler)
-    application.router.add_get("/events", sse_handler)
-    application.router.add_post("/events", sse_handler)
-    application.router.add_post("/token", token_handler)
-    application.router.add_post("/token_header_auth", token_header_auth_handler)
-    application.router.add_get("/error", error_handler)
-    return application
-
-import pytest_asyncio
+    app = web.Application()
+    app.router.add_get("/tools", tools_handler)
+    app.router.add_route('*', '/events', events_handler)
+    app.router.add_post("/token", token_handler)
+    app.router.add_post("/token_header_auth", token_header_auth_handler)
+    app.router.add_get("/error", error_handler)
+    return app
 
 @pytest_asyncio.fixture
-async def oauth2_provider(aiohttp_client, app):
+async def oauth2_call_template(aiohttp_client, app):
     client = await aiohttp_client(app)
-    return SSEProvider(
-        name="oauth2-provider",
+    return SseCallTemplate(
+        name="oauth2-call-template",
         url=f"{client.make_url('/events')}",
         auth=OAuth2Auth(
             client_id="client-id",
             client_secret="client-secret",
-            token_url=f"{client.make_url('/token')}"
+            token_url=f"{client.make_url('/token')}",
+            scope="read write"
         )
     )
 
 # --- Tests ---
 
 @pytest.mark.asyncio
-async def test_register_tool_provider(sse_transport, aiohttp_client, app):
-    """Test registering a tool provider."""
+async def test_register_manual(sse_transport, aiohttp_client, app):
+    """Test registering a manual."""
     client = await aiohttp_client(app)
-    provider = SSEProvider(name="test", url=f"{client.make_url('/tools')}")
-    tools = await sse_transport.register_tool_provider(provider)
-    assert len(tools) == 1
-    assert tools[0].name == "test_tool"
+    call_template = SseCallTemplate(name="test-call-template", url=f"{client.make_url('/tools')}")
+    result = await sse_transport.register_manual(None, call_template)
+    
+    assert isinstance(result, RegisterManualResult)
+    assert result.success
+    assert not result.errors
+    assert result.manual is not None
+    assert len(result.manual.tools) == 1
+    assert result.manual.tools[0].name == "test_tool"
 
 @pytest.mark.asyncio
-async def test_register_tool_provider_error(sse_transport, aiohttp_client, app, logger):
-    """Test error handling when registering a tool provider."""
+async def test_register_manual_error(sse_transport, aiohttp_client, app):
+    """Test error handling when registering a manual."""
     client = await aiohttp_client(app)
-    provider = SSEProvider(name="test-error", url=f"{client.make_url('/error')}")
-    tools = await sse_transport.register_tool_provider(provider)
-    # Only verify that the function returns an empty list of tools when an error occurs
-    assert tools == []
+    call_template = SseCallTemplate(name="test-error", url=f"{client.make_url('/error')}")
+    result = await sse_transport.register_manual(None, call_template)
+    assert not result.success
+    assert result.manual is not None
+    assert len(result.manual.tools) == 0
+    assert result.errors
+    assert isinstance(result.errors[0], str)
 
 @pytest.mark.asyncio
 async def test_call_tool_basic(sse_transport, aiohttp_client, app):
     """Test calling a tool with basic configuration."""
     client = await aiohttp_client(app)
-    provider = SSEProvider(name="test-basic", url=f"{client.make_url('/events')}")
+    call_template = SseCallTemplate(name="test-basic", url=f"{client.make_url('/events')}")
+
+    events = []
+    async for event in sse_transport.call_tool_streaming(None, "test_tool", {"param1": "value1"}, call_template):
+        events.append(event)
     
-    stream_iterator = await sse_transport.call_tool("test_tool", {"param1": "value1"}, provider)
-    
-    results = []
-    async for event in stream_iterator:
-        results.append(event)
-    
-    assert len(results) == 3
-    assert results[0] == {"message": "First part"}
-    assert results[1] == {"message": "Second part"}
+    assert len(events) == 3
+    assert events[0] == {"message": "First part"}
+    assert events[1] == {"message": "Second part"}
+    assert events[2] == {"message": "End of stream"}
 
 @pytest.mark.asyncio
 async def test_call_tool_with_api_key(sse_transport, aiohttp_client, app):
     """Test calling a tool with API key authentication."""
     client = await aiohttp_client(app)
-    provider = SSEProvider(
-        name="api-key-provider",
+    call_template = SseCallTemplate(
+        name="api-key-call-template",
         url=f"{client.make_url('/events')}",
-        auth=ApiKeyAuth(var_name="X-API-Key", api_key="test-api-key")
+        auth=ApiKeyAuth(api_key="test-api-key", header_name="X-API-Key")
     )
-    stream_iterator = await sse_transport.call_tool("test_tool", {}, provider)
+    stream_iterator = sse_transport.call_tool_streaming(None, "test_tool", {}, call_template)
     results = [event async for event in stream_iterator]
     assert len(results) == 3
 
@@ -222,21 +198,20 @@ async def test_call_tool_with_api_key(sse_transport, aiohttp_client, app):
 async def test_call_tool_with_basic_auth(sse_transport, aiohttp_client, app):
     """Test calling a tool with Basic authentication."""
     client = await aiohttp_client(app)
-    provider = SSEProvider(
-        name="basic-auth-provider",
+    call_template = SseCallTemplate(
+        name="basic-auth-call-template",
         url=f"{client.make_url('/events')}",
         auth=BasicAuth(username="user", password="pass")
     )
-    stream_iterator = await sse_transport.call_tool("test_tool", {}, provider)
+    stream_iterator = sse_transport.call_tool_streaming(None, "test_tool", {}, call_template)
     results = [event async for event in stream_iterator]
     assert len(results) == 3
 
 @pytest.mark.asyncio
-async def test_call_tool_with_oauth2(sse_transport, oauth2_provider, app):
+async def test_call_tool_with_oauth2(sse_transport, oauth2_call_template, app):
     """Test calling a tool with OAuth2 authentication (credentials in body)."""
-    # The provider fixture is already configured with the correct client URL
     events = []
-    async for event in await sse_transport.call_tool("test_tool", {"param1": "value1"}, oauth2_provider):
+    async for event in sse_transport.call_tool_streaming(None, "test_tool", {"param1": "value1"}, oauth2_call_template):
         events.append(event)
     
     assert len(events) == 3
@@ -248,8 +223,8 @@ async def test_call_tool_with_oauth2(sse_transport, oauth2_provider, app):
 async def test_call_tool_with_oauth2_header_auth(sse_transport, aiohttp_client, app):
     """Test calling a tool with OAuth2 authentication (credentials in header)."""
     client = await aiohttp_client(app)
-    oauth2_header_provider = SSEProvider(
-        name="oauth2-header-provider",
+    oauth2_header_call_template = SseCallTemplate(
+        name="oauth2-header-call-template",
         url=f"{client.make_url('/events')}",
         auth=OAuth2Auth(
             client_id="client-id",
@@ -260,7 +235,7 @@ async def test_call_tool_with_oauth2_header_auth(sse_transport, aiohttp_client, 
     )
 
     events = []
-    async for event in await sse_transport.call_tool("test_tool", {"param1": "value1"}, oauth2_header_provider):
+    async for event in sse_transport.call_tool_streaming(None, "test_tool", {"param1": "value1"}, oauth2_header_call_template):
         events.append(event)
 
     assert len(events) == 3
@@ -272,49 +247,154 @@ async def test_call_tool_with_oauth2_header_auth(sse_transport, aiohttp_client, 
 async def test_call_tool_with_body_field(sse_transport, aiohttp_client, app):
     """Test calling a tool with a body field."""
     client = await aiohttp_client(app)
-    provider = SSEProvider(
-        name="body-field-provider",
+    call_template = SseCallTemplate(
+        name="body-field-call-template",
         url=f"{client.make_url('/events')}",
         body_field="data",
         headers={"Content-Type": "application/json"}
     )
-    stream_iterator = await sse_transport.call_tool(
-        "test_tool", 
-        {"param1": "value1", "data": {"key": "value"}}, 
-        provider
+    stream_iterator = sse_transport.call_tool_streaming(
+        None,
+        "test_tool",
+        {"param1": "value1", "data": {"key": "value"}},
+        call_template
     )
     results = [event async for event in stream_iterator]
     assert len(results) == 3
 
 @pytest.mark.asyncio
-async def test_call_tool_error(sse_transport, aiohttp_client, app, logger):
+async def test_call_tool_error(sse_transport, aiohttp_client, app):
     """Test error handling when calling a tool."""
     client = await aiohttp_client(app)
-    provider = SSEProvider(name="test-error", url=f"{client.make_url('/error')}")
+    call_template = SseCallTemplate(name="test-error", url=f"{client.make_url('/error')}")
     with pytest.raises(aiohttp.ClientResponseError) as excinfo:
-        await sse_transport.call_tool("test_tool", {}, provider)
+        async for _ in sse_transport.call_tool_streaming(None, "test_tool", {}, call_template):
+            pass
     
     assert excinfo.value.status == 500
-    logger.assert_called_with(f"Error establishing SSE connection to '{provider.name}': 500, message='Internal Server Error', url='{provider.url}'", error=True)
 
 @pytest.mark.asyncio
-async def test_deregister_tool_provider(sse_transport, aiohttp_client, app):
-    """Test deregistering a tool provider closes the connection."""
+async def test_deregister_manual(sse_transport, aiohttp_client, app):
+    """Test deregistering a manual closes the connection."""
     client = await aiohttp_client(app)
-    provider = SSEProvider(name="test-deregister", url=f"{client.make_url('/events')}")
+    call_template = SseCallTemplate(name="test-deregister", url=f"{client.make_url('/events')}")
     
     # Make a call to establish a connection
-    stream_iterator = await sse_transport.call_tool("test_tool", {}, provider)
-    assert provider.name in sse_transport._active_connections
-    response, session = sse_transport._active_connections[provider.name]
-    
-    # Consume one item to ensure connection is active
+    stream_iterator = sse_transport.call_tool_streaming(None, "test_tool", {}, call_template)
     await anext(stream_iterator)
-    
+    assert call_template.name in sse_transport._active_connections
+    response, session = sse_transport._active_connections[call_template.name]
+
     # Deregister
-    await sse_transport.deregister_tool_provider(provider)
+    await sse_transport.deregister_manual(None, call_template)
     
     # Verify connection and session are closed and removed
-    assert provider.name not in sse_transport._active_connections
+    assert call_template.name not in sse_transport._active_connections
     assert response.closed
     assert session.closed
+
+@pytest.mark.asyncio
+async def test_call_tool_basic_nonstream(sse_transport, aiohttp_client, app):
+    """Non-streaming call should aggregate SSE events into a list (basic)."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-basic", url=f"{client.make_url('/events')}")
+
+    result = await sse_transport.call_tool(None, "test_tool", {"param1": "value1"}, call_template)
+
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert result[0] == {"message": "First part"}
+    assert result[1] == {"message": "Second part"}
+    assert result[2] == {"message": "End of stream"}
+
+@pytest.mark.asyncio
+async def test_call_tool_with_api_key_nonstream(sse_transport, aiohttp_client, app):
+    """Non-streaming call with API key should behave like streaming."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(
+        name="api-key-call-template",
+        url=f"{client.make_url('/events')}",
+        auth=ApiKeyAuth(api_key="test-api-key", header_name="X-API-Key")
+    )
+
+    result = await sse_transport.call_tool(None, "test_tool", {}, call_template)
+    
+    assert isinstance(result, list)
+    assert len(result) == 3
+
+@pytest.mark.asyncio
+async def test_call_tool_with_basic_auth_nonstream(sse_transport, aiohttp_client, app):
+    """Non-streaming call with Basic auth should behave like streaming."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(
+        name="basic-auth-call-template",
+        url=f"{client.make_url('/events')}",
+        auth=BasicAuth(username="user", password="pass")
+    )
+
+    result = await sse_transport.call_tool(None, "test_tool", {}, call_template)
+    
+    assert isinstance(result, list)
+    assert len(result) == 3
+
+@pytest.mark.asyncio
+async def test_call_tool_with_oauth2_nonstream(sse_transport, oauth2_call_template, app):
+    """Non-streaming call with OAuth2 (body credentials) should aggregate events."""
+    result = await sse_transport.call_tool(None, "test_tool", {"param1": "value1"}, oauth2_call_template)
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert result[0] == {"message": "First part"}
+    assert result[1] == {"message": "Second part"}
+    assert result[2] == {"message": "End of stream"}
+
+@pytest.mark.asyncio
+async def test_call_tool_with_oauth2_header_auth_nonstream(sse_transport, aiohttp_client, app):
+    """Non-streaming call with OAuth2 (header credentials) should aggregate events."""
+    client = await aiohttp_client(app)
+    oauth2_header_call_template = SseCallTemplate(
+        name="oauth2-header-call-template",
+        url=f"{client.make_url('/events')}",
+        auth=OAuth2Auth(
+            client_id="client-id",
+            client_secret="client-secret",
+            token_url=f"{client.make_url('/token_header_auth')}",
+            scope="read write"
+        )
+    )
+
+    result = await sse_transport.call_tool(None, "test_tool", {"param1": "value1"}, oauth2_header_call_template)
+
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert result[0] == {"message": "First part"}
+    assert result[1] == {"message": "Second part"}
+    assert result[2] == {"message": "End of stream"}
+
+@pytest.mark.asyncio
+async def test_call_tool_with_body_field_nonstream(sse_transport, aiohttp_client, app):
+    """Non-streaming call with body field should aggregate events."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(
+        name="body-field-call-template",
+        url=f"{client.make_url('/events')}",
+        body_field="data",
+        headers={"Content-Type": "application/json"}
+    )
+
+    result = await sse_transport.call_tool(
+        None,
+        "test_tool",
+        {"param1": "value1", "data": {"key": "value"}},
+        call_template
+    )
+    assert isinstance(result, list)
+    assert len(result) == 3
+
+@pytest.mark.asyncio
+async def test_call_tool_error_nonstream(sse_transport, aiohttp_client, app):
+    """Non-streaming call should raise same error on server failure."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-error", url=f"{client.make_url('/error')}")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await sse_transport.call_tool(None, "test_tool", {}, call_template)
+    assert excinfo.value.status == 500
