@@ -6,11 +6,12 @@ communication with different types of tool providers (HTTP, CLI, WebSocket, etc.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, AsyncGenerator
-from core.src.utcp.utcp_client import UtcpClient
-from utcp.data.tool import Tool
+from typing import Dict, Any, List, AsyncGenerator, TYPE_CHECKING
+
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp.data.call_template import CallTemplate
+if TYPE_CHECKING:
+    from utcp.utcp_client import UtcpClient
 
 class CommunicationProtocol(ABC):
     """Abstract interface for UTCP client transport implementations.
@@ -27,7 +28,7 @@ class CommunicationProtocol(ABC):
     communication_protocols: Dict[str, 'CommunicationProtocol'] = {}
 
     @abstractmethod
-    async def register_manual(self, caller: UtcpClient, manual_call_template: CallTemplate) -> RegisterManualResult:
+    async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
         """Register a manual and its tools.
 
         Connects to the provider and retrieves the list of tools it offers.
@@ -48,7 +49,7 @@ class CommunicationProtocol(ABC):
         pass
 
     @abstractmethod
-    async def deregister_manual(self, caller: UtcpClient, manual_call_template: CallTemplate) -> None:
+    async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
         """Deregister a manual and its tools.
 
         Cleanly disconnects from the provider and releases any associated
@@ -65,7 +66,7 @@ class CommunicationProtocol(ABC):
         pass
 
     @abstractmethod
-    async def call_tool(self, caller: UtcpClient, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+    async def call_tool(self, caller: 'UtcpClient', tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Execute a tool call through this transport.
 
         Sends a tool invocation request to the provider using the appropriate
@@ -90,7 +91,7 @@ class CommunicationProtocol(ABC):
         pass
 
     @abstractmethod
-    async def call_tool_streaming(self, caller: UtcpClient, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any]:
+    async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any]:
         """Execute a tool call through this transport streamingly.
 
         Sends a tool invocation request to the provider using the appropriate

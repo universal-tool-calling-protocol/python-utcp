@@ -54,4 +54,4 @@ class CallTemplateSerializer(Serializer[CallTemplate]):
         try:
             return CallTemplateSerializer.call_template_serializers[obj["type"]].validate_dict(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid CallTemplate: " + str(e))
+            raise UtcpSerializerValidationError("Invalid CallTemplate: " + str(e)) from e

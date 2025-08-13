@@ -6,10 +6,10 @@ between tool providers and clients for sharing available tools and their
 configurations.
 """
 
-from typing import List
+from typing import List, Union
 from pydantic import BaseModel, field_serializer, field_validator
 from utcp.python_specific_tooling.tool_decorator import ToolContext
-from utcp.version import __version__
+from utcp.python_specific_tooling.version import __version__
 from utcp.data.tool import Tool
 from utcp.data.tool import ToolSerializer
 from utcp.interfaces.serializer import Serializer
@@ -90,8 +90,9 @@ class UtcpManual(BaseModel):
         return [ToolSerializer().to_dict(tool) for tool in tools]
 
     @field_validator("tools")
-    def validate_tools(self, tools: List[dict]) -> List[Tool]:
-        return [ToolSerializer().validate_dict(tool) for tool in tools]
+    @classmethod
+    def validate_tools(cls, tools: List[Union[Tool, dict]]) -> List[Tool]:
+        return [v if isinstance(v, Tool) else ToolSerializer().validate_dict(v) for v in tools]
 
     
 class UtcpManualSerializer(Serializer[UtcpManual]):

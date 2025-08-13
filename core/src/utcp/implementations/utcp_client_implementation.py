@@ -1,7 +1,6 @@
-from core.src.utcp.data.utcp_manual import UtcpManual
+from utcp.data.utcp_manual import UtcpManual
 from utcp.utcp_client import UtcpClient
 
-from pathlib import Path
 import re
 import os
 import json
@@ -9,18 +8,18 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Union, Optional, AsyncGenerator
 
-from core.src.utcp.data.call_template import CallTemplate
-from core.src.utcp.data.call_template import CallTemplateSerializer
-from core.src.utcp.data.tool import Tool
-from core.src.utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
-from core.src.utcp.interfaces.tool_search_strategy import ToolSearchStrategy
-from core.src.utcp.interfaces.variable_substitutor import VariableSubstitutor
-from core.src.utcp.data.utcp_client_config import UtcpClientConfig, UtcpClientConfigSerializer
-from core.src.utcp.implementations.default_variable_substitutor import DefaultVariableSubstitutor
-from core.src.utcp.implementations.tag_search import TagSearchStrategy
-from core.src.utcp.exceptions import UtcpVariableNotFound
-from core.src.utcp.data.register_manual_response import RegisterManualResult
-from core.src.utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.data.call_template import CallTemplate
+from utcp.data.call_template import CallTemplateSerializer
+from utcp.data.tool import Tool
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
+from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
+from utcp.interfaces.variable_substitutor import VariableSubstitutor
+from utcp.data.utcp_client_config import UtcpClientConfig, UtcpClientConfigSerializer
+from utcp.implementations.default_variable_substitutor import DefaultVariableSubstitutor
+from utcp.implementations.tag_search import TagSearchStrategy
+from utcp.exceptions import UtcpVariableNotFound
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.interfaces.communication_protocol import CommunicationProtocol
 import logging
 
 class UtcpClientImplementation(UtcpClient):

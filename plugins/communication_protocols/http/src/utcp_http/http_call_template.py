@@ -1,5 +1,7 @@
-from utcp.data.call_template import CallTemplate
-from utcp.shared.auth import Auth
+from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.data.auth import Auth
+from utcp.interfaces.serializer import Serializer
+from utcp.exceptions import UtcpSerializerValidationError
 from typing import Optional, Dict, List, Literal
 from pydantic import Field
 
@@ -31,3 +33,16 @@ class HttpCallTemplate(CallTemplate):
     headers: Optional[Dict[str, str]] = None
     body_field: Optional[str] = Field(default="body", description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers.")
+
+
+class HttpCallTemplateSerializer(Serializer[HttpCallTemplate]):
+    """Serializer for HttpCallTemplate."""
+    
+    def to_dict(self, obj: HttpCallTemplate) -> dict:
+        return obj.model_dump()
+    
+    def validate_dict(self, obj: dict) -> HttpCallTemplate:
+        try:
+            return HttpCallTemplate.model_validate(obj)
+        except Exception as e:
+            raise UtcpSerializerValidationError("Invalid HttpCallTemplate: " + str(e))

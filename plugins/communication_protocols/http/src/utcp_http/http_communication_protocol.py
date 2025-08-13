@@ -1,6 +1,6 @@
-"""HTTP transport implementation for UTCP client.
+"""HTTP communication protocol implementation for UTCP client.
 
-This module provides the HTTP transport implementation that handles communication
+This module provides the HTTP communication protocol implementation that handles communication
 with HTTP-based tool providers. It supports RESTful APIs, authentication methods,
 URL path parameters, and automatic tool discovery through various formats.
 
@@ -12,24 +12,27 @@ Key Features:
     - Request/response handling with proper error management
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
 import aiohttp
 import json
 import yaml
 import base64
 import re
 
-from utcp.client.client_transport_interface import ClientTransportInterface
-from utcp.shared.provider import Provider, HttpProvider
-from utcp.shared.tool import Tool
-from utcp.shared.utcp_manual import UtcpManual
-from utcp.client.openapi_converter import OpenApiConverter
-from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
-from typing import Optional, Callable
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.data.call_template import CallTemplate
+from utcp.data.tool import Tool
+from utcp.data.utcp_manual import UtcpManual, UtcpManualSerializer
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.data.auth_implementations.api_key_auth import ApiKeyAuth
+from utcp.data.auth_implementations.basic_auth import BasicAuth
+from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
+from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
+import logging
 
-class HttpClientTransport(ClientTransportInterface):
-    """HTTP transport implementation for UTCP client.
+class HttpCommunicationProtocol(CommunicationProtocol):
+    """HTTP communication protocol implementation for UTCP client.
 
     Handles communication with HTTP-based tool providers, supporting various
     authentication methods, URL path parameters, and automatic tool discovery.
@@ -59,10 +62,8 @@ class HttpClientTransport(ClientTransportInterface):
         """
         self._session: Optional[aiohttp.ClientSession] = None
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-
-        self._log = logger or (lambda *args, **kwargs: None)
     
-    def _apply_auth(self, provider: HttpProvider, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
+    def _apply_auth(self, provider: HttpCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
         
         Returns:
@@ -81,7 +82,7 @@ class HttpClientTransport(ClientTransportInterface):
                     elif provider.auth.location == "cookie":
                         cookies[provider.auth.var_name] = provider.auth.api_key
                 else:
-                    self._log("API key not found for ApiKeyAuth.", error=True)
+                    logging.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
             
             elif isinstance(provider.auth, BasicAuth):
@@ -94,20 +95,21 @@ class HttpClientTransport(ClientTransportInterface):
         
         return auth, cookies
 
-    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
-        """Discover tools from a REST API provider.
+    async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
+        """Register a manual and its tools.
 
         Args:
-            provider: Details of the REST provider
+            caller: The UTCP client that is calling this method.
+            manual_call_template: The call template of the manual to register.
 
         Returns:
-            List of tool declarations as dictionaries, or None if discovery fails
+            RegisterManualResult object containing the call template and manual.
         """
-        if not isinstance(manual_provider, HttpProvider):
-            raise ValueError("HttpTransport can only be used with HttpProvider")
+        if not isinstance(manual_call_template, HttpCallTemplate):
+            raise ValueError("HttpCommunicationProtocol can only be used with HttpCallTemplate")
 
         try:
-            url = manual_provider.url
+            url = manual_call_template.url
             
             # Security check: Enforce HTTPS or localhost to prevent MITM attacks
             if not (url.startswith("https://") or url.startswith("http://localhost") or url.startswith("http://127.0.0.1")):
@@ -116,23 +118,23 @@ class HttpClientTransport(ClientTransportInterface):
                     "Non-secure URLs are vulnerable to man-in-the-middle attacks."
                 )
                 
-            self._log(f"Discovering tools from '{manual_provider.name}' (REST) at {url}")
+            logging.info(f"Discovering tools from '{manual_call_template.name}' (HTTP) at {url}")
             
-            # Use the provider's configuration (headers, auth, HTTP method, etc.)
-            request_headers = manual_provider.headers.copy() if manual_provider.headers else {}
+            # Use the call template's configuration (headers, auth, HTTP method, etc.)
+            request_headers = manual_call_template.headers.copy() if manual_call_template.headers else {}
             body_content = None
             query_params = {}
             
             # Handle authentication
-            auth, cookies = self._apply_auth(manual_provider, request_headers, query_params)
+            auth, cookies = self._apply_auth(manual_call_template, request_headers, query_params)
             
             # Handle OAuth2 separately since it requires async token retrieval
-            if manual_provider.auth and isinstance(manual_provider.auth, OAuth2Auth):
-                token = await self._handle_oauth2(manual_provider.auth)
+            if manual_call_template.auth and isinstance(manual_call_template.auth, OAuth2Auth):
+                token = await self._handle_oauth2(manual_call_template.auth)
                 request_headers["Authorization"] = f"Bearer {token}"
             
             # Handle body content if specified
-            if manual_provider.body_field:
+            if manual_call_template.body_field:
                 # For discovery, we typically don't have body content, but support it if needed
                 body_content = None
             
@@ -140,7 +142,7 @@ class HttpClientTransport(ClientTransportInterface):
                 try:
                     # Set content-type header if body is provided and header not already set
                     if body_content is not None and "Content-Type" not in request_headers:
-                        request_headers["Content-Type"] = manual_provider.content_type
+                        request_headers["Content-Type"] = manual_call_template.content_type
                     
                     # Prepare body content based on content type
                     data = None
@@ -151,8 +153,8 @@ class HttpClientTransport(ClientTransportInterface):
                         else:
                             data = body_content
                     
-                    # Make the request with the provider's HTTP method
-                    method = manual_provider.http_method.lower()
+                    # Make the request with the call template's HTTP method
+                    method = manual_call_template.http_method.lower()
                     request_method = getattr(session, method)
                     
                     async with request_method(
@@ -177,67 +179,98 @@ class HttpClientTransport(ClientTransportInterface):
                             response_data = json.loads(response_text)
 
                         # Check if the response is a UTCP manual or an OpenAPI spec
-                        if "version" in response_data and "tools" in response_data:
-                            self._log(f"Detected UTCP manual from '{manual_provider.name}'.")
-                            utcp_manual = UtcpManual(**response_data)
+                        if "utcp_version" in response_data and "tools" in response_data:
+                            logging.info(f"Detected UTCP manual from '{manual_call_template.name}'.")
+                            utcp_manual = UtcpManualSerializer().validate_dict(response_data)
                         else:
-                            self._log(f"Assuming OpenAPI spec from '{manual_provider.name}'. Converting to UTCP manual.")
-                            converter = OpenApiConverter(response_data, spec_url=manual_provider.url, provider_name=manual_provider.name)
-                            utcp_manual = converter.convert()
+                            logging.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
+                            # TODO: For now, we'll create an empty manual - OpenAPI conversion needs to be updated separately
+                            # converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, provider_name=manual_call_template.name)
+                            # utcp_manual = converter.convert()
+                            utcp_manual = UtcpManual(tools=[])
                         
-                        return utcp_manual.tools
+                        return RegisterManualResult(
+                            manual_call_template=manual_call_template,
+                            manual=utcp_manual,
+                            success=True
+                        )
                 except aiohttp.ClientResponseError as e:
-                    self._log(f"Error connecting to REST provider '{manual_provider.name}': {e}", error=True)
-                    return []
+                    logging.error(f"Error connecting to HTTP provider '{manual_call_template.name}': \n{e}")
+                    return RegisterManualResult(
+                        manual_call_template=manual_call_template,
+                        manual=UtcpManual(tools=[]),
+                        success=False
+                    )
                 except (json.JSONDecodeError, yaml.YAMLError) as e:
-                    self._log(f"Error parsing spec from REST provider '{manual_provider.name}': {e}", error=True)
-                    return []
+                    logging.error(f"Error parsing spec from HTTP provider '{manual_call_template.name}': \n{e}")
+                    return RegisterManualResult(
+                        manual_call_template=manual_call_template,
+                        manual=UtcpManual(tools=[]),
+                        success=False
+                    )
         except Exception as e:
-            self._log(f"Unexpected error discovering tools from REST provider '{manual_provider.name}': {e}", error=True)
-            return []
+            logging.error(f"Unexpected error discovering tools from HTTP provider '{manual_call_template.name}': \n{e}")
+            return RegisterManualResult(
+                manual_call_template=manual_call_template,
+                manual=UtcpManual(tools=[]),
+                success=False
+            )
 
-    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
-        """Deregistering a tool provider is a no-op for the stateless HTTP transport."""
+    async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
+        """Deregister a manual and its tools.
+        
+        Deregistering a manual is a no-op for the stateless HTTP communication protocol.
+        """
         pass
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
-        """Calls a tool on an HTTP provider."""
-        if not isinstance(tool_provider, HttpProvider):
-            raise ValueError("HttpClientTransport can only be used with HttpProvider")
+    async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        """Execute a tool call through this transport.
+        
+        Args:
+            caller: The UTCP client that is calling this method.
+            tool_name: Name of the tool to call (may include provider prefix).
+            arguments: Dictionary of arguments to pass to the tool.
+            tool_call_template: Call template of the tool to call.
+            
+        Returns:
+            The tool's response, with type depending on the tool's output schema.
+        """
+        if not isinstance(tool_call_template, HttpCallTemplate):
+            raise ValueError("HttpCommunicationProtocol can only be used with HttpCallTemplate")
 
-        request_headers = tool_provider.headers.copy() if tool_provider.headers else {}
+        request_headers = tool_call_template.headers.copy() if tool_call_template.headers else {}
         body_content = None
         remaining_args = arguments.copy()
 
         # Handle header fields
-        if tool_provider.header_fields:
-            for field_name in tool_provider.header_fields:
+        if tool_call_template.header_fields:
+            for field_name in tool_call_template.header_fields:
                 if field_name in remaining_args:
                     request_headers[field_name] = str(remaining_args.pop(field_name))
 
         # Handle body field
-        if tool_provider.body_field and tool_provider.body_field in remaining_args:
-            body_content = remaining_args.pop(tool_provider.body_field)
+        if tool_call_template.body_field and tool_call_template.body_field in remaining_args:
+            body_content = remaining_args.pop(tool_call_template.body_field)
 
         # Build the URL with path parameters substituted
-        url = self._build_url_with_path_params(tool_provider.url, remaining_args)
+        url = self._build_url_with_path_params(tool_call_template.url, remaining_args)
         
         # The rest of the arguments are query parameters
         query_params = remaining_args
 
         # Handle authentication
-        auth, cookies = self._apply_auth(tool_provider, request_headers, query_params)
+        auth, cookies = self._apply_auth(tool_call_template, request_headers, query_params)
         
         # Handle OAuth2 separately since it requires async token retrieval
-        if tool_provider.auth and isinstance(tool_provider.auth, OAuth2Auth):
-            token = await self._handle_oauth2(tool_provider.auth)
+        if tool_call_template.auth and isinstance(tool_call_template.auth, OAuth2Auth):
+            token = await self._handle_oauth2(tool_call_template.auth)
             request_headers["Authorization"] = f"Bearer {token}"
 
         async with aiohttp.ClientSession() as session:
             try:
                 # Set content-type header if body is provided and header not already set
                 if body_content is not None and "Content-Type" not in request_headers:
-                    request_headers["Content-Type"] = tool_provider.content_type
+                    request_headers["Content-Type"] = tool_call_template.content_type
 
                 # Prepare body content based on content type
                 data = None
@@ -249,7 +282,7 @@ class HttpClientTransport(ClientTransportInterface):
                         data = body_content
 
                 # Make the request with the appropriate HTTP method
-                method = tool_provider.http_method.lower()
+                method = tool_call_template.http_method.lower()
                 request_method = getattr(session, method)
                 
                 async with request_method(
@@ -266,11 +299,27 @@ class HttpClientTransport(ClientTransportInterface):
                     return await response.json()
                     
             except aiohttp.ClientResponseError as e:
-                self._log(f"Error calling tool '{tool_name}' on provider '{tool_provider.name}': {e}", error=True)
+                logging.error(f"Error calling tool '{tool_name}' on call template '{tool_call_template.name}': {e}")
                 raise
             except Exception as e:
-                self._log(f"Unexpected error calling tool '{tool_name}': {e}", error=True)
+                logging.error(f"Unexpected error calling tool '{tool_name}': {e}")
                 raise
+
+    async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+        """Execute a tool call through this transport streamingly.
+        
+        Args:
+            caller: The UTCP client that is calling this method.
+            tool_name: Name of the tool to call (may include provider prefix).
+            arguments: Dictionary of arguments to pass to the tool.
+            tool_call_template: Call template of the tool to call.
+            
+        Returns:
+            An async generator that yields the tool's response.
+        """
+        # For HTTP, streaming is not typically supported, so we'll just yield the complete response
+        result = await self.call_tool(caller, tool_name, arguments, tool_call_template)
+        yield result
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
         """Handles OAuth2 client credentials flow, trying both body and auth header methods."""
@@ -282,7 +331,7 @@ class HttpClientTransport(ClientTransportInterface):
         async with aiohttp.ClientSession() as session:
             # Method 1: Send credentials in the request body
             try:
-                self._log("Attempting OAuth2 token fetch with credentials in body.")
+                logging.info("Attempting OAuth2 token fetch with credentials in body.")
                 body_data = {
                     'grant_type': 'client_credentials',
                     'client_id': auth_details.client_id,
@@ -295,11 +344,11 @@ class HttpClientTransport(ClientTransportInterface):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                self._log(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
+                logging.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
 
             # Method 2: Send credentials as Basic Auth header
             try:
-                self._log("Attempting OAuth2 token fetch with Basic Auth header.")
+                logging.info("Attempting OAuth2 token fetch with Basic Auth header.")
                 header_auth = AiohttpBasicAuth(auth_details.client_id, auth_details.client_secret)
                 header_data = {
                     'grant_type': 'client_credentials',
@@ -311,7 +360,7 @@ class HttpClientTransport(ClientTransportInterface):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                self._log(f"OAuth2 with Basic Auth header also failed: {e}", error=True)
+                logging.error(f"OAuth2 with Basic Auth header also failed: {e}")
     
     def _build_url_with_path_params(self, url_template: str, arguments: Dict[str, Any]) -> str:
         """Build URL by substituting path parameters from arguments.

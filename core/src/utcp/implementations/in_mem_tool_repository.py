@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional
 
-from core.src.utcp.data.utcp_manual import UtcpManual
+from utcp.data.utcp_manual import UtcpManual
 from utcp.python_specific_tooling.async_rwlock import AsyncRWLock
 from utcp.data.call_template import CallTemplate
 from utcp.data.tool import Tool

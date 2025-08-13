@@ -1,4 +1,11 @@
-class SSEProvider(CallTemplate):
+from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.data.auth import Auth
+from utcp.interfaces.serializer import Serializer
+from utcp.exceptions import UtcpSerializerValidationError
+from typing import Optional, Dict, List, Literal
+from pydantic import Field
+
+class SSECallTemplate(CallTemplate):
     """Provider configuration for Server-Sent Events (SSE) tools.
 
     Enables real-time streaming of events from server to client using the
@@ -27,3 +34,16 @@ class SSEProvider(CallTemplate):
     headers: Optional[Dict[str, str]] = None
     body_field: Optional[str] = Field(default=None, description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers for the initial connection.")
+
+
+class SSECallTemplateSerializer(Serializer[SSECallTemplate]):
+    """Serializer for SSECallTemplate."""
+    
+    def to_dict(self, obj: SSECallTemplate) -> dict:
+        return obj.model_dump()
+    
+    def validate_dict(self, obj: dict) -> SSECallTemplate:
+        try:
+            return SSECallTemplate.model_validate(obj)
+        except Exception as e:
+            raise UtcpSerializerValidationError("Invalid SSECallTemplate: " + str(e))

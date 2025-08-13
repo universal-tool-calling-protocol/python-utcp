@@ -15,13 +15,13 @@ Key Features:
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Union, Optional, AsyncGenerator
 
-from core.src.utcp.data.call_template import CallTemplate
-from core.src.utcp.data.tool import Tool
-from core.src.utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
-from core.src.utcp.interfaces.tool_search_strategy import ToolSearchStrategy
-from core.src.utcp.data.utcp_client_config import UtcpClientConfig
-from core.src.utcp.data.register_manual_response import RegisterManualResult
-from core.src.utcp.implementations.utcp_client_implementation import UtcpClientImplementation
+from utcp.data.call_template import CallTemplate
+from utcp.data.tool import Tool
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
+from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
+from utcp.data.utcp_client_config import UtcpClientConfig
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.implementations.utcp_client_implementation import UtcpClientImplementation
 
 
 class UtcpClient(ABC):

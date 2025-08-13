@@ -1,27 +1,34 @@
-from typing import Dict, Any, List, Optional, Callable, AsyncIterator
+from typing import Dict, Any, List, Optional, Callable, AsyncIterator, AsyncGenerator
 import aiohttp
 import json
 import asyncio
 import re
 import base64
 
-from utcp.client.client_transport_interface import ClientTransportInterface
-from utcp.shared.provider import Provider, SSEProvider
-from utcp.shared.tool import Tool
-from utcp.shared.utcp_manual import UtcpManual
-from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.data.call_template import CallTemplate
+from utcp.data.tool import Tool
+from utcp.data.utcp_manual import UtcpManual, UtcpManualSerializer
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.data.auth_implementations.api_key_auth import ApiKeyAuth
+from utcp.data.auth_implementations.basic_auth import BasicAuth
+from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
+from utcp_http.sse_call_template import SSECallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
+import logging
 
 
-class SSEClientTransport(ClientTransportInterface):
-    """Client transport implementation for Server-Sent Events providers."""
+class SSECommunicationProtocol(CommunicationProtocol):
+    """SSE communication protocol implementation for UTCP client.
+    
+    Handles Server-Sent Events based tool providers with streaming capabilities.
+    """
 
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-        self._log = logger or (lambda *args, **kwargs: None)
         self._active_connections: Dict[str, tuple[aiohttp.ClientResponse, aiohttp.ClientSession]] = {}
 
-    def _apply_auth(self, provider: SSEProvider, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
+    def _apply_auth(self, provider: SSECallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
         
         Returns:
@@ -40,7 +47,7 @@ class SSEClientTransport(ClientTransportInterface):
                     elif provider.auth.location == "cookie":
                         cookies[provider.auth.var_name] = provider.auth.api_key
                 else:
-                    self._log("API key not found for ApiKeyAuth.", error=True)
+                    logging.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
             
             elif isinstance(provider.auth, BasicAuth):
@@ -53,13 +60,13 @@ class SSEClientTransport(ClientTransportInterface):
         
         return auth, cookies
 
-    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
-        """Discover tools from an SSE provider."""
-        if not isinstance(manual_provider, SSEProvider):
-            raise ValueError("SSEClientTransport can only be used with SSEProvider")
+    async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
+        """Register a manual and its tools from an SSE provider."""
+        if not isinstance(manual_call_template, SSECallTemplate):
+            raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 
         try:
-            url = manual_provider.url
+            url = manual_call_template.url
             
             # Security check: Enforce HTTPS or localhost to prevent MITM attacks
             if not (url.startswith("https://") or url.startswith("http://localhost") or url.startswith("http://127.0.0.1")):
@@ -68,23 +75,23 @@ class SSEClientTransport(ClientTransportInterface):
                     "Non-secure URLs are vulnerable to man-in-the-middle attacks."
                 )
                 
-            self._log(f"Discovering tools from '{manual_provider.name}' (SSE) at {url}")
+            logging.info(f"Discovering tools from '{manual_call_template.name}' (SSE) at {url}")
             
             # Use the provider's configuration (headers, auth, etc.)
-            request_headers = manual_provider.headers.copy() if manual_provider.headers else {}
+            request_headers = manual_call_template.headers.copy() if manual_call_template.headers else {}
             body_content = None
             
             # Handle authentication
             query_params: Dict[str, Any] = {}
-            auth, cookies = self._apply_auth(manual_provider, request_headers, query_params)
+            auth, cookies = self._apply_auth(manual_call_template, request_headers, query_params)
 
             # Handle OAuth2 separately as it's async
-            if isinstance(manual_provider.auth, OAuth2Auth):
-                token = await self._handle_oauth2(manual_provider.auth)
+            if isinstance(manual_call_template.auth, OAuth2Auth):
+                token = await self._handle_oauth2(manual_call_template.auth)
                 request_headers["Authorization"] = f"Bearer {token}"
             
             # Handle body content if specified
-            if manual_provider.body_field:
+            if manual_call_template.body_field:
                 # For discovery, we typically don't have body content, but support it if needed
                 body_content = None
             
@@ -118,50 +125,69 @@ class SSEClientTransport(ClientTransportInterface):
                 ) as response:
                     response.raise_for_status()
                     response_data = await response.json()
-                    utcp_manual = UtcpManual(**response_data)
-                    return utcp_manual.tools
+                    utcp_manual = UtcpManualSerializer.validate_dict(response_data)
+                    return RegisterManualResult(
+                        manual=utcp_manual,
+                        tools=utcp_manual.tools,
+                        errors=[]
+                    )
         except Exception as e:
-            self._log(f"Error discovering tools from '{manual_provider.name}': {e}", error=True)
-            return []
+            error_msg = f"Error discovering tools from '{manual_call_template.name}': {e}"
+            logging.error(error_msg)
+            return RegisterManualResult(
+                manual=None,
+                tools=[],
+                errors=[error_msg]
+            )
 
-    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
-        """Deregister an SSE provider and close any active connections."""
-        if manual_provider.name in self._active_connections:
-            self._log(f"Closing active SSE connection for provider '{manual_provider.name}'")
-            response, session = self._active_connections.pop(manual_provider.name)
+    async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
+        """Deregister an SSE manual and close any active connections."""
+        template_name = manual_call_template.name
+        if template_name in self._active_connections:
+            response, session = self._active_connections.pop(template_name)
             response.close()
             await session.close()
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> AsyncIterator[Any]:
-        """Calls a tool on an SSE provider and returns an async iterator for the events."""
-        if not isinstance(tool_provider, SSEProvider):
-            raise ValueError("SSEClientTransport can only be used with SSEProvider")
+    async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        """Execute a tool call through SSE transport."""
+        if not isinstance(tool_call_template, SSECallTemplate):
+            raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
+        
+        event_list = []
+        async for event in self.call_tool_streaming(caller, tool_name, arguments, tool_call_template):
+            event_list.append(event)
+        return event_list
+    
+    async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+        """Execute a tool call through SSE transport with streaming."""
+        if not isinstance(tool_call_template, SSECallTemplate):
+            raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 
-        request_headers = tool_provider.headers.copy() if tool_provider.headers else {}
+        request_headers = tool_call_template.headers.copy() if tool_call_template.headers else {}
         body_content = None
         remaining_args = arguments.copy()
         request_headers["Accept"] = "text/event-stream"
 
-        if tool_provider.header_fields:
-            for field_name in tool_provider.header_fields:
+        if tool_call_template.header_fields:
+            for field_name in tool_call_template.header_fields:
                 if field_name in remaining_args:
                     request_headers[field_name] = str(remaining_args.pop(field_name))
 
-        if tool_provider.body_field and tool_provider.body_field in remaining_args:
-            body_content = remaining_args.pop(tool_provider.body_field)
+        if tool_call_template.body_field and tool_call_template.body_field in remaining_args:
+            body_content = remaining_args.pop(tool_call_template.body_field)
 
         # Build the URL with path parameters substituted
-        url = self._build_url_with_path_params(tool_provider.url, remaining_args)
+        url = self._build_url_with_path_params(tool_call_template.url, remaining_args)
         
         # The rest of the arguments are query parameters
         query_params = remaining_args
 
         # Handle authentication
-        auth, cookies = self._apply_auth(tool_provider, request_headers, query_params)
+        auth, cookies = self._apply_auth(tool_call_template, request_headers, query_params)
 
         # Handle OAuth2 separately as it's async
-        if isinstance(tool_provider.auth, OAuth2Auth):
-            token = await self._handle_oauth2(tool_provider.auth)
+        if isinstance(tool_call_template.auth, OAuth2Auth):
+            token = await self._handle_oauth2(tool_call_template.auth)
             request_headers["Authorization"] = f"Bearer {token}"
         
         session = aiohttp.ClientSession()
@@ -175,11 +201,12 @@ class SSEClientTransport(ClientTransportInterface):
                 auth=auth, cookies=cookies, json=json_data, data=data, timeout=None
             )
             response.raise_for_status()
-            self._active_connections[tool_provider.name] = (response, session)
-            return self._process_sse_stream(response, tool_provider.event_type)
+            self._active_connections[tool_call_template.name] = (response, session)
+            async for event in self._process_sse_stream(response, tool_call_template.event_type):
+                yield event
         except Exception as e:
             await session.close()
-            self._log(f"Error establishing SSE connection to '{tool_provider.name}': {e}", error=True)
+            logging.error(f"Error establishing SSE connection to '{tool_call_template.name}': {e}")
             raise
 
     async def _process_sse_stream(self, response: aiohttp.ClientResponse, event_type=None):
@@ -231,7 +258,7 @@ class SSEClientTransport(ClientTransportInterface):
                     except json.JSONDecodeError:
                         yield current_event['data']
         except Exception as e:
-            self._log(f"Error processing SSE stream: {e}", error=True)
+            logging.error(f"Error processing SSE stream: {e}")
             raise
         finally:
             pass # Session is managed and closed by deregister_tool_provider
@@ -251,7 +278,7 @@ class SSEClientTransport(ClientTransportInterface):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                self._log(f"OAuth2 with body failed: {e}. Trying Basic Auth.")
+                logging.error(f"OAuth2 with body failed: {e}. Trying Basic Auth.")
             
             try: # Method 2: Credentials in header
                 header_auth = aiohttp.BasicAuth(client_id, auth_details.client_secret)
@@ -262,7 +289,7 @@ class SSEClientTransport(ClientTransportInterface):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                self._log(f"OAuth2 with header failed: {e}", error=True)
+                logging.error(f"OAuth2 with header failed: {e}")
                 raise e
 
     async def close(self):

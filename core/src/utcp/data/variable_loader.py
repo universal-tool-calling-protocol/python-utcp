@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dotenv import dotenv_values
-from pydantic import BaseModel, Literal
+from pydantic import BaseModel
 from typing import Optional, Dict, Type
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError

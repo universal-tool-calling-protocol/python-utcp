@@ -1,25 +1,31 @@
-from typing import Dict, Any, List, Optional, Callable, AsyncIterator, Tuple
+from typing import Dict, Any, List, Optional, Callable, AsyncIterator, Tuple, AsyncGenerator
 import aiohttp
 import json
 import re
 
-from utcp.client.client_transport_interface import ClientTransportInterface
-from utcp.shared.provider import Provider, StreamableHttpProvider
-from utcp.shared.tool import Tool
-from utcp.shared.utcp_manual import UtcpManual
-from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.data.call_template import CallTemplate
+from utcp.data.tool import Tool
+from utcp.data.utcp_manual import UtcpManual, UtcpManualSerializer
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.data.auth_implementations import ApiKeyAuth
+from utcp.data.auth_implementations import BasicAuth
+from utcp.data.auth_implementations import OAuth2Auth
+from utcp_http.streamable_http_call_template import StreamableHttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth, ClientResponse
+import logging
 
+class StreamableHttpCommunicationProtocol(CommunicationProtocol):
+    """Streamable HTTP communication protocol implementation for UTCP client.
+    
+    Handles HTTP streaming with chunked transfer encoding for real-time data.
+    """
 
-class StreamableHttpClientTransport(ClientTransportInterface):
-    """Client transport implementation for HTTP streaming (chunked transfer encoding) providers using aiohttp."""
-
-    def __init__(self, logger: Optional[Callable[[str, Any], None]] = None):
+    def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-        self._log = logger or (lambda *args, **kwargs: None)
         self._active_connections: Dict[str, Tuple[ClientResponse, ClientSession]] = {}
 
-    def _apply_auth(self, provider: StreamableHttpProvider, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
+    def _apply_auth(self, provider: StreamableHttpCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
         
         Returns:
@@ -38,7 +44,7 @@ class StreamableHttpClientTransport(ClientTransportInterface):
                     elif provider.auth.location == "cookie":
                         cookies[provider.auth.var_name] = provider.auth.api_key
                 else:
-                    self._log("API key not found for ApiKeyAuth.", error=True)
+                    logging.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
             
             elif isinstance(provider.auth, BasicAuth):
@@ -53,9 +59,9 @@ class StreamableHttpClientTransport(ClientTransportInterface):
 
     async def close(self):
         """Close all active connections and clear internal state."""
-        self._log("Closing all active HTTP stream connections.")
+        logging.info("Closing all active HTTP stream connections.")
         for provider_name, (response, session) in list(self._active_connections.items()):
-            self._log(f"Closing connection for provider: {provider_name}")
+            logging.info(f"Closing connection for provider: {provider_name}")
             if not response.closed:
                 response.close()  # Close the response
             if not session.closed:
@@ -63,12 +69,12 @@ class StreamableHttpClientTransport(ClientTransportInterface):
         self._active_connections.clear()
         self._oauth_tokens.clear()
 
-    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
-        """Discover tools from a StreamableHttp provider."""
-        if not isinstance(manual_provider, StreamableHttpProvider):
-            raise ValueError("StreamableHttpClientTransport can only be used with StreamableHttpProvider")
+    async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
+        """Register a manual and its tools from a StreamableHttp provider."""
+        if not isinstance(manual_call_template, StreamableHttpCallTemplate):
+            raise ValueError("StreamableHttpCommunicationProtocol can only be used with StreamableHttpCallTemplate")
 
-        url = manual_provider.url
+        url = manual_call_template.url
         
         # Security check: Enforce HTTPS or localhost to prevent MITM attacks
         if not (url.startswith("https://") or url.startswith("http://localhost") or url.startswith("http://127.0.0.1")):
@@ -77,31 +83,31 @@ class StreamableHttpClientTransport(ClientTransportInterface):
                 "Non-secure URLs are vulnerable to man-in-the-middle attacks."
             )
             
-        self._log(f"Discovering tools from '{manual_provider.name}' (HTTP Stream) at {url}")
+        logging.info(f"Discovering tools from '{manual_call_template.name}' (HTTP Stream) at {url}")
 
         try:
-            # Use the provider's configuration (headers, auth, etc.)
-            request_headers = manual_provider.headers.copy() if manual_provider.headers else {}
+            # Use the template's configuration (headers, auth, etc.)
+            request_headers = manual_call_template.headers.copy() if manual_call_template.headers else {}
             body_content = None
             
             # Handle authentication
             query_params: Dict[str, Any] = {}
-            auth, cookies = self._apply_auth(manual_provider, request_headers, query_params)
+            auth, cookies = self._apply_auth(manual_call_template, request_headers, query_params)
             
             # Handle OAuth2 separately as it's async
-            if isinstance(manual_provider.auth, OAuth2Auth):
-                token = await self._handle_oauth2(manual_provider.auth)
+            if isinstance(manual_call_template.auth, OAuth2Auth):
+                token = await self._handle_oauth2(manual_call_template.auth)
                 request_headers["Authorization"] = f"Bearer {token}"
             
             # Handle body content if specified
-            if manual_provider.body_field:
+            if manual_call_template.body_field:
                 # For discovery, we typically don't have body content, but support it if needed
                 body_content = None
             
             async with aiohttp.ClientSession() as session:
                 # Set content-type header if body is provided and header not already set
                 if body_content is not None and "Content-Type" not in request_headers:
-                    request_headers["Content-Type"] = manual_provider.content_type
+                    request_headers["Content-Type"] = manual_call_template.content_type
                 
                 # Prepare body content based on content type
                 data = None
@@ -112,8 +118,8 @@ class StreamableHttpClientTransport(ClientTransportInterface):
                     else:
                         data = body_content
                 
-                # Make the request with the provider's HTTP method
-                method = manual_provider.http_method.lower()
+                # Make the request with the template's HTTP method
+                method = manual_call_template.http_method.lower()
                 request_method = getattr(session, method)
                 
                 async with request_method(
@@ -128,79 +134,116 @@ class StreamableHttpClientTransport(ClientTransportInterface):
                 ) as response:
                     response.raise_for_status()
                     response_data = await response.json()
-                    utcp_manual = UtcpManual(**response_data)
-                    return utcp_manual.tools
+                    utcp_manual = UtcpManualSerializer.validate_dict(response_data)
+                    return RegisterManualResult(
+                        manual=utcp_manual,
+                        tools=utcp_manual.tools,
+                        errors=[]
+                    )
         except aiohttp.ClientResponseError as e:
-            self._log(f"Error discovering tools from '{manual_provider.name}': {e.status}, message='{e.message}', url='{e.request_info.url}'", error=True)
-            return []
+            error_msg = f"Error discovering tools from '{manual_call_template.name}': {e.status}, message='{e.message}', url='{e.request_info.url}'"
+            logging.error(error_msg)
+            return RegisterManualResult(
+                manual=None,
+                tools=[],
+                errors=[error_msg]
+            )
         except (json.JSONDecodeError, aiohttp.ClientError) as e:
-            self._log(f"Error processing request for '{manual_provider.name}': {e}", error=True)
-            return []
+            error_msg = f"Error processing request for '{manual_call_template.name}': {e}"
+            logging.error(error_msg)
+            return RegisterManualResult(
+                manual=None,
+                tools=[],
+                errors=[error_msg]
+            )
         except Exception as e:
-            self._log(f"An unexpected error occurred while discovering tools from '{manual_provider.name}': {e}", error=True)
-            return []
+            error_msg = f"An unexpected error occurred while discovering tools from '{manual_call_template.name}': {e}"
+            logging.error(error_msg)
+            return RegisterManualResult(
+                manual=None,
+                tools=[],
+                errors=[error_msg]
+            )
 
-    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
-        """Deregister a StreamableHttp provider and close any active connections."""
-        if not isinstance(manual_provider, StreamableHttpProvider):
-            return
-
-        if manual_provider.name in self._active_connections:
-            self._log(f"Closing active HTTP stream connection for provider '{manual_provider.name}'")
-            response, session = self._active_connections.pop(manual_provider.name)
+    async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
+        """Deregister a StreamableHttp manual and close any active connections."""
+        template_name = manual_call_template.name
+        if template_name in self._active_connections:
+            logging.info(f"Closing active HTTP stream connection for template '{template_name}'")
+            response, session = self._active_connections.pop(template_name)
             if not response.closed:
                 response.close()
             if not session.closed:
                 await session.close()
+        else:
+            logging.info(f"No active connection found for template '{template_name}'")
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> AsyncIterator[Any]:
-        """Calls a tool on a StreamableHttp provider and returns an async iterator for the response chunks."""
-        if not isinstance(tool_provider, StreamableHttpProvider):
-            raise ValueError("StreamableHttpClientTransport can only be used with StreamableHttpProvider")
+    async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        """Execute a tool call through StreamableHttp transport."""
+        if not isinstance(tool_call_template, StreamableHttpCallTemplate):
+            raise ValueError("StreamableHttpCommunicationProtocol can only be used with StreamableHttpCallTemplate")
+        
+        is_bytes = False
+        chunk_list = []
+        chunk_bytes = b''
+        async for chunk in self.call_tool_streaming(caller, tool_name, arguments, tool_call_template):
+            if isinstance(chunk, bytes):
+                is_bytes = True
+                chunk_bytes += chunk
+            else:
+                chunk_list.append(chunk)
+        if is_bytes:
+            return chunk_bytes
+        return chunk_list
+    
+    async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+        """Execute a tool call through StreamableHttp transport with streaming."""
+        if not isinstance(tool_call_template, StreamableHttpCallTemplate):
+            raise ValueError("StreamableHttpCommunicationProtocol can only be used with StreamableHttpCallTemplate")
 
-        request_headers = tool_provider.headers.copy() if tool_provider.headers else {}
+        request_headers = tool_call_template.headers.copy() if tool_call_template.headers else {}
         body_content = None
         remaining_args = arguments.copy()
 
-        if tool_provider.header_fields:
-            for field_name in tool_provider.header_fields:
+        if tool_call_template.header_fields:
+            for field_name in tool_call_template.header_fields:
                 if field_name in remaining_args:
                     request_headers[field_name] = str(remaining_args.pop(field_name))
 
-        if tool_provider.body_field and tool_provider.body_field in remaining_args:
-            body_content = remaining_args.pop(tool_provider.body_field)
+        if tool_call_template.body_field and tool_call_template.body_field in remaining_args:
+            body_content = remaining_args.pop(tool_call_template.body_field)
 
         # Build the URL with path parameters substituted
-        url = self._build_url_with_path_params(tool_provider.url, remaining_args)
+        url = self._build_url_with_path_params(tool_call_template.url, remaining_args)
         
         # The rest of the arguments are query parameters
         query_params = remaining_args
 
         # Handle authentication
-        auth_handler, cookies = self._apply_auth(tool_provider, request_headers, query_params)
+        auth_handler, cookies = self._apply_auth(tool_call_template, request_headers, query_params)
 
         # Handle OAuth2 separately as it's async
-        if isinstance(tool_provider.auth, OAuth2Auth):
-            token = await self._handle_oauth2(tool_provider.auth)
+        if isinstance(tool_call_template.auth, OAuth2Auth):
+            token = await self._handle_oauth2(tool_call_template.auth)
             request_headers["Authorization"] = f"Bearer {token}"
 
         session = ClientSession()
         try:
-            timeout_seconds = tool_provider.timeout / 1000 if tool_provider.timeout else 60.0
+            timeout_seconds = tool_call_template.timeout / 1000 if tool_call_template.timeout else 60.0
             timeout = aiohttp.ClientTimeout(total=timeout_seconds)
 
             data = None
             json_data = None
             if body_content is not None:
                 if "Content-Type" not in request_headers:
-                    request_headers["Content-Type"] = tool_provider.content_type
+                    request_headers["Content-Type"] = tool_call_template.content_type
                 if "application/json" in request_headers.get("Content-Type", ""):
                     json_data = body_content
                 else:
                     data = body_content
 
             response = await session.request(
-                method=tool_provider.http_method,
+                method=tool_call_template.http_method,
                 url=url,
                 params=query_params,
                 headers=request_headers,
@@ -212,12 +255,13 @@ class StreamableHttpClientTransport(ClientTransportInterface):
             )
             response.raise_for_status()
 
-            self._active_connections[tool_provider.name] = (response, session)
-            return self._process_http_stream(response, tool_provider.chunk_size, tool_provider.name)
+            self._active_connections[tool_call_template.name] = (response, session)
+            async for chunk in self._process_http_stream(response, tool_call_template.chunk_size, tool_call_template.name):
+                yield chunk
 
         except Exception as e:
             await session.close()
-            self._log(f"Error establishing HTTP stream connection to '{tool_provider.name}': {e}", error=True)
+            logging.error(f"Error establishing HTTP stream connection to '{tool_call_template.name}': {e}")
             raise
 
     async def _process_http_stream(self, response: ClientResponse, chunk_size: Optional[int], provider_name: str) -> AsyncIterator[Any]:
@@ -231,7 +275,7 @@ class StreamableHttpClientTransport(ClientTransportInterface):
                         try:
                             yield json.loads(line)
                         except json.JSONDecodeError:
-                            self._log(f"Error parsing NDJSON line for '{provider_name}': {line[:100]}", error=True)
+                            logging.error(f"Error parsing NDJSON line for '{provider_name}': {line[:100]}")
                             yield line # Yield raw line on error
             elif 'application/octet-stream' in content_type:
                 async for chunk in response.content.iter_chunked(chunk_size or 8192):
@@ -246,7 +290,7 @@ class StreamableHttpClientTransport(ClientTransportInterface):
                     try:
                         yield json.loads(buffer)
                     except json.JSONDecodeError:
-                        self._log(f"Error parsing JSON response for '{provider_name}': {buffer[:100]}", error=True)
+                        logging.error(f"Error parsing JSON response for '{provider_name}': {buffer[:100]}")
                         yield buffer # Yield raw buffer on error
             else:
                 # Default to binary chunk streaming for unknown content types
@@ -254,7 +298,7 @@ class StreamableHttpClientTransport(ClientTransportInterface):
                     if chunk:
                         yield chunk
         except Exception as e:
-            self._log(f"Error processing HTTP stream for '{provider_name}': {e}", error=True)
+            logging.error(f"Error processing HTTP stream for '{provider_name}': {e}")
             raise
         finally:
             # The session is closed later by deregister_tool_provider or close()
@@ -272,18 +316,18 @@ class StreamableHttpClientTransport(ClientTransportInterface):
         async with aiohttp.ClientSession() as session:
             # Method 1: Credentials in body
             try:
-                self._log(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
+                logging.info(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
                 async with session.post(auth_details.token_url, data={'grant_type': 'client_credentials', 'client_id': client_id, 'client_secret': auth_details.client_secret, 'scope': auth_details.scope}) as response:
                     response.raise_for_status()
                     token_data = await response.json()
                     self._oauth_tokens[client_id] = token_data
                     return token_data['access_token']
             except aiohttp.ClientError as e:
-                self._log(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
+                logging.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
 
             # Method 2: Credentials as Basic Auth header
             try:
-                self._log(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
+                logging.info(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
                 auth = AiohttpBasicAuth(client_id, auth_details.client_secret)
                 async with session.post(auth_details.token_url, data={'grant_type': 'client_credentials', 'scope': auth_details.scope}, auth=auth) as response:
                     response.raise_for_status()
@@ -291,7 +335,7 @@ class StreamableHttpClientTransport(ClientTransportInterface):
                     self._oauth_tokens[client_id] = token_data
                     return token_data['access_token']
             except aiohttp.ClientError as e:
-                self._log(f"OAuth2 with Basic Auth header also failed: {e}", error=True)
+                logging.error(f"OAuth2 with Basic Auth header also failed: {e}")
                 raise e
     
     def _build_url_with_path_params(self, url_template: str, arguments: Dict[str, Any]) -> str:

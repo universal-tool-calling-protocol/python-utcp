@@ -1,5 +1,11 @@
+from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.data.auth import Auth
+from utcp.interfaces.serializer import Serializer
+from utcp.exceptions import UtcpSerializerValidationError
+from typing import Optional, Dict, List, Literal
+from pydantic import Field
 
-class StreamableHttpProvider(CallTemplate):
+class StreamableHttpCallTemplate(CallTemplate):
     """Provider configuration for HTTP streaming tools.
 
     Uses HTTP Chunked Transfer Encoding to enable streaming of large responses
@@ -30,3 +36,16 @@ class StreamableHttpProvider(CallTemplate):
     auth: Optional[Auth] = None
     body_field: Optional[str] = Field(default=None, description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers.")
+
+
+class StreamableHttpCallTemplateSerializer(Serializer[StreamableHttpCallTemplate]):
+    """Serializer for StreamableHttpCallTemplate."""
+    
+    def to_dict(self, obj: StreamableHttpCallTemplate) -> dict:
+        return obj.model_dump()
+    
+    def validate_dict(self, obj: dict) -> StreamableHttpCallTemplate:
+        try:
+            return StreamableHttpCallTemplate.model_validate(obj)
+        except Exception as e:
+            raise UtcpSerializerValidationError("Invalid StreamableHttpCallTemplate: " + str(e))

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_serializer, field_validator
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 from utcp.data.variable_loader import VariableLoader, VariableLoaderSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
@@ -48,22 +48,22 @@ class UtcpClientConfig(BaseModel):
     manual_call_templates: List[CallTemplate] = []
 
     @field_serializer("load_variables_from")
-    def serialize_load_variables_from(cls, v):
+    def serialize_load_variables_from(cls, v: List[VariableLoader]):
         return [VariableLoaderSerializer().to_dict(v) for v in v]
     
     @field_validator("load_variables_from")
     @classmethod
-    def validate_load_variables_from(cls, v):
-        return [VariableLoaderSerializer().validate_dict(v) for v in v]
+    def validate_load_variables_from(cls, v: List[Union[VariableLoader, dict]]):
+        return [v if isinstance(v, VariableLoader) else VariableLoaderSerializer().validate_dict(v) for v in v]
 
     @field_serializer("manual_call_templates")
-    def serialize_manual_call_templates(cls, v):
+    def serialize_manual_call_templates(cls, v: List[CallTemplate]):
         return [CallTemplateSerializer().to_dict(v) for v in v]
     
     @field_validator("manual_call_templates")
     @classmethod
-    def validate_manual_call_templates(cls, v):
-        return [CallTemplateSerializer().validate_dict(v) for v in v]
+    def validate_manual_call_templates(cls, v: List[Union[CallTemplate, dict]]):
+        return [v if isinstance(v, CallTemplate) else CallTemplateSerializer().validate_dict(v) for v in v]
 
 class UtcpClientConfigSerializer(Serializer[UtcpClientConfig]):
     def to_dict(self, obj: UtcpClientConfig) -> dict:

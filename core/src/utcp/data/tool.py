@@ -82,12 +82,14 @@ class Tool(BaseModel):
     tool_call_template: CallTemplate
 
     @field_serializer("tool_call_template")
-    def serialize_call_template(cls, v):
+    def serialize_call_template(cls, v: CallTemplate):
         return CallTemplateSerializer().to_dict(v)
 
     @field_validator("tool_call_template")
     @classmethod
-    def validate_call_template(cls, v):
+    def validate_call_template(cls, v: Union[CallTemplate, dict]):
+        if isinstance(v, CallTemplate):
+            return v
         return CallTemplateSerializer().validate_dict(v)
 
 class ToolSerializer(Serializer[Tool]):
