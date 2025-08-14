@@ -139,7 +139,6 @@ class OpenApiConverter:
 
     def _resolve_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively resolves all $refs in a schema object."""
-        return schema
         if isinstance(schema, dict):
             if "$ref" in schema:
                 resolved_ref = self._resolve_ref(schema["$ref"])
