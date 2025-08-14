@@ -285,7 +285,7 @@ class UDPTransport(ClientTransportInterface):
             
         self._log_info(f"Deregistering UDP provider '{manual_provider.name}' (no-op)")
     
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
+    async def call_tool(self, tool_name: str, tool_args: Dict[str, Any], tool_provider: Provider) -> Any:
         """Call a UDP tool.
         
         Sends a tool call message to the UDP provider and returns the response.
@@ -307,7 +307,7 @@ class UDPTransport(ClientTransportInterface):
         self._log_info(f"Calling UDP tool '{tool_name}' on provider '{tool_provider.name}'")
         
         try:
-            tool_call_message = self._format_tool_call_message(arguments, tool_provider)
+            tool_call_message = self._format_tool_call_message(tool_args, tool_provider)
             
             response = await self._send_udp_message(
                 tool_provider.host,
