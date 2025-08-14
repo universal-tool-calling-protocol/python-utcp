@@ -1,35 +1,11 @@
 
-class McpStdioServer(BaseModel):
-    """Configuration for an MCP server connected via stdio transport.
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Literal, Union, TypeAlias, Any
+from utcp.data.auth_implementations import OAuth2Auth
+from utcp.data.call_template import CallTemplate
+from utcp.interfaces.serializer import Serializer
+from utcp.exceptions import UtcpSerializerValidationError
 
-    Enables communication with Model Context Protocol servers through
-    standard input/output streams, typically used for local processes.
-
-    Attributes:
-        transport: Always "stdio" for stdio-based MCP servers.
-        command: The command to execute to start the MCP server.
-        args: Optional command-line arguments for the MCP server.
-        env: Optional environment variables for the MCP server process.
-    """
-    transport: Literal["stdio"] = "stdio"
-    command: str
-    args: Optional[List[str]] = []
-    env: Optional[Dict[str, str]] = {}
-
-class McpHttpServer(BaseModel):
-    """Configuration for an MCP server connected via HTTP transport.
-
-    Enables communication with Model Context Protocol servers through
-    HTTP connections, typically used for remote MCP services.
-
-    Attributes:
-        transport: Always "http" for HTTP-based MCP servers.
-        url: The HTTP endpoint URL for the MCP server.
-    """
-    transport: Literal["http"] = "http"
-    url: str
-
-McpServer: TypeAlias = Union[McpStdioServer, McpHttpServer]
 """Type alias for MCP server configurations.
 
 Union type for all supported MCP server transport configurations,
@@ -46,9 +22,9 @@ class McpConfig(BaseModel):
         mcpServers: Dictionary mapping server names to their configurations.
     """
     
-    mcpServers: Dict[str, McpServer]
+    mcpServers: Dict[str, Dict[str, Any]]
 
-class MCPProvider(CallTemplate):
+class McpCallTemplate(CallTemplate):
     """Provider configuration for Model Context Protocol (MCP) tools.
 
     Enables communication with MCP servers that provide structured tool
@@ -65,3 +41,13 @@ class MCPProvider(CallTemplate):
     type: Literal["mcp"] = "mcp"
     config: McpConfig
     auth: Optional[OAuth2Auth] = None
+
+class McpCallTemplateSerializer(Serializer[McpCallTemplate]):
+    def to_dict(self, obj: McpCallTemplate) -> dict:
+        return obj.model_dump()
+    
+    def validate_dict(self, obj: dict) -> McpCallTemplate:
+        try:
+            return McpCallTemplate.model_validate(obj)
+        except Exception as e:
+            raise UtcpSerializerValidationError("Invalid McpCallTemplate: " + str(e)) from e

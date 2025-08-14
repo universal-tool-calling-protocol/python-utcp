@@ -182,7 +182,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         else:
             logging.info(f"No active connection found for template '{template_name}'")
 
-    async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+    async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Execute a tool call through StreamableHttp transport."""
         if not isinstance(tool_call_template, StreamableHttpCallTemplate):
             raise ValueError("StreamableHttpCommunicationProtocol can only be used with StreamableHttpCallTemplate")
@@ -190,7 +190,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         is_bytes = False
         chunk_list = []
         chunk_bytes = b''
-        async for chunk in self.call_tool_streaming(caller, tool_name, arguments, tool_call_template):
+        async for chunk in self.call_tool_streaming(caller, tool_name, tool_args, tool_call_template):
             if isinstance(chunk, bytes):
                 is_bytes = True
                 chunk_bytes += chunk
@@ -200,14 +200,14 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             return chunk_bytes
         return chunk_list
     
-    async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+    async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """Execute a tool call through StreamableHttp transport with streaming."""
         if not isinstance(tool_call_template, StreamableHttpCallTemplate):
             raise ValueError("StreamableHttpCommunicationProtocol can only be used with StreamableHttpCallTemplate")
 
         request_headers = tool_call_template.headers.copy() if tool_call_template.headers else {}
         body_content = None
-        remaining_args = arguments.copy()
+        remaining_args = tool_args.copy()
 
         if tool_call_template.header_fields:
             for field_name in tool_call_template.header_fields:
@@ -342,33 +342,33 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 logging.error(f"OAuth2 with Basic Auth header also failed: {e}")
                 raise e
     
-    def _build_url_with_path_params(self, url_template: str, arguments: Dict[str, Any]) -> str:
+    def _build_url_with_path_params(self, url_template: str, tool_args: Dict[str, Any]) -> str:
         """Build URL by substituting path parameters from arguments.
         
         Args:
             url_template: URL template with path parameters in {param_name} format
-            arguments: Dictionary of arguments that will be modified to remove used path parameters
+            tool_args: Dictionary of arguments that will be modified to remove used path parameters
             
         Returns:
             URL with path parameters substituted
             
         Example:
             url_template = "https://api.example.com/users/{user_id}/posts/{post_id}"
-            arguments = {"user_id": "123", "post_id": "456", "limit": "10"}
+            tool_args = {"user_id": "123", "post_id": "456", "limit": "10"}
             Returns: "https://api.example.com/users/123/posts/456"
-            And modifies arguments to: {"limit": "10"}
+            And modifies tool_args to: {"limit": "10"}
         """
         # Find all path parameters in the URL template
         path_params = re.findall(r'\{([^}]+)\}', url_template)
         
         url = url_template
         for param_name in path_params:
-            if param_name in arguments:
+            if param_name in tool_args:
                 # Replace the parameter in the URL
-                param_value = str(arguments[param_name])
+                param_value = str(tool_args[param_name])
                 url = url.replace(f'{{{param_name}}}', param_value)
                 # Remove the parameter from arguments so it's not used as a query parameter
-                arguments.pop(param_name)
+                tool_args.pop(param_name)
             else:
                 raise ValueError(f"Missing required path parameter: {param_name}")
         

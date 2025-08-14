@@ -8,22 +8,20 @@ import json
 import logging
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, TYPE_CHECKING
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate
 from utcp.data.utcp_manual import UtcpManual, UtcpManualSerializer
-from utcp.data.tool import Tool
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp_http.openapi_converter import OpenApiConverter
 from utcp_text.text_call_template import TextCallTemplate
 
+if TYPE_CHECKING:
+    from utcp.utcp_client import UtcpClient
 
 class TextCommunicationProtocol(CommunicationProtocol):
     """Communication protocol for file-based UTCP manuals and tools."""
-
-    def __init__(self, base_path: Optional[str] = None) -> None:
-        self.base_path = base_path
 
     def _log_info(self, message: str) -> None:
         print(f"[TextCommunicationProtocol] {message}")
@@ -31,14 +29,14 @@ class TextCommunicationProtocol(CommunicationProtocol):
     def _log_error(self, message: str) -> None:
         logging.error(f"[TextCommunicationProtocol Error] {message}")
 
-    async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
+    async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
         """Register a text manual and return its tools as a UtcpManual."""
         if not isinstance(manual_call_template, TextCallTemplate):
             raise ValueError("TextCommunicationProtocol requires a TextCallTemplate")
 
         file_path = Path(manual_call_template.file_path)
-        if not file_path.is_absolute() and self.base_path:
-            file_path = Path(self.base_path) / file_path
+        if not file_path.is_absolute() and caller.root_dir:
+            file_path = Path(caller.root_dir) / file_path
 
         self._log_info(f"Reading manual from '{file_path}'")
 
@@ -90,19 +88,19 @@ class TextCommunicationProtocol(CommunicationProtocol):
                 errors=[str(e)],
             )
 
-    async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
+    async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
         """Deregister a text manual (no-op)."""
         if isinstance(manual_call_template, TextCallTemplate):
             self._log_info(f"Deregistering text manual '{manual_call_template.name}' (no-op)")
 
-    async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+    async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Call a tool: for text templates, return file content from the configured path."""
         if not isinstance(tool_call_template, TextCallTemplate):
             raise ValueError("TextCommunicationProtocol requires a TextCallTemplate for tool calls")
 
         file_path = Path(tool_call_template.file_path)
-        if not file_path.is_absolute() and self.base_path:
-            file_path = Path(self.base_path) / file_path
+        if not file_path.is_absolute() and caller.root_dir:
+            file_path = Path(caller.root_dir) / file_path
 
         self._log_info(f"Reading content from '{file_path}' for tool '{tool_name}'")
 
@@ -113,8 +111,7 @@ class TextCommunicationProtocol(CommunicationProtocol):
             content = f.read()
         return content
 
-    async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+    async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """Streaming variant: yields the full content as a single chunk."""
-        result = await self.call_tool(caller, tool_name, arguments, tool_call_template)
+        result = await self.call_tool(caller, tool_name, tool_args, tool_call_template)
         yield result
-

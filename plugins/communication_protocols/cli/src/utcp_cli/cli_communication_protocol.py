@@ -246,19 +246,19 @@ class CliCommunicationProtocol(CommunicationProtocol):
                 f"Deregistering CLI manual '{manual_call_template.name}' (no-op)"
             )
     
-    def _format_arguments(self, arguments: Dict[str, Any]) -> List[str]:
+    def _format_arguments(self, tool_args: Dict[str, Any]) -> List[str]:
         """Format arguments for command-line execution.
         
         Converts a dictionary of arguments into command-line flags and values.
         
         Args:
-            arguments: Dictionary of argument names and values
+            tool_args: Dictionary of argument names and values
             
         Returns:
             List of command-line arguments
         """
         args = []
-        for key, value in arguments.items():
+        for key, value in tool_args.items():
             if isinstance(value, bool):
                 if value:
                     args.append(f"--{key}")
@@ -401,7 +401,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
         
         return tools
     
-    async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+    async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Call a CLI tool.
         
         Executes the command specified by provider.command_name with the provided arguments.
@@ -409,7 +409,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
         Args:
             caller: The UTCP client that is calling this method.
             tool_name: Name of the tool to call
-            arguments: Arguments for the tool call
+            tool_args: Arguments for the tool call
             tool_call_template: The CliCallTemplate for the tool
             
         Returns:
@@ -432,8 +432,8 @@ class CliCommunicationProtocol(CommunicationProtocol):
         command = shlex.split(tool_call_template.command_name, posix=(os.name != 'nt'))
         
         # Add formatted arguments
-        if arguments:
-            command.extend(self._format_arguments(arguments))
+        if tool_args:
+            command.extend(self._format_arguments(tool_args))
         
         self._log_info(f"Executing CLI tool '{tool_name}': {' '.join(command)}")
         
@@ -473,7 +473,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
             self._log_error(f"Error executing CLI tool '{tool_name}': {e}")
             raise
 
-    async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+    async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """Streaming calls are not supported for CLI protocol."""
         raise NotImplementedError("Streaming is not supported by the CLI communication protocol.")
     

@@ -46,26 +46,26 @@ class TCPTransport(ClientTransportInterface):
     
     def _format_tool_call_message(
         self,
-        arguments: Dict[str, Any],
+        tool_args: Dict[str, Any],
         provider: TCPProvider
     ) -> str:
         """Format a tool call message based on provider configuration.
         
         Args:
-            arguments: Arguments for the tool call
+            tool_args: Arguments for the tool call
             provider: The TCPProvider with formatting configuration
             
         Returns:
             Formatted message string
         """
         if provider.request_data_format == "json":
-            return json.dumps(arguments)
+            return json.dumps(tool_args)
         elif provider.request_data_format == "text":
             # Use template-based formatting
             if provider.request_data_template is not None and provider.request_data_template != "":
                 message = provider.request_data_template
                 # Replace placeholders with argument values
-                for arg_name, arg_value in arguments.items():
+                for arg_name, arg_value in tool_args.items():
                     placeholder = f"UTCP_ARG_{arg_name}_UTCP_ARG"
                     if isinstance(arg_value, str):
                         message = message.replace(placeholder, arg_value)
@@ -74,10 +74,10 @@ class TCPTransport(ClientTransportInterface):
                 return message
             else:
                 # Fallback to simple key=value format
-                return " ".join([str(v) for k, v in arguments.items()])
+                return " ".join([str(v) for k, v in tool_args.items()])
         else:
             # Default to JSON format
-            return json.dumps(arguments)
+            return json.dumps(tool_args)
     
     def _encode_message_with_framing(self, message: str, provider: TCPProvider) -> bytes:
         """Encode message with appropriate TCP framing.
@@ -367,14 +367,14 @@ class TCPTransport(ClientTransportInterface):
             
         self._log_info(f"Deregistering TCP provider '{manual_provider.name}' (no-op)")
     
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
+    async def call_tool(self, tool_name: str, tool_args: Dict[str, Any], tool_provider: Provider) -> Any:
         """Call a TCP tool.
         
         Sends a tool call message to the TCP provider and returns the response.
         
         Args:
             tool_name: Name of the tool to call
-            arguments: Arguments for the tool call
+            tool_args: Arguments for the tool call
             tool_provider: The TCPProvider containing the tool
             
         Returns:
@@ -389,7 +389,7 @@ class TCPTransport(ClientTransportInterface):
         self._log_info(f"Calling TCP tool '{tool_name}' on provider '{tool_provider.name}'")
         
         try:
-            tool_call_message = self._format_tool_call_message(arguments, tool_provider)
+            tool_call_message = self._format_tool_call_message(tool_args, tool_provider)
             
             response = await self._send_tcp_message(
                 tool_provider.host,

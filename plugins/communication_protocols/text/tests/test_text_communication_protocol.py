@@ -6,17 +6,26 @@ import tempfile
 from pathlib import Path
 import pytest
 import pytest_asyncio
+from unittest.mock import Mock
 
 from utcp_text.text_communication_protocol import TextCommunicationProtocol
 from utcp_text.text_call_template import TextCallTemplate
 from utcp.data.call_template import CallTemplate
 from utcp.data.register_manual_response import RegisterManualResult
-
+from utcp.utcp_client import UtcpClient
 
 @pytest_asyncio.fixture
 async def text_protocol() -> TextCommunicationProtocol:
     """Provides a TextCommunicationProtocol instance."""
     yield TextCommunicationProtocol()
+
+
+@pytest_asyncio.fixture
+def mock_utcp_client(tmp_path: Path) -> Mock:
+    """Provides a mock UtcpClient with a root_dir."""
+    client = Mock(spec=UtcpClient)
+    client.root_dir = tmp_path
+    return client
 
 
 @pytest_asyncio.fixture
@@ -145,7 +154,9 @@ def tool_array():
 
 
 @pytest.mark.asyncio
-async def test_register_manual_with_utcp_manual(text_protocol: TextCommunicationProtocol, sample_utcp_manual):
+async def test_register_manual_with_utcp_manual(
+    text_protocol: TextCommunicationProtocol, sample_utcp_manual, mock_utcp_client: Mock
+):
     """Register a manual from a local file and validate returned tools."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json.dump(sample_utcp_manual, f)
@@ -153,7 +164,7 @@ async def test_register_manual_with_utcp_manual(text_protocol: TextCommunication
 
     try:
         manual_template = TextCallTemplate(name="test_manual", file_path=temp_file)
-        result = await text_protocol.register_manual(None, manual_template)
+        result = await text_protocol.register_manual(mock_utcp_client, manual_template)
 
         assert isinstance(result, RegisterManualResult)
         assert result.success is True
@@ -177,7 +188,9 @@ async def test_register_manual_with_utcp_manual(text_protocol: TextCommunication
 
 
 @pytest.mark.asyncio
-async def test_register_manual_with_single_tool(text_protocol: TextCommunicationProtocol, single_tool_definition):
+async def test_register_manual_with_single_tool(
+    text_protocol: TextCommunicationProtocol, single_tool_definition, mock_utcp_client: Mock
+):
     """Register a manual with a single tool definition."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         manual = {
@@ -190,7 +203,7 @@ async def test_register_manual_with_single_tool(text_protocol: TextCommunication
 
     try:
         manual_template = TextCallTemplate(name="single_tool_manual", file_path=temp_file)
-        result = await text_protocol.register_manual(None, manual_template)
+        result = await text_protocol.register_manual(mock_utcp_client, manual_template)
 
         assert result.success is True
         assert len(result.manual.tools) == 1
@@ -204,7 +217,9 @@ async def test_register_manual_with_single_tool(text_protocol: TextCommunication
 
 
 @pytest.mark.asyncio
-async def test_register_manual_with_tool_array(text_protocol: TextCommunicationProtocol, tool_array):
+async def test_register_manual_with_tool_array(
+    text_protocol: TextCommunicationProtocol, tool_array, mock_utcp_client: Mock
+):
     """Register a manual with an array of tool definitions."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         manual = {
@@ -216,8 +231,8 @@ async def test_register_manual_with_tool_array(text_protocol: TextCommunicationP
         temp_file = f.name
 
     try:
-        manual_template = TextCallTemplate(name="array_manual", file_path=temp_file)
-        result = await text_protocol.register_manual(None, manual_template)
+        manual_template = TextCallTemplate(name="tool_array_manual", file_path=temp_file)
+        result = await text_protocol.register_manual(mock_utcp_client, manual_template)
 
         assert result.success is True
         assert len(result.manual.tools) == 2
@@ -230,17 +245,21 @@ async def test_register_manual_with_tool_array(text_protocol: TextCommunicationP
 
 
 @pytest.mark.asyncio
-async def test_register_manual_file_not_found(text_protocol: TextCommunicationProtocol):
+async def test_register_manual_file_not_found(
+    text_protocol: TextCommunicationProtocol, mock_utcp_client: Mock
+):
     """Registering a manual with a non-existent file should return errors."""
     manual_template = TextCallTemplate(name="missing", file_path="/path/that/does/not/exist.json")
-    result = await text_protocol.register_manual(None, manual_template)
+    result = await text_protocol.register_manual(mock_utcp_client, manual_template)
     assert isinstance(result, RegisterManualResult)
     assert result.success is False
     assert result.errors
 
 
 @pytest.mark.asyncio
-async def test_register_manual_invalid_json(text_protocol: TextCommunicationProtocol):
+async def test_register_manual_invalid_json(
+    text_protocol: TextCommunicationProtocol, mock_utcp_client: Mock
+):
     """Registering a manual with invalid JSON should return errors (no exception)."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write("{ invalid json content }")
@@ -248,7 +267,7 @@ async def test_register_manual_invalid_json(text_protocol: TextCommunicationProt
 
     try:
         manual_template = TextCallTemplate(name="invalid_json", file_path=temp_file)
-        result = await text_protocol.register_manual(None, manual_template)
+        result = await text_protocol.register_manual(mock_utcp_client, manual_template)
         assert isinstance(result, RegisterManualResult)
         assert result.success is False
         assert result.errors
@@ -257,15 +276,17 @@ async def test_register_manual_invalid_json(text_protocol: TextCommunicationProt
 
 
 @pytest.mark.asyncio
-async def test_register_manual_wrong_call_template_type(text_protocol: TextCommunicationProtocol):
+async def test_register_manual_wrong_call_template_type(text_protocol: TextCommunicationProtocol, mock_utcp_client: Mock):
     """Registering with a non-Text call template should raise ValueError."""
     wrong_template = CallTemplate(type="invalid", name="wrong")
     with pytest.raises(ValueError, match="requires a TextCallTemplate"):
-        await text_protocol.register_manual(None, wrong_template)  # type: ignore[arg-type]
+        await text_protocol.register_manual(mock_utcp_client, wrong_template)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_call_tool_returns_file_content(text_protocol: TextCommunicationProtocol, sample_utcp_manual):
+async def test_call_tool_returns_file_content(
+    text_protocol: TextCommunicationProtocol, sample_utcp_manual, mock_utcp_client: Mock
+):
     """Calling a tool returns the file content from the call template path."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json.dump(sample_utcp_manual, f)
@@ -275,7 +296,9 @@ async def test_call_tool_returns_file_content(text_protocol: TextCommunicationPr
         tool_template = TextCallTemplate(name="tool_call", file_path=temp_file)
 
         # Call a tool should return the file content
-        content = await text_protocol.call_tool(None, "calculator", {"operation": "add", "a": 1, "b": 2}, tool_template)
+        content = await text_protocol.call_tool(
+            mock_utcp_client, "calculator", {"operation": "add", "a": 1, "b": 2}, tool_template
+        )
 
         # Verify we get the JSON content back as a string
         assert isinstance(content, str)
@@ -287,23 +310,23 @@ async def test_call_tool_returns_file_content(text_protocol: TextCommunicationPr
 
 
 @pytest.mark.asyncio
-async def test_call_tool_wrong_call_template_type(text_protocol: TextCommunicationProtocol):
+async def test_call_tool_wrong_call_template_type(text_protocol: TextCommunicationProtocol, mock_utcp_client: Mock):
     """Calling a tool with wrong call template type should raise ValueError."""
     wrong_template = CallTemplate(type="invalid", name="wrong")
     with pytest.raises(ValueError, match="requires a TextCallTemplate"):
-        await text_protocol.call_tool(None, "some_tool", {}, wrong_template)  # type: ignore[arg-type]
+        await text_protocol.call_tool(mock_utcp_client, "some_tool", {}, wrong_template)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_call_tool_file_not_found(text_protocol: TextCommunicationProtocol):
+async def test_call_tool_file_not_found(text_protocol: TextCommunicationProtocol, mock_utcp_client: Mock):
     """Calling a tool when the file doesn't exist should raise FileNotFoundError."""
     tool_template = TextCallTemplate(name="missing", file_path="/path/that/does/not/exist.json")
     with pytest.raises(FileNotFoundError):
-        await text_protocol.call_tool(None, "some_tool", {}, tool_template)
+        await text_protocol.call_tool(mock_utcp_client, "some_tool", {}, tool_template)
 
 
 @pytest.mark.asyncio
-async def test_deregister_manual(text_protocol: TextCommunicationProtocol, sample_utcp_manual):
+async def test_deregister_manual(text_protocol: TextCommunicationProtocol, sample_utcp_manual, mock_utcp_client: Mock):
     """Deregistering a manual should be a no-op (no errors)."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json.dump(sample_utcp_manual, f)
@@ -311,13 +334,13 @@ async def test_deregister_manual(text_protocol: TextCommunicationProtocol, sampl
 
     try:
         manual_template = TextCallTemplate(name="test_manual", file_path=temp_file)
-        await text_protocol.deregister_manual(None, manual_template)
+        await text_protocol.deregister_manual(mock_utcp_client, manual_template)
     finally:
         Path(temp_file).unlink()
 
 
 @pytest.mark.asyncio
-async def test_call_tool_streaming(text_protocol: TextCommunicationProtocol, sample_utcp_manual):
+async def test_call_tool_streaming(text_protocol: TextCommunicationProtocol, sample_utcp_manual, mock_utcp_client: Mock):
     """Streaming call should yield a single chunk equal to non-streaming content."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json.dump(sample_utcp_manual, f)
@@ -326,9 +349,9 @@ async def test_call_tool_streaming(text_protocol: TextCommunicationProtocol, sam
     try:
         tool_template = TextCallTemplate(name="tool_call", file_path=temp_file)
         # Non-streaming
-        content = await text_protocol.call_tool(None, "calculator", {}, tool_template)
+        content = await text_protocol.call_tool(mock_utcp_client, "calculator", {}, tool_template)
         # Streaming
-        stream = text_protocol.call_tool_streaming(None, "calculator", {}, tool_template)
+        stream = text_protocol.call_tool_streaming(mock_utcp_client, "calculator", {}, tool_template)
         chunks = [c async for c in stream]
         assert chunks == [content]
     finally:

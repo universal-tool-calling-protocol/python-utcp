@@ -104,8 +104,8 @@ class MockTransport:
     async def deregister_tool_provider(self, provider: Provider) -> None:
         self.deregistered_providers.append(provider)
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider) -> Any:
-        self.tool_calls.append((tool_name, arguments, tool_provider))
+    async def call_tool(self, tool_name: str, tool_args: Dict[str, Any], tool_provider: Provider) -> Any:
+        self.tool_calls.append((tool_name, tool_args, tool_provider))
         return self.call_result
 
 

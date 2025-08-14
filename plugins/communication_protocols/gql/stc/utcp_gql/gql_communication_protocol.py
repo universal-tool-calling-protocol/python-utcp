@@ -102,7 +102,7 @@ class GraphQLClientTransport(ClientTransportInterface):
         # Stateless: nothing to do
         pass
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], tool_provider: Provider, query: Optional[str] = None) -> Any:
+    async def call_tool(self, tool_name: str, tool_args: Dict[str, Any], tool_provider: Provider, query: Optional[str] = None) -> Any:
         if not isinstance(tool_provider, GraphQLProvider):
             raise ValueError("GraphQLClientTransport can only be used with GraphQLProvider")
         self._enforce_https_or_localhost(tool_provider.url)
@@ -111,18 +111,18 @@ class GraphQLClientTransport(ClientTransportInterface):
         async with GqlClient(transport=transport, fetch_schema_from_transport=True) as session:
             if query is not None:
                 document = gql_query(query)
-                result = await session.execute(document, variable_values=arguments)
+                result = await session.execute(document, variable_values=tool_args)
                 return result
             # If no query provided, build a simple query
             # Default to query operation
             op_type = getattr(tool_provider, 'operation_type', 'query')
-            arg_str = ', '.join(f"${k}: String" for k in arguments.keys())
+            arg_str = ', '.join(f"${k}: String" for k in tool_args.keys())
             var_defs = f"({arg_str})" if arg_str else ""
-            arg_pass = ', '.join(f"{k}: ${k}" for k in arguments.keys())
+            arg_pass = ', '.join(f"{k}: ${k}" for k in tool_args.keys())
             arg_pass = f"({arg_pass})" if arg_pass else ""
             gql_str = f"{op_type} {var_defs} {{ {tool_name}{arg_pass} }}"
             document = gql_query(gql_str)
-            result = await session.execute(document, variable_values=arguments)
+            result = await session.execute(document, variable_values=tool_args)
             return result
 
     async def close(self) -> None:

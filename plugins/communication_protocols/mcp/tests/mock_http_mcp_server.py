@@ -2,7 +2,7 @@
 Mock HTTP MCP server for testing the MCP transport with HTTP transport.
 """
 from mcp.server.fastmcp import FastMCP
-from typing import TypedDict, List, Any
+from typing import TypedDict, List
 
 # Create a stateless HTTP MCP server
 mcp = FastMCP(name="MockHttpServer", stateless_http=True)

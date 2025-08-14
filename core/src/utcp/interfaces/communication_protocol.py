@@ -66,7 +66,7 @@ class CommunicationProtocol(ABC):
         pass
 
     @abstractmethod
-    async def call_tool(self, caller: 'UtcpClient', tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+    async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Execute a tool call through this transport.
 
         Sends a tool invocation request to the provider using the appropriate
@@ -76,7 +76,7 @@ class CommunicationProtocol(ABC):
         Args:
             caller: The UTCP client that is calling this method.
             tool_name: Name of the tool to call (may include provider prefix).
-            arguments: Dictionary of arguments to pass to the tool.
+            tool_args: Dictionary of arguments to pass to the tool.
             tool_call_template: Call template of the tool to call.
 
         Returns:
@@ -91,7 +91,7 @@ class CommunicationProtocol(ABC):
         pass
 
     @abstractmethod
-    async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any]:
+    async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any]:
         """Execute a tool call through this transport streamingly.
 
         Sends a tool invocation request to the provider using the appropriate
@@ -101,7 +101,7 @@ class CommunicationProtocol(ABC):
         Args:
             caller: The UTCP client that is calling this method.
             tool_name: Name of the tool to call (may include provider prefix).
-            arguments: Dictionary of arguments to pass to the tool.
+            tool_args: Dictionary of arguments to pass to the tool.
             tool_call_template: Call template of the tool to call.
 
         Returns:

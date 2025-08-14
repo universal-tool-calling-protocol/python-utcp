@@ -41,4 +41,4 @@ class CliCallTemplateSerializer(Serializer[CliCallTemplate]):
         try:
             return CliCallTemplate.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid CliCallTemplate: " + str(e))
+            raise UtcpSerializerValidationError("Invalid CliCallTemplate: " + str(e)) from e

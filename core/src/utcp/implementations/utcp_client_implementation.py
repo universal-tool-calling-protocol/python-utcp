@@ -1,12 +1,10 @@
 from utcp.data.utcp_manual import UtcpManual
-from utcp.utcp_client import UtcpClient
 
 import re
 import os
 import json
 import asyncio
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Union, Optional, AsyncGenerator
+from typing import Dict, Any, List, Union, Optional, AsyncGenerator, TYPE_CHECKING
 
 from utcp.data.call_template import CallTemplate
 from utcp.data.call_template import CallTemplateSerializer
@@ -16,11 +14,14 @@ from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
 from utcp.interfaces.variable_substitutor import VariableSubstitutor
 from utcp.data.utcp_client_config import UtcpClientConfig, UtcpClientConfigSerializer
 from utcp.implementations.default_variable_substitutor import DefaultVariableSubstitutor
-from utcp.implementations.tag_search import TagSearchStrategy
+from utcp.implementations.tag_search import TagAndDescriptionWordMatchStrategy
 from utcp.exceptions import UtcpVariableNotFound
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 import logging
+
+if TYPE_CHECKING:
+    from utcp.utcp_client import UtcpClient
 
 class UtcpClientImplementation(UtcpClient):
     def __init__(
@@ -31,11 +32,11 @@ class UtcpClientImplementation(UtcpClient):
         variable_substitutor: VariableSubstitutor,
         root_dir: str,
     ):
+        super().__init__(root_dir)
         self.tool_repository = tool_repository
         self.search_strategy = search_strategy
         self.config = config
         self.variable_substitutor = variable_substitutor
-        self.root_dir = root_dir
 
     @classmethod
     async def create(
@@ -49,13 +50,13 @@ class UtcpClientImplementation(UtcpClient):
         if tool_repository is None:
             tool_repository = ConcurrentToolRepository.default_repository
         if search_strategy is None:
-            search_strategy = TagSearchStrategy.default_strategy
+            search_strategy = TagAndDescriptionWordMatchStrategy.default_strategy
 
         # Get the implementations based on name
         if isinstance(tool_repository, str):
             tool_repository = ConcurrentToolRepository.tool_repository_implementations.get(tool_repository)
         if isinstance(search_strategy, str):
-            search_strategy = TagSearchStrategy.tool_search_strategy_implementations.get(search_strategy)
+            search_strategy = TagAndDescriptionWordMatchStrategy.tool_search_strategy_implementations.get(search_strategy)
 
         # Validate and load the config
         client_config_serializer = UtcpClientConfigSerializer()
@@ -143,14 +144,14 @@ class UtcpClientImplementation(UtcpClient):
         await CommunicationProtocol.communication_protocols[manual_call_template.type].deregister_manual(self, manual_call_template)
         return await self.tool_repository.remove_manual(manual_name)
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Any:
         manual_name = tool_name.split(".")[0]
         tool = await self.tool_repository.get_tool(tool_name)
         if tool is None:
             raise ValueError(f"Tool not found: {tool_name}")
         tool_call_template = tool.tool_call_template
         tool_call_template = self._substitute_call_template_variables(tool_call_template, manual_name)
-        return await CommunicationProtocol.communication_protocols[tool_call_template.type].call_tool(tool_name, arguments, tool_call_template)
+        return await CommunicationProtocol.communication_protocols[tool_call_template.type].call_tool(tool_name, tool_args, tool_call_template)
 
     async def call_tool_streaming(self, tool_name: str, tool_args: Dict[str, Any]) -> AsyncGenerator[Any]:
         manual_name = tool_name.split(".")[0]

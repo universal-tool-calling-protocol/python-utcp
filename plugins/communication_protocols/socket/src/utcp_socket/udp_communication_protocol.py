@@ -46,26 +46,26 @@ class UDPTransport(ClientTransportInterface):
     
     def _format_tool_call_message(
         self,
-        arguments: Dict[str, Any],
+        tool_args: Dict[str, Any],
         provider: UDPProvider
     ) -> str:
         """Format a tool call message based on provider configuration.
         
         Args:
-            arguments: Arguments for the tool call
+            tool_args: Arguments for the tool call
             provider: The UDPProvider with formatting configuration
             
         Returns:
             Formatted message string
         """
         if provider.request_data_format == "json":
-            return json.dumps(arguments)
+            return json.dumps(tool_args)
         elif provider.request_data_format == "text":
             # Use template-based formatting
             if provider.request_data_template is not None and provider.request_data_template != "":
                 message = provider.request_data_template
                 # Replace placeholders with argument values
-                for arg_name, arg_value in arguments.items():
+                for arg_name, arg_value in tool_args.items():
                     placeholder = f"UTCP_ARG_{arg_name}_UTCP_ARG"
                     if isinstance(arg_value, str):
                         message = message.replace(placeholder, arg_value)
@@ -74,10 +74,10 @@ class UDPTransport(ClientTransportInterface):
                 return message
             else:
                 # Fallback to simple key=value format
-                return " ".join([str(v) for k, v in arguments.items()])
+                return " ".join([str(v) for k, v in tool_args.items()])
         else:
             # Default to JSON format
-            return json.dumps(arguments)
+            return json.dumps(tool_args)
     
     async def _send_udp_message(
         self,

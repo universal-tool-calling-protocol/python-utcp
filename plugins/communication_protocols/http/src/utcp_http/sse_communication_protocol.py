@@ -149,24 +149,24 @@ class SseCommunicationProtocol(CommunicationProtocol):
             response.close()
             await session.close()
 
-    async def call_tool(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+    async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Execute a tool call through SSE transport."""
         if not isinstance(tool_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
         
         event_list = []
-        async for event in self.call_tool_streaming(caller, tool_name, arguments, tool_call_template):
+        async for event in self.call_tool_streaming(caller, tool_name, tool_args, tool_call_template):
             event_list.append(event)
         return event_list
     
-    async def call_tool_streaming(self, caller, tool_name: str, arguments: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+    async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """Execute a tool call through SSE transport with streaming."""
         if not isinstance(tool_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 
         request_headers = tool_call_template.headers.copy() if tool_call_template.headers else {}
         body_content = None
-        remaining_args = arguments.copy()
+        remaining_args = tool_args.copy()
         request_headers["Accept"] = "text/event-stream"
 
         if tool_call_template.header_fields:
@@ -302,33 +302,33 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 await session.close()
         self._active_connections.clear()
     
-    def _build_url_with_path_params(self, url_template: str, arguments: Dict[str, Any]) -> str:
+    def _build_url_with_path_params(self, url_template: str, tool_args: Dict[str, Any]) -> str:
         """Build URL by substituting path parameters from arguments.
         
         Args:
             url_template: URL template with path parameters in {param_name} format
-            arguments: Dictionary of arguments that will be modified to remove used path parameters
+            tool_args: Dictionary of arguments that will be modified to remove used path parameters
             
         Returns:
             URL with path parameters substituted
             
         Example:
             url_template = "https://api.example.com/users/{user_id}/posts/{post_id}"
-            arguments = {"user_id": "123", "post_id": "456", "limit": "10"}
+            tool_args = {"user_id": "123", "post_id": "456", "limit": "10"}
             Returns: "https://api.example.com/users/123/posts/456"
-            And modifies arguments to: {"limit": "10"}
+            And modifies tool_args to: {"limit": "10"}
         """
         # Find all path parameters in the URL template
         path_params = re.findall(r'\{([^}]+)\}', url_template)
         
         url = url_template
         for param_name in path_params:
-            if param_name in arguments:
+            if param_name in tool_args:
                 # Replace the parameter in the URL
-                param_value = str(arguments[param_name])
+                param_value = str(tool_args[param_name])
                 url = url.replace(f'{{{param_name}}}', param_value)
                 # Remove the parameter from arguments so it's not used as a query parameter
-                arguments.pop(param_name)
+                tool_args.pop(param_name)
             else:
                 raise ValueError(f"Missing required path parameter: {param_name}")
         

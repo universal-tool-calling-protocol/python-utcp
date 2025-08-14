@@ -21,7 +21,6 @@ from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
 from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
 from utcp.data.utcp_client_config import UtcpClientConfig
 from utcp.data.register_manual_response import RegisterManualResult
-from utcp.implementations.utcp_client_implementation import UtcpClientImplementation
 
 
 class UtcpClient(ABC):
@@ -37,6 +36,12 @@ class UtcpClient(ABC):
     - Tool search and filtering
     - Configuration variable validation
     """
+
+    def __init__(
+        self,
+        root_dir: Optional[str] = None,
+    ):
+        self.root_dir = root_dir
 
     @classmethod
     async def create(
@@ -58,6 +63,7 @@ class UtcpClient(ABC):
         Returns:
             A new instance of UtcpClient.
         """
+        from utcp.implementations.utcp_client_implementation import UtcpClientImplementation
         return await UtcpClientImplementation.create(
             root_dir=root_dir,
             config=config,

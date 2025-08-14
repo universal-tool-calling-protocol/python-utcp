@@ -1,155 +1,170 @@
-import asyncio
-import sys
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, Optional, AsyncGenerator, TYPE_CHECKING
 import logging
 import json
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
-from utcp.shared.provider import MCPProvider
-from utcp.shared.tool import Tool
-from utcp.shared.auth import OAuth2Auth
+from utcp.data.utcp_manual import UtcpManual
+from utcp.data.call_template import CallTemplate
+from utcp.data.tool import Tool
+from utcp.data.auth_implementations import OAuth2Auth
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.data.register_manual_response import RegisterManualResult
 import aiohttp
 from aiohttp import BasicAuth as AiohttpBasicAuth
+from utcp_mcp.mcp_call_template import McpCallTemplate
+
+if TYPE_CHECKING:
+    from utcp.utcp_client import UtcpClient
 
 
-class MCPTransport:
+class McpCommunicationProtocol(CommunicationProtocol):
     """MCP transport implementation that connects to MCP servers via stdio or HTTP.
     
     This implementation uses a session-per-operation approach where each operation
     (register, call_tool) opens a fresh session, performs the operation, and closes.
     """
     
-    def __init__(self, logger: Optional[Callable[[str, Any], None]] = None):
+    def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-        self._log = logger or (lambda *args, **kwargs: None)
 
-    def _log(self, message: str, error: bool = False):
-        """Log messages with appropriate level."""
-        if error:
-            logging.error(f"[MCPTransport Error] {message}")
-        else:
-            logging.info(f"[MCPTransport Info] {message}")
-
-    async def _list_tools_with_session(self, server_config, auth=None):
-        """List tools by creating a session."""
+    async def _list_tools_with_session(self, server_config: Dict[str, Any], auth: Optional[OAuth2Auth] = None):
         # Create client streams based on transport type
-        if server_config.transport == "stdio":
-            params = StdioServerParameters(
-                command=server_config.command,
-                args=server_config.args,
-                env=server_config.env
-            )
+        if "command" in server_config and "args" in server_config:
+            params = StdioServerParameters(**server_config)
             async with stdio_client(params) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools_response = await session.list_tools()
                     return tools_response.tools
-        elif server_config.transport == "http":
+        elif "url" in server_config:
             # Get authentication token if OAuth2 is configured
             auth_header = None
             if auth and isinstance(auth, OAuth2Auth):
                 token = await self._handle_oauth2(auth)
                 auth_header = {"Authorization": f"Bearer {token}"}
             
-            async with streamablehttp_client(server_config.url, auth=auth_header) as (read, write, _):
+            async with streamablehttp_client(server_config["url"], auth=auth_header) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools_response = await session.list_tools()
                     return tools_response.tools
         else:
-            raise ValueError(f"Unsupported MCP transport: {server_config.transport}")
+            raise ValueError(f"Unsupported MCP transport: {json.dumps(server_config)}")
     
-    async def _call_tool_with_session(self, server_config, tool_name, inputs, auth=None):
-        """Call a tool by creating a session."""
-        # Create client streams based on transport type
-        if server_config.transport == "stdio":
-            params = StdioServerParameters(
-                command=server_config.command,
-                args=server_config.args,
-                env=server_config.env
-            )
+    async def _call_tool_with_session(self, server_config: Dict[str, Any], tool_name: str, inputs: Dict[str, Any], auth: Optional[OAuth2Auth] = None):
+        if "command" in server_config and "args" in server_config:
+            params = StdioServerParameters(**server_config)
             async with stdio_client(params) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool(tool_name, arguments=inputs)
                     return result
-        elif server_config.transport == "http":
+        elif "url" in server_config:
             # Get authentication token if OAuth2 is configured
             auth_header = None
             if auth and isinstance(auth, OAuth2Auth):
                 token = await self._handle_oauth2(auth)
                 auth_header = {"Authorization": f"Bearer {token}"}
-                
-            async with streamablehttp_client(server_config.url, auth=auth_header) as (read, write, _):
+            
+            async with streamablehttp_client(
+                url=server_config["url"],
+                headers=server_config.get("headers", None),
+                timeout=server_config.get("timeout", 30),
+                sse_read_timeout=server_config.get("sse_read_timeout", 60 * 5),
+                terminate_on_close=server_config.get("terminate_on_close", True),
+                auth=auth_header
+            ) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool(tool_name, arguments=inputs)
                     return result
         else:
-            raise ValueError(f"Unsupported MCP transport: {server_config.transport}")
+            raise ValueError(f"Unsupported MCP transport: {json.dumps(server_config)}")
 
-    async def register_tool_provider(self, manual_provider: MCPProvider) -> List[Tool]:
-        """Register an MCP provider and discover its tools."""
+    async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
+        if not isinstance(manual_call_template, McpCallTemplate):
+            raise ValueError("manual_call_template must be a McpCallTemplate")
         all_tools = []
-        if manual_provider.config and manual_provider.config.mcpServers:
-            for server_name, server_config in manual_provider.config.mcpServers.items():
+        errors = []
+        if manual_call_template.config and manual_call_template.config.mcpServers:
+            for server_name, server_config in manual_call_template.config.mcpServers.items():
                 try:
-                    self._log(f"Discovering tools for server '{server_name}' via {server_config.transport}")
-                    tools = await self._list_tools_with_session(server_config, auth=manual_provider.auth)
-                    self._log(f"Discovered {len(tools)} tools for server '{server_name}'")
-                    all_tools.extend(tools)
+                    logging.info(f"Discovering tools for server '{server_name}' via {server_config}")
+                    mcp_tools = await self._list_tools_with_session(server_config, auth=manual_call_template.auth)
+                    logging.info(f"Discovered {len(mcp_tools)} tools for server '{server_name}'")
+                    for mcp_tool in mcp_tools:
+                        # Convert mcp.Tool to utcp.data.tool.Tool
+                        utcp_tool = Tool(
+                            name=mcp_tool.name,
+                            description=mcp_tool.description,
+                            input_schema=mcp_tool.inputSchema,
+                            output_schema=mcp_tool.outputSchema,
+                            tool_call_template=manual_call_template
+                        )
+                        all_tools.append(utcp_tool)
                 except Exception as e:
-                    self._log(f"Failed to discover tools for server '{server_name}': {e}", error=True)
-        return all_tools
+                    logging.error(f"Failed to discover tools for server '{server_name}': {e}")
+                    errors.append(f"Failed to discover tools for server '{server_name}': {e}")
+        return RegisterManualResult(
+            manual_call_template=manual_call_template,
+            manual=UtcpManual(
+                tools=all_tools
+            ),
+            success=len(errors) == 0,
+            errors=errors
+        )
 
-    async def call_tool(self, tool_name: str, inputs: Dict[str, Any], tool_provider: MCPProvider) -> Any:
-        """Call a tool by creating a fresh session to the appropriate server."""
-        if not tool_provider.config or not tool_provider.config.mcpServers:
+    async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        if not isinstance(tool_call_template, McpCallTemplate):
+            raise ValueError("tool_call_template must be a McpCallTemplate")
+        if not tool_call_template.config or not tool_call_template.config.mcpServers:
             raise ValueError(f"No server configuration found for tool '{tool_name}'")
         
         # Try each server until we find one that has the tool
-        for server_name, server_config in tool_provider.config.mcpServers.items():
+        for server_name, server_config in tool_call_template.config.mcpServers.items():
             try:
-                self._log(f"Attempting to call tool '{tool_name}' on server '{server_name}'")
+                logging.info(f"Attempting to call tool '{tool_name}' on server '{server_name}'")
                 
                 # First check if this server has the tool
-                tools = await self._list_tools_with_session(server_config, auth=tool_provider.auth)
+                tools = await self._list_tools_with_session(server_config, auth=tool_call_template.auth)
                 tool_names = [tool.name for tool in tools]
                 
                 if tool_name not in tool_names:
-                    self._log(f"Tool '{tool_name}' not found in server '{server_name}'")
+                    logging.info(f"Tool '{tool_name}' not found in server '{server_name}'")
                     continue  # Try next server
                 
                 # Call the tool
-                result = await self._call_tool_with_session(server_config, tool_name, inputs, auth=tool_provider.auth)
+                result = await self._call_tool_with_session(server_config, tool_name, tool_args, auth=tool_call_template.auth)
                 
                 # Process the result
                 return self._process_tool_result(result, tool_name)
             except Exception as e:
-                self._log(f"Error calling tool '{tool_name}' on server '{server_name}': {e}", error=True)
+                logging.error(f"Error calling tool '{tool_name}' on server '{server_name}': {e}")
                 continue  # Try next server
         
         raise ValueError(f"Tool '{tool_name}' not found in any configured server")
 
+    async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+        yield self.call_tool(caller, tool_name, tool_args, tool_call_template)
+
     def _process_tool_result(self, result, tool_name: str) -> Any:
-        """Process the tool result and return the appropriate format."""
-        self._log(f"Processing tool result for '{tool_name}', type: {type(result)}")
+        logging.info(f"Processing tool result for '{tool_name}', type: {type(result)}")
         
         # Check for structured output first
         if hasattr(result, 'structured_output'):
-            self._log(f"Found structured_output: {result.structured_output}")
+            logging.info(f"Found structured_output: {result.structured_output}")
             return result.structured_output
         
         # Process content if available
         if hasattr(result, 'content'):
             content = result.content
-            self._log(f"Content type: {type(content)}")
+            logging.info(f"Content type: {type(content)}")
             
             # Handle list content
             if isinstance(content, list):
-                self._log(f"Content is a list with {len(content)} items")
+                logging.info(f"Content is a list with {len(content)} items")
                 
                 if not content:
                     return []
@@ -210,9 +225,9 @@ class MCPTransport:
         # Return as string
         return text
 
-    async def deregister_tool_provider(self, manual_provider: MCPProvider) -> None:
-        """Deregister an MCP provider. This is a no-op in session-per-operation mode."""
-        self._log(f"Deregistering provider '{manual_provider.name}' (no-op in session-per-operation mode)")
+    async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
+        """Deregister an MCP manual. This is a no-op in session-per-operation mode."""
+        logging.info(f"Deregistering manual '{manual_call_template.name}' (no-op in session-per-operation mode)")
         pass
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
@@ -226,7 +241,7 @@ class MCPTransport:
         async with aiohttp.ClientSession() as session:
             # Method 1: Send credentials in the request body
             try:
-                self._log(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
+                logging.info(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
                 body_data = {
                     'grant_type': 'client_credentials',
                     'client_id': client_id,
@@ -239,11 +254,11 @@ class MCPTransport:
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                self._log(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
+                logging.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
                 
             # Method 2: Send credentials as Basic Auth header
             try:
-                self._log(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
+                logging.info(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
                 header_auth = AiohttpBasicAuth(client_id, auth_details.client_secret)
                 header_data = {
                     'grant_type': 'client_credentials',
@@ -255,10 +270,5 @@ class MCPTransport:
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                self._log(f"OAuth2 with Basic Auth header also failed: {e}", error=True)
+                logging.error(f"OAuth2 with Basic Auth header also failed: {e}")
                 raise e
-
-    async def close(self) -> None:
-        """Close the transport. This is a no-op in session-per-operation mode."""
-        self._log("Closing MCP transport (no-op in session-per-operation mode)")
-        pass

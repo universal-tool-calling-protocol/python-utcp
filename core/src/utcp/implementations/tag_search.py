@@ -12,8 +12,8 @@ from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
 import re
 import asyncio
 
-class TagSearchStrategy(ToolSearchStrategy):
-    """Tag-based search strategy for UTCP tools.
+class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
+    """Tag and description word match search strategy for UTCP tools.
 
     Implements a weighted scoring algorithm that matches search queries against
     tool tags and descriptions. Explicit tag matches receive full weight while
@@ -26,20 +26,18 @@ class TagSearchStrategy(ToolSearchStrategy):
         - Only considers description words longer than 2 characters
 
     Examples:
-        >>> strategy = TagSearchStrategy(repository, description_weight=0.3)
+        >>> strategy = TagAndDescriptionWordMatchStrategy(description_weight=0.3)
         >>> tools = await strategy.search_tools("weather api", limit=5)
         >>> # Returns tools with "weather" or "api" tags/descriptions
 
     Attributes:
-        tool_repository: Repository to search for tools.
         description_weight: Weight multiplier for description matches (0.0-1.0).
     """
 
-    def __init__(self, tool_repository: ConcurrentToolRepository, description_weight: float = 0.3):
-        """Initialize the tag search strategy.
+    def __init__(self, description_weight: float = 0.3):
+        """Initialize the tag and description word match search strategy.
 
         Args:
-            tool_repository: Repository containing tools to search.
             description_weight: Weight for description word matches relative to
                 tag matches. Should be between 0.0 and 1.0, where 1.0 gives
                 equal weight to tags and descriptions.
@@ -50,11 +48,10 @@ class TagSearchStrategy(ToolSearchStrategy):
         if not 0.0 <= description_weight <= 1.0:
             raise ValueError("description_weight must be between 0.0 and 1.0")
             
-        self.tool_repository = tool_repository
         # Weight for description words vs explicit tags (explicit tags have weight of 1.0)
         self.description_weight = description_weight
 
-    async def search_tools(self, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = []) -> List[Tool]:
+    async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = []) -> List[Tool]:
         """Search tools using tag and description matching.
 
         Implements a weighted scoring system that ranks tools based on how well
@@ -88,7 +85,7 @@ class TagSearchStrategy(ToolSearchStrategy):
         query_words = set(re.findall(r'\w+', query_lower))
         
         # Get all tools (using asyncio to run the coroutine)
-        tools: List[Tool] = await self.tool_repository.get_tools()
+        tools: List[Tool] = await tool_repository.get_tools()
 
         if any_of_tags_required and len(any_of_tags_required) > 0:
             tools = [tool for tool in tools if any(tag in tool.tags for tag in any_of_tags_required)]

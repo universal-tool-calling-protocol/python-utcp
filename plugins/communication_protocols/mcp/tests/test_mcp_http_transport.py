@@ -11,8 +11,8 @@ import os
 import socket
 from typing import List, Optional, Tuple
 
-from utcp.client.transport_interfaces.mcp_transport import MCPTransport
-from utcp.shared.provider import MCPProvider, McpConfig, McpHttpServer
+from utcp_mcp.mcp_call_template import McpCallTemplate, McpConfig
+from utcp_mcp.mcp_communication_protocol import McpCommunicationProtocol
 
 HTTP_SERVER_NAME = "mock_http_server"
 HTTP_SERVER_PORT = 8000
@@ -66,13 +66,13 @@ async def http_server_process() -> subprocess.Popen:
 
 
 @pytest_asyncio.fixture
-def http_mcp_provider() -> MCPProvider:
-    """Provides an MCPProvider configured to connect to the mock HTTP server."""
-    server_config = McpHttpServer(
-        url=f"http://127.0.0.1:{HTTP_SERVER_PORT}/mcp",
-        transport="http"
-    )
-    return MCPProvider(
+def http_mcp_provider() -> McpCallTemplate:
+    """Provides an McpCallTemplate configured to connect to the mock HTTP server."""
+    server_config = {
+        "url": f"http://127.0.0.1:{HTTP_SERVER_PORT}/mcp",
+        "transport": "http"
+    }
+    return McpCallTemplate(
         name="mock_http_provider",
         provider_type="mcp",
         config=McpConfig(mcpServers={HTTP_SERVER_NAME: server_config})
@@ -80,30 +80,30 @@ def http_mcp_provider() -> MCPProvider:
 
 
 @pytest_asyncio.fixture
-async def transport() -> MCPTransport:
-    """Provides a clean MCPTransport instance."""
-    t = MCPTransport()
+async def transport() -> McpCommunicationProtocol:
+    """Provides a clean McpCommunicationProtocol instance."""
+    t = McpCommunicationProtocol()
     yield t
-    await t.close()
 
 
 @pytest.mark.asyncio
-async def test_http_register_provider_discovers_tools(
-    transport: MCPTransport,
-    http_mcp_provider: MCPProvider,
+async def test_http_register_manual_discovers_tools(
+    transport: McpCommunicationProtocol,
+    http_mcp_provider: McpCallTemplate,
     http_server_process: subprocess.Popen
 ):
-    """Test that registering an HTTP MCP provider discovers the correct tools."""
-    tools = await transport.register_tool_provider(http_mcp_provider)
-    assert len(tools) == 4
-    
+    """Test that registering an HTTP MCP manual discovers the correct tools."""
+    register_result = await transport.register_manual(None, http_mcp_provider)
+    assert register_result.success
+    assert len(register_result.manual.tools) == 4
+
     # Find the echo tool
-    echo_tool = next((tool for tool in tools if tool.name == "echo"), None)
+    echo_tool = next((tool for tool in register_result.manual.tools if tool.name == "echo"), None)
     assert echo_tool is not None
     assert "echoes back its input" in echo_tool.description
-    
+
     # Check for other tools
-    tool_names = [tool.name for tool in tools]
+    tool_names = [tool.name for tool in register_result.manual.tools]
     assert "greet" in tool_names
     assert "list_items" in tool_names
     assert "add_numbers" in tool_names
@@ -111,96 +111,85 @@ async def test_http_register_provider_discovers_tools(
 
 @pytest.mark.asyncio
 async def test_http_structured_output(
-    transport: MCPTransport,
-    http_mcp_provider: MCPProvider,
+    transport: McpCommunicationProtocol,
+    http_mcp_provider: McpCallTemplate,
     http_server_process: subprocess.Popen
 ):
     """Test that HTTP MCP tools with structured output work correctly."""
     # Register the provider
-    await transport.register_tool_provider(http_mcp_provider)
+    await transport.register_manual(None, http_mcp_provider)
     
     # Call the echo tool and verify the result
-    result = await transport.call_tool("echo", {"message": "http_test"}, http_mcp_provider)
+    result = await transport.call_tool(None, "echo", {"message": "http_test"}, http_mcp_provider)
     assert result == {"reply": "you said: http_test"}
 
 
 @pytest.mark.asyncio
 async def test_http_unstructured_output(
-    transport: MCPTransport,
-    http_mcp_provider: MCPProvider,
+    transport: McpCommunicationProtocol,
+    http_mcp_provider: McpCallTemplate,
     http_server_process: subprocess.Popen
 ):
     """Test that HTTP MCP tools with unstructured output types work correctly."""
     # Register the provider
-    await transport.register_tool_provider(http_mcp_provider)
+    await transport.register_manual(None, http_mcp_provider)
     
     # Call the greet tool and verify the result
-    result = await transport.call_tool("greet", {"name": "Alice"}, http_mcp_provider)
+    result = await transport.call_tool(None, "greet", {"name": "Alice"}, http_mcp_provider)
     assert result == "Hello, Alice!"
 
 
 @pytest.mark.asyncio
 async def test_http_list_output(
-    transport: MCPTransport,
-    http_mcp_provider: MCPProvider,
+    transport: McpCommunicationProtocol,
+    http_mcp_provider: McpCallTemplate,
     http_server_process: subprocess.Popen
 ):
     """Test that HTTP MCP tools returning lists work correctly."""
     # Register the provider
-    await transport.register_tool_provider(http_mcp_provider)
+    await transport.register_manual(None, http_mcp_provider)
     
     # Call the list_items tool and verify the result
-    result = await transport.call_tool("list_items", {"count": 3}, http_mcp_provider)
+    result = await transport.call_tool(None, "list_items", {"count": 3}, http_mcp_provider)
     
-    # The result might be wrapped in a "result" field or returned directly
-    if isinstance(result, dict) and "result" in result:
-        items = result["result"]
-    else:
-        items = result
-        
-    assert isinstance(items, list)
-    assert len(items) == 3
-    assert items[0] == "item_0"
-    assert items[1] == "item_1"
-    assert items[2] == "item_2"
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert result[0] == "item_0"
+    assert result[1] == "item_1"
+    assert result[2] == "item_2"
 
 
 @pytest.mark.asyncio
 async def test_http_numeric_output(
-    transport: MCPTransport,
-    http_mcp_provider: MCPProvider,
+    transport: McpCommunicationProtocol,
+    http_mcp_provider: McpCallTemplate,
     http_server_process: subprocess.Popen
 ):
     """Test that HTTP MCP tools returning numeric values work correctly."""
     # Register the provider
-    await transport.register_tool_provider(http_mcp_provider)
+    await transport.register_manual(None, http_mcp_provider)
     
     # Call the add_numbers tool and verify the result
-    result = await transport.call_tool("add_numbers", {"a": 5, "b": 7}, http_mcp_provider)
+    result = await transport.call_tool(None, "add_numbers", {"a": 5, "b": 7}, http_mcp_provider)
     
-    # The result might be wrapped in a "result" field or returned directly
-    if isinstance(result, dict) and "result" in result:
-        value = result["result"]
-    else:
-        value = result
-        
-    assert value == 12
+    assert result == 12
 
 
 @pytest.mark.asyncio
-async def test_http_deregister_provider(
-    transport: MCPTransport,
-    http_mcp_provider: MCPProvider,
+async def test_http_deregister_manual(
+    transport: McpCommunicationProtocol,
+    http_mcp_provider: McpCallTemplate,
     http_server_process: subprocess.Popen
 ):
-    """Test that deregistering an HTTP MCP provider works (no-op in session-per-operation mode)."""
-    # Register a provider
-    tools = await transport.register_tool_provider(http_mcp_provider)
-    assert len(tools) == 4
-    
+    """Test that deregistering an HTTP MCP manual works (no-op in session-per-operation mode)."""
+    # Register a manual
+    register_result = await transport.register_manual(None, http_mcp_provider)
+    assert register_result.success
+    assert len(register_result.manual.tools) == 4
+
     # Deregister it (this is a no-op in session-per-operation mode)
-    await transport.deregister_tool_provider(http_mcp_provider)
-    
+    await transport.deregister_manual(None, http_mcp_provider)
+
     # Should still be able to call tools since we create fresh sessions
-    result = await transport.call_tool("echo", {"message": "test"}, http_mcp_provider)
+    result = await transport.call_tool(None, "echo", {"message": "test"}, http_mcp_provider)
     assert result == {"reply": "you said: test"}
