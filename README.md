@@ -430,7 +430,7 @@ For tools that use HTTP chunked transfer encoding to stream data. The `url` shou
 ```json
 {
   "name": "streaming_data_source",
-  "provider_type": "http_stream",
+  "provider_type": "streamable_http",
   "url": "https://api.example.com/stream",
   "http_method": "POST",
   "content_type": "application/octet-stream",

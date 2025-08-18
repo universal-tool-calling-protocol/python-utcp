@@ -58,7 +58,7 @@ def sample_utcp_manual():
                 },
                 "tags": ["math", "arithmetic"],
                 "tool_call_template": {
-                    "type": "text",
+                    "call_template_type": "text",
                     "name": "test-text-call-template",
                     "file_path": "dummy.json"
                 }
@@ -85,7 +85,7 @@ def sample_utcp_manual():
                 },
                 "tags": ["text", "utilities"],
                 "tool_call_template": {
-                    "type": "text",
+                    "call_template_type": "text",
                     "name": "test-text-call-template",
                     "file_path": "dummy.json"
                 }
@@ -115,7 +115,7 @@ def single_tool_definition():
         },
         "tags": ["utility"],
         "tool_call_template": {
-            "type": "text",
+            "call_template_type": "text",
             "name": "test-text-call-template",
             "file_path": "dummy.json"
         }
@@ -133,7 +133,7 @@ def tool_array():
             "outputs": {"type": "object", "properties": {}, "required": []},
             "tags": [],
             "tool_call_template": {
-                "type": "text",
+                "call_template_type": "text",
                 "name": "test-text-call-template",
                 "file_path": "dummy.json"
             }
@@ -145,7 +145,7 @@ def tool_array():
             "outputs": {"type": "object", "properties": {}, "required": []},
             "tags": [],
             "tool_call_template": {
-                "type": "text",
+                "call_template_type": "text",
                 "name": "test-text-call-template",
                 "file_path": "dummy.json"
             }
@@ -176,13 +176,13 @@ async def test_register_manual_with_utcp_manual(
         assert tool0.name == "calculator"
         assert tool0.description == "Performs basic arithmetic operations"
         assert tool0.tags == ["math", "arithmetic"]
-        assert tool0.tool_call_template.type == "text"
+        assert tool0.tool_call_template.call_template_type == "text"
 
         tool1 = result.manual.tools[1]
         assert tool1.name == "string_utils"
         assert tool1.description == "String manipulation utilities"
         assert tool1.tags == ["text", "utilities"]
-        assert tool1.tool_call_template.type == "text"
+        assert tool1.tool_call_template.call_template_type == "text"
     finally:
         Path(temp_file).unlink()
 
@@ -211,7 +211,7 @@ async def test_register_manual_with_single_tool(
         assert tool.name == "echo"
         assert tool.description == "Echoes back the input text"
         assert tool.tags == ["utility"]
-        assert tool.tool_call_template.type == "text"
+        assert tool.tool_call_template.call_template_type == "text"
     finally:
         Path(temp_file).unlink()
 
@@ -238,8 +238,8 @@ async def test_register_manual_with_tool_array(
         assert len(result.manual.tools) == 2
         assert result.manual.tools[0].name == "tool1"
         assert result.manual.tools[1].name == "tool2"
-        assert result.manual.tools[0].tool_call_template.type == "text"
-        assert result.manual.tools[1].tool_call_template.type == "text"
+        assert result.manual.tools[0].tool_call_template.call_template_type == "text"
+        assert result.manual.tools[1].tool_call_template.call_template_type == "text"
     finally:
         Path(temp_file).unlink()
 
@@ -278,7 +278,7 @@ async def test_register_manual_invalid_json(
 @pytest.mark.asyncio
 async def test_register_manual_wrong_call_template_type(text_protocol: TextCommunicationProtocol, mock_utcp_client: Mock):
     """Registering with a non-Text call template should raise ValueError."""
-    wrong_template = CallTemplate(type="invalid", name="wrong")
+    wrong_template = CallTemplate(call_template_type="invalid", name="wrong")
     with pytest.raises(ValueError, match="requires a TextCallTemplate"):
         await text_protocol.register_manual(mock_utcp_client, wrong_template)  # type: ignore[arg-type]
 
@@ -312,7 +312,7 @@ async def test_call_tool_returns_file_content(
 @pytest.mark.asyncio
 async def test_call_tool_wrong_call_template_type(text_protocol: TextCommunicationProtocol, mock_utcp_client: Mock):
     """Calling a tool with wrong call template type should raise ValueError."""
-    wrong_template = CallTemplate(type="invalid", name="wrong")
+    wrong_template = CallTemplate(call_template_type="invalid", name="wrong")
     with pytest.raises(ValueError, match="requires a TextCallTemplate"):
         await text_protocol.call_tool(mock_utcp_client, "some_tool", {}, wrong_template)  # type: ignore[arg-type]
 

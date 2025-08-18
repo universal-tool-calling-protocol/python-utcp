@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import socket
+import traceback
 from typing import Dict, Any, List, Optional, Callable, Union
 
 from utcp.client.client_transport_interface import ClientTransportInterface
@@ -176,10 +177,10 @@ class UDPTransport(ClientTransportInterface):
                     return combined_bytes
                     
         except TimeoutError as e:
-            self._log_error(str(e))
-            raise asyncio.TimeoutError(str(e))
+            self._log_error(traceback.format_exc())
+            raise asyncio.TimeoutError(traceback.format_exc())
         except Exception as e:
-            self._log_error(f"Error sending UDP message: {e}")
+            self._log_error(f"Error sending UDP message: {traceback.format_exc()}")
             raise
     
     async def _send_udp_no_response(self, host: str, port: int, message: str) -> None:
@@ -197,7 +198,7 @@ class UDPTransport(ClientTransportInterface):
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _send_only)
         except Exception as e:
-            self._log_error(f"Error sending UDP message (no response): {e}")
+            self._log_error(f"Error sending UDP message (no response): {traceback.format_exc()}")
             raise
     
     async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
@@ -255,7 +256,7 @@ class UDPTransport(ClientTransportInterface):
                             tool = Tool(**tool_data)
                             tools.append(tool)
                         except Exception as e:
-                            self._log_error(f"Invalid tool definition in UDP provider '{manual_provider.name}': {e}")
+                            self._log_error(f"Invalid tool definition in UDP provider '{manual_provider.name}': {traceback.format_exc()}")
                             continue
                     
                     self._log_info(f"Discovered {len(tools)} tools from UDP provider '{manual_provider.name}'")
@@ -265,11 +266,11 @@ class UDPTransport(ClientTransportInterface):
                     return []
                     
             except json.JSONDecodeError as e:
-                self._log_error(f"Invalid JSON response from UDP provider '{manual_provider.name}': {e}")
+                self._log_error(f"Invalid JSON response from UDP provider '{manual_provider.name}': {traceback.format_exc()}")
                 return []
                 
         except Exception as e:
-            self._log_error(f"Error registering UDP provider '{manual_provider.name}': {e}")
+            self._log_error(f"Error registering UDP provider '{manual_provider.name}': {traceback.format_exc()}")
             return []
     
     async def deregister_tool_provider(self, manual_provider: Provider) -> None:
@@ -320,5 +321,5 @@ class UDPTransport(ClientTransportInterface):
             return response
                 
         except Exception as e:
-            self._log_error(f"Error calling UDP tool '{tool_name}': {e}")
+            self._log_error(f"Error calling UDP tool '{tool_name}': {traceback.format_exc()}")
             raise

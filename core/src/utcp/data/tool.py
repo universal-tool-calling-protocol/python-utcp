@@ -16,6 +16,7 @@ from utcp.data.call_template import CallTemplate, CallTemplateSerializer
 from utcp.interfaces.serializer import Serializer
 from typing import Union
 from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 
 JsonType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
 
@@ -54,7 +55,7 @@ class JsonSchemaSerializer(Serializer[JsonSchema]):
         try:
             return JsonSchema.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid JSONSchema: " + str(e))
+            raise UtcpSerializerValidationError("Invalid JSONSchema: " + traceback.format_exc()) from e
 
 class Tool(BaseModel):
     """Definition of a UTCP tool.
@@ -77,15 +78,15 @@ class Tool(BaseModel):
     description: str = ""
     inputs: JsonSchema = Field(default_factory=JsonSchema)
     outputs: JsonSchema = Field(default_factory=JsonSchema)
-    tags: List[str] = []
+    tags: List[str] = Field(default_factory=list)
     average_response_size: Optional[int] = None
     tool_call_template: CallTemplate
 
     @field_serializer("tool_call_template")
-    def serialize_call_template(cls, v: CallTemplate):
-        return CallTemplateSerializer().to_dict(v)
+    def serialize_call_template(self, call_template: CallTemplate):
+        return CallTemplateSerializer().to_dict(call_template)
 
-    @field_validator("tool_call_template")
+    @field_validator("tool_call_template", mode="before")
     @classmethod
     def validate_call_template(cls, v: Union[CallTemplate, dict]):
         if isinstance(v, CallTemplate):
@@ -100,4 +101,4 @@ class ToolSerializer(Serializer[Tool]):
         try:
             return Tool.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid Tool: " + str(e))
+            raise UtcpSerializerValidationError("Invalid Tool: " + traceback.format_exc()) from e

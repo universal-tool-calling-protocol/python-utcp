@@ -2,6 +2,7 @@ from utcp.data.call_template import CallTemplate, CallTemplateSerializer
 from utcp.data.auth import Auth
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 from typing import Optional, Dict, List, Literal
 from pydantic import Field
 
@@ -25,7 +26,7 @@ class SseCallTemplate(CallTemplate):
         header_fields: List of tool argument names to map to HTTP headers during connection.
     """
 
-    type: Literal["sse"] = "sse"
+    call_template_type: Literal["sse"] = "sse"
     url: str
     event_type: Optional[str] = None
     reconnect: bool = True
@@ -46,4 +47,4 @@ class SSECallTemplateSerializer(Serializer[SseCallTemplate]):
         try:
             return SseCallTemplate.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid SSECallTemplate: " + str(e))
+            raise UtcpSerializerValidationError("Invalid SSECallTemplate: " + traceback.format_exc()) from e

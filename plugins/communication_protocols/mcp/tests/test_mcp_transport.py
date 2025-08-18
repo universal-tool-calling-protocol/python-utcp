@@ -19,7 +19,7 @@ def mcp_manual() -> McpCallTemplate:
     }
     return McpCallTemplate(
         name="mock_mcp_manual",
-        provider_type="mcp",
+        call_template_type="mcp",
         config=McpConfig(mcpServers={SERVER_NAME: server_config})
     )
 

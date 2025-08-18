@@ -36,7 +36,7 @@ class TCPProvider(CallTemplate):
         auth: Always None - TCP providers don't support authentication.
     """
 
-    type: Literal["tcp"] = "tcp"
+    call_template_type: Literal["tcp"] = "tcp"
     host: str
     port: int
     request_data_format: Literal["json", "text"] = "json"

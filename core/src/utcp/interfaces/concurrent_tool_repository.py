@@ -8,11 +8,16 @@ storage.
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
+
 from utcp.data.call_template import CallTemplate
 from utcp.data.tool import Tool
 from utcp.data.utcp_manual import UtcpManual
+from utcp.interfaces.serializer import Serializer
+from pydantic import BaseModel
+from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 
-class ConcurrentToolRepository(ABC):
+class ConcurrentToolRepository(ABC, BaseModel):
     """Abstract interface for tool and provider storage implementations.
 
     Defines the contract for repositories that manage the lifecycle and storage
@@ -31,8 +36,7 @@ class ConcurrentToolRepository(ABC):
         All methods are async to support both synchronous and asynchronous
         storage implementations.
     """
-    tool_repository_implementations: Dict[str, 'ConcurrentToolRepository'] = {}
-    default_repository = "in_memory"
+    tool_repository_type: str
 
     @abstractmethod
     async def save_manual(self, manual_call_template: CallTemplate, manual: UtcpManual) -> None:
@@ -152,3 +156,18 @@ class ConcurrentToolRepository(ABC):
             A list of manual call templates.
         """
         pass
+
+class ConcurrentToolRepositoryConfigSerializer(Serializer[ConcurrentToolRepository]):
+    tool_repository_implementations: Dict[str, Serializer['ConcurrentToolRepository']] = {}
+    default_repository = "in_memory"
+
+    def to_dict(self, obj: ConcurrentToolRepository) -> dict:
+        return ConcurrentToolRepositoryConfigSerializer.tool_repository_implementations[obj.tool_repository_type].to_dict(obj)
+
+    def validate_dict(self, data: dict) -> ConcurrentToolRepository:
+        try:
+            return ConcurrentToolRepositoryConfigSerializer.tool_repository_implementations[data['tool_repository_type']].validate_dict(data)
+        except KeyError:
+            raise ValueError(f"Invalid tool repository type: {data['tool_repository_type']}")
+        except Exception as e:
+            raise UtcpSerializerValidationError("Invalid ConcurrentToolRepository: " + traceback.format_exc()) from e

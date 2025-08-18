@@ -6,11 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "utcp-text"
 version = "1.0.0"
 authors = [
-  { name = "Razvan-Ion Radulescu" },
-  { name = "Andrei-Stefan Ghiurtu" },
-  { name = "Juan Viera Garcia" },
-  { name = "Ali Raza" },
-  { name = "Ulugbek Isroilov" }
+  { name = "https://www.utcp.io/about" },
 ]
 description = "Universal Tool Calling Protocol (UTCP) client library for Python"
 readme = "README.md"
@@ -18,7 +14,8 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
-    "utcp>=1.0"
+    "utcp>=1.0",
+    "utcp-http>=1.0"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -42,3 +39,6 @@ dev = [
 Homepage = "https://utcp.io"
 Source = "https://github.com/universal-tool-calling-protocol/python-utcp"
 Issues = "https://github.com/universal-tool-calling-protocol/python-utcp/issues"
+
+[project.entry-points."utcp.plugins"]
+text = "utcp_text:register"

@@ -16,7 +16,7 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.sse_call_template import SseCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 import logging
-
+import traceback
 
 class SseCommunicationProtocol(CommunicationProtocol):
     """SSE communication protocol implementation for UTCP client.
@@ -138,7 +138,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 success=False,
                 manual_call_template=manual_call_template,
                 manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
-                errors=[str(e)]
+                errors=[traceback.format_exc()]
             )
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:

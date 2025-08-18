@@ -2,6 +2,7 @@ from utcp.data.call_template import CallTemplate, CallTemplateSerializer
 from utcp.data.auth import Auth
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 from typing import Optional, Dict, List, Literal
 from pydantic import Field
 
@@ -25,7 +26,7 @@ class HttpCallTemplate(CallTemplate):
         header_fields: List of tool argument names to map to HTTP request headers.
     """
 
-    type: Literal["http"] = "http"
+    call_template_type: Literal["http"] = "http"
     http_method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"] = "GET"
     url: str
     content_type: str = Field(default="application/json")
@@ -45,4 +46,4 @@ class HttpCallTemplateSerializer(Serializer[HttpCallTemplate]):
         try:
             return HttpCallTemplate.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid HttpCallTemplate: " + str(e))
+            raise UtcpSerializerValidationError("Invalid HttpCallTemplate: " + traceback.format_exc()) from e

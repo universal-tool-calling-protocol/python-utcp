@@ -6,8 +6,7 @@ communication with different types of tool providers (HTTP, CLI, WebSocket, etc.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, AsyncGenerator, TYPE_CHECKING
-
+from typing import Dict, Any, AsyncGenerator, TYPE_CHECKING
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp.data.call_template import CallTemplate
 if TYPE_CHECKING:
@@ -25,7 +24,7 @@ class CommunicationProtocol(ABC):
     - Managing provider lifecycle (registration/deregistration)
     - Executing tool calls through the appropriate protocol
     """
-    communication_protocols: Dict[str, 'CommunicationProtocol'] = {}
+    communication_protocols: dict[str, 'CommunicationProtocol'] = {}
 
     @abstractmethod
     async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:

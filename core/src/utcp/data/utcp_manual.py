@@ -6,7 +6,7 @@ between tool providers and clients for sharing available tools and their
 configurations.
 """
 
-from typing import List, Union
+from typing import List, Union, Optional, Any
 from pydantic import BaseModel, field_serializer, field_validator
 from utcp.python_specific_tooling.tool_decorator import ToolContext
 from utcp.python_specific_tooling.version import __version__
@@ -14,6 +14,8 @@ from utcp.data.tool import Tool
 from utcp.data.tool import ToolSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
+from utcp.plugins.plugin_loader import ensure_plugins_initialized
+import traceback
 
 class UtcpManual(BaseModel):
     """Standard format for tool provider responses during discovery.
@@ -56,8 +58,13 @@ class UtcpManual(BaseModel):
     manual_version: str = "1.0.0"
     tools: List[Tool]
 
+    def __init__(self, tools: List[Tool], manual_version: str = "1.0.0", utcp_version: str = __version__):
+        super().__init__(utcp_version=utcp_version, manual_version=manual_version, tools=tools)
+        """Initializes the UtcpManual, ensuring plugins are loaded."""
+        ensure_plugins_initialized()
+
     @staticmethod
-    def create_from_decorators(manual_version: str = "1.0.0", exclude: List[str] = []) -> "UtcpManual":
+    def create_from_decorators(manual_version: str = "1.0.0", exclude: Optional[List[str]] = None) -> "UtcpManual":
         """Create a UTCP manual from the global tool registry.
 
         Convenience method that creates a manual containing all tools
@@ -80,16 +87,18 @@ class UtcpManual(BaseModel):
             manual = UtcpManual.create_from_decorators(manual_version="1.2.0")
             ```
         """
+        if exclude is None:
+            exclude = []
         return UtcpManual(
+            tools=[tool for tool in ToolContext.get_tools() if tool.name not in exclude],
             manual_version=manual_version,
-            tools=[tool for tool in ToolContext.get_tools() if tool.name not in exclude]
         )
 
     @field_serializer("tools")
     def serialize_tools(self, tools: List[Tool]) -> List[dict]:
         return [ToolSerializer().to_dict(tool) for tool in tools]
 
-    @field_validator("tools")
+    @field_validator("tools", mode="before")
     @classmethod
     def validate_tools(cls, tools: List[Union[Tool, dict]]) -> List[Tool]:
         return [v if isinstance(v, Tool) else ToolSerializer().validate_dict(v) for v in tools]
@@ -105,4 +114,4 @@ class UtcpManualSerializer(Serializer[UtcpManual]):
         try:
             return UtcpManual.model_validate(data)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid UtcpManual: " + str(e))
+            raise UtcpSerializerValidationError("Invalid UtcpManual: " + traceback.format_exc()) from e

@@ -1,11 +1,13 @@
 from pydantic import BaseModel, Field, field_serializer, field_validator
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Dict, Union, Any
 from utcp.data.variable_loader import VariableLoader, VariableLoaderSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
-from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
-from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository, ConcurrentToolRepositoryConfigSerializer
+from utcp.interfaces.tool_search_strategy import ToolSearchStrategy, ToolSearchStrategyConfigSerializer
 from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.interfaces.tool_post_processor import ToolPostProcessor, ToolPostProcessorConfigSerializer
+import traceback
 
 class UtcpClientConfig(BaseModel):
     """Configuration model for UTCP client setup.
@@ -33,37 +35,78 @@ class UtcpClientConfig(BaseModel):
         config = UtcpClientConfig(
             variables={"MANUAL__NAME_API_KEY_NAME": "$REMAPPED_API_KEY"},
             load_variables_from=[
-                VariableLoaderSerializer().validate_dict({"type": "dotenv", "env_file_path": ".env"})
+                VariableLoaderSerializer().validate_dict({"variable_loader_type": "dotenv", "env_file_path": ".env"})
             ],
-            tool_repository="in_memory",
-            tool_search_strategy="tag_and_description_word_match",
+            tool_repository={
+                "tool_repository_type": "in_memory"
+            },
+            tool_search_strategy={
+                "tool_search_strategy_type": "tag_and_description_word_match"
+            },
+            post_processing=[],
             manual_call_templates=[]
         )
         ```
     """
     variables: Optional[Dict[str, str]] = Field(default_factory=dict)
     load_variables_from: Optional[List[VariableLoader]] = None
-    tool_repository: str = ConcurrentToolRepository.default_repository
-    tool_search_strategy: str = ToolSearchStrategy.default_strategy
-    manual_call_templates: List[CallTemplate] = []
+    tool_repository: ConcurrentToolRepository = Field(default_factory=lambda: ConcurrentToolRepositoryConfigSerializer().validate_dict({"tool_repository_type": ConcurrentToolRepositoryConfigSerializer.default_repository}))
+    tool_search_strategy: ToolSearchStrategy = Field(default_factory=lambda: ToolSearchStrategyConfigSerializer().validate_dict({"tool_search_strategy_type": ToolSearchStrategyConfigSerializer.default_strategy}))
+    post_processing: List[ToolPostProcessor] = Field(default_factory=list)
+    manual_call_templates: List[CallTemplate] = Field(default_factory=list)
+
+    @field_serializer("tool_repository")
+    def serialize_tool_repository(self, v: ConcurrentToolRepository):
+        return ConcurrentToolRepositoryConfigSerializer().to_dict(v)
+
+    @field_validator("tool_repository", mode="before")
+    @classmethod
+    def validate_tool_repository(cls, v: Union[ConcurrentToolRepository, dict]):
+        if isinstance(v, ConcurrentToolRepository):
+            return v
+        return ConcurrentToolRepositoryConfigSerializer().validate_dict(v)
+
+    @field_serializer("tool_search_strategy")
+    def serialize_tool_search_strategy(self, v: ToolSearchStrategy):
+        return ToolSearchStrategyConfigSerializer().to_dict(v)
+
+    @field_validator("tool_search_strategy", mode="before")
+    @classmethod
+    def validate_tool_search_strategy(cls, v: Union[ToolSearchStrategy, dict]):
+        if isinstance(v, ToolSearchStrategy):
+            return v
+        return ToolSearchStrategyConfigSerializer().validate_dict(v)
 
     @field_serializer("load_variables_from")
-    def serialize_load_variables_from(cls, v: List[VariableLoader]):
-        return [VariableLoaderSerializer().to_dict(v) for v in v]
+    def serialize_load_variables_from(self, v: Optional[List[VariableLoader]]):
+        if v is None:
+            return None
+        return [VariableLoaderSerializer().to_dict(item) for item in v]
     
-    @field_validator("load_variables_from")
+    @field_validator("load_variables_from", mode="before")
     @classmethod
-    def validate_load_variables_from(cls, v: List[Union[VariableLoader, dict]]):
-        return [v if isinstance(v, VariableLoader) else VariableLoaderSerializer().validate_dict(v) for v in v]
+    def validate_load_variables_from(cls, v: Optional[List[Union[VariableLoader, dict]]]):
+        if v is None:
+            return None
+        return [item if isinstance(item, VariableLoader) else VariableLoaderSerializer().validate_dict(item) for item in v]
 
     @field_serializer("manual_call_templates")
-    def serialize_manual_call_templates(cls, v: List[CallTemplate]):
+    def serialize_manual_call_templates(self, v: List[CallTemplate]):
         return [CallTemplateSerializer().to_dict(v) for v in v]
     
-    @field_validator("manual_call_templates")
+    @field_validator("manual_call_templates", mode="before")
     @classmethod
     def validate_manual_call_templates(cls, v: List[Union[CallTemplate, dict]]):
         return [v if isinstance(v, CallTemplate) else CallTemplateSerializer().validate_dict(v) for v in v]
+
+    @field_serializer("post_processing")
+    def serialize_post_processing(self, v: List[ToolPostProcessor]):
+        return [ToolPostProcessorConfigSerializer().to_dict(v) for v in v]
+    
+    @field_validator("post_processing", mode="before")
+    @classmethod
+    def validate_post_processing(cls, v: List[Union[ToolPostProcessor, dict]]):
+        return [v if isinstance(v, ToolPostProcessor) else ToolPostProcessorConfigSerializer().validate_dict(v) for v in v]
 
 class UtcpClientConfigSerializer(Serializer[UtcpClientConfig]):
     def to_dict(self, obj: UtcpClientConfig) -> dict:
@@ -73,4 +116,4 @@ class UtcpClientConfigSerializer(Serializer[UtcpClientConfig]):
         try:
             return UtcpClientConfig.model_validate(data)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid UtcpClientConfig: " + str(e))
+            raise UtcpSerializerValidationError("Invalid UtcpClientConfig: " + traceback.format_exc()) from e

@@ -6,11 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "utcp-cli"
 version = "1.0.0"
 authors = [
-  { name = "Razvan-Ion Radulescu" },
-  { name = "Andrei-Stefan Ghiurtu" },
-  { name = "Juan Viera Garcia" },
-  { name = "Ali Raza" },
-  { name = "Ulugbek Isroilov" }
+  { name = "https://www.utcp.io/about" },
 ]
 description = "Universal Tool Calling Protocol (UTCP) client library for Python"
 readme = "README.md"
@@ -42,3 +38,6 @@ dev = [
 Homepage = "https://utcp.io"
 Source = "https://github.com/universal-tool-calling-protocol/python-utcp"
 Issues = "https://github.com/universal-tool-calling-protocol/python-utcp/issues"
+
+[project.entry-points."utcp.plugins"]
+cli = "utcp_cli:register"

@@ -32,7 +32,7 @@ def app():
     """Fixture for the aiohttp test application."""
     async def discover(request):
         execution_call_template = {
-            "type": "http_stream",
+            "call_template_type": "streamable_http",
             "name": "test-streamable-http-executor",
             "url": str(request.url.origin()) + "/stream-ndjson",
             "http_method": "GET",

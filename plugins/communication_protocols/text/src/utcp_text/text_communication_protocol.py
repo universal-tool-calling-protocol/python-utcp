@@ -16,6 +16,7 @@ from utcp.data.utcp_manual import UtcpManual, UtcpManualSerializer
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp_http.openapi_converter import OpenApiConverter
 from utcp_text.text_call_template import TextCallTemplate
+import traceback
 
 if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
@@ -24,7 +25,7 @@ class TextCommunicationProtocol(CommunicationProtocol):
     """Communication protocol for file-based UTCP manuals and tools."""
 
     def _log_info(self, message: str) -> None:
-        print(f"[TextCommunicationProtocol] {message}")
+        logging.info(f"[TextCommunicationProtocol] {message}")
 
     def _log_error(self, message: str) -> None:
         logging.error(f"[TextCommunicationProtocol Error] {message}")
@@ -72,20 +73,20 @@ class TextCommunicationProtocol(CommunicationProtocol):
             )
 
         except (json.JSONDecodeError, yaml.YAMLError) as e:
-            self._log_error(f"Failed to parse manual '{file_path}': {e}")
+            self._log_error(f"Failed to parse manual '{file_path}': {traceback.format_exc()}")
             return RegisterManualResult(
                 manual_call_template=manual_call_template,
                 manual=UtcpManual(tools=[]),
                 success=False,
-                errors=[str(e)],
+                errors=[traceback.format_exc()],
             )
         except Exception as e:
-            self._log_error(f"Unexpected error reading manual '{file_path}': {e}")
+            self._log_error(f"Unexpected error reading manual '{file_path}': {traceback.format_exc()}")
             return RegisterManualResult(
                 manual_call_template=manual_call_template,
                 manual=UtcpManual(tools=[]),
                 success=False,
-                errors=[str(e)],
+                errors=[traceback.format_exc()],
             )
 
     async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:

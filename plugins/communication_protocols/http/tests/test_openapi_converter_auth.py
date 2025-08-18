@@ -25,7 +25,7 @@ async def test_webscraping_ai_spec_conversion():
     # Check that all tools use HTTP call templates
     for tool in utcp_manual.tools:
         assert isinstance(tool.tool_call_template, HttpCallTemplate)
-        assert tool.tool_call_template.type == "http"
+        assert tool.tool_call_template.call_template_type == "http"
         assert tool.tool_call_template.http_method == "GET"
 
 

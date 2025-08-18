@@ -15,7 +15,7 @@ class GraphQLProvider(CallTemplate):
         header_fields: List of tool argument names to map to HTTP request headers.
     """
 
-    type: Literal["graphql"] = "graphql"
+    call_template_type: Literal["graphql"] = "graphql"
     url: str
     operation_type: Literal["query", "mutation", "subscription"] = "query"
     operation_name: Optional[str] = None

@@ -6,11 +6,11 @@ explicit tag matches receive higher scores than description word matches.
 """
 
 from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Literal
 from utcp.data.tool import Tool
 from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
 import re
-import asyncio
+from utcp.interfaces.serializer import Serializer
 
 class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
     """Tag and description word match search strategy for UTCP tools.
@@ -33,25 +33,11 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
     Attributes:
         description_weight: Weight multiplier for description matches (0.0-1.0).
     """
+    tool_search_strategy_type: Literal["tag_and_description_word_match"] = "tag_and_description_word_match"
+    description_weight: float = 1
+    tag_weight: float = 3
 
-    def __init__(self, description_weight: float = 0.3):
-        """Initialize the tag and description word match search strategy.
-
-        Args:
-            description_weight: Weight for description word matches relative to
-                tag matches. Should be between 0.0 and 1.0, where 1.0 gives
-                equal weight to tags and descriptions.
-
-        Raises:
-            ValueError: If description_weight is not between 0.0 and 1.0.
-        """
-        if not 0.0 <= description_weight <= 1.0:
-            raise ValueError("description_weight must be between 0.0 and 1.0")
-            
-        # Weight for description words vs explicit tags (explicit tags have weight of 1.0)
-        self.description_weight = description_weight
-
-    async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = []) -> List[Tool]:
+    async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = None) -> List[Tool]:
         """Search tools using tag and description matching.
 
         Implements a weighted scoring system that ranks tools based on how well
@@ -84,10 +70,10 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
         # Extract words from the query, filtering out non-word characters
         query_words = set(re.findall(r'\w+', query_lower))
         
-        # Get all tools (using asyncio to run the coroutine)
+        # Get all tools
         tools: List[Tool] = await tool_repository.get_tools()
 
-        if any_of_tags_required and len(any_of_tags_required) > 0:
+        if any_of_tags_required is not None and len(any_of_tags_required) > 0:
             tools = [tool for tool in tools if any(tag in tool.tags for tag in any_of_tags_required)]
         
         # Calculate scores for each tool
@@ -101,12 +87,14 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
                 tag_lower = tag.lower()
                 # Check if the tag appears in the query
                 if tag_lower in query_lower:
-                    score += 1.0
+                    score += self.tag_weight
+                    continue
                 # Also check if the tag words match query words
                 tag_words = set(re.findall(r'\w+', tag_lower))
                 for word in tag_words:
                     if word in query_words:
-                        score += self.description_weight  # Partial match for tag words
+                        score += self.tag_weight
+                        break
             
             # Score from description (with lower weight)
             if tool.description:
@@ -122,3 +110,13 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
         
         # Return up to 'limit' tools
         return sorted_tools[:limit]
+
+class TagAndDescriptionWordMatchStrategyConfigSerializer(Serializer[TagAndDescriptionWordMatchStrategy]):
+    def to_dict(self, obj: TagAndDescriptionWordMatchStrategy) -> dict:
+        return obj.model_dump()
+
+    def validate_dict(self, data: dict) -> TagAndDescriptionWordMatchStrategy:
+        try:
+            return TagAndDescriptionWordMatchStrategy.model_validate(data)
+        except Exception as e:
+            raise ValueError(f"Invalid configuration: {e}") from e

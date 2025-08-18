@@ -25,7 +25,7 @@ SAMPLE_SSE_EVENTS = [
 
 async def tools_handler(request):
     execution_call_template = {
-        "type": "sse",
+        "call_template_type": "sse",
         "name": "test-sse-call-template-executor",
         "url": str(request.url.origin()) + "/events",
         "http_method": "GET",

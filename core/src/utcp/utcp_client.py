@@ -13,15 +13,15 @@ Key Features:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Union, Optional, AsyncGenerator
+from typing import Dict, Any, List, Union, Optional, AsyncGenerator, TYPE_CHECKING
 
 from utcp.data.call_template import CallTemplate
 from utcp.data.tool import Tool
-from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
-from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
-from utcp.data.utcp_client_config import UtcpClientConfig
 from utcp.data.register_manual_response import RegisterManualResult
+from utcp.plugins.plugin_loader import ensure_plugins_initialized
 
+if TYPE_CHECKING:
+    from utcp.data.utcp_client_config import UtcpClientConfig
 
 class UtcpClient(ABC):
     """Abstract interface for UTCP client implementations.
@@ -39,17 +39,17 @@ class UtcpClient(ABC):
 
     def __init__(
         self,
+        config: 'UtcpClientConfig',
         root_dir: Optional[str] = None,
     ):
+        self.config = config
         self.root_dir = root_dir
 
     @classmethod
     async def create(
         cls,
         root_dir: Optional[str] = None,
-        config: Optional[Union[str, Dict[str, Any], UtcpClientConfig]] = None,
-        tool_repository: Optional[Union[str, ConcurrentToolRepository]] = None,
-        search_strategy: Optional[Union[str, ToolSearchStrategy]] = None
+        config: Optional[Union[str, Dict[str, Any], 'UtcpClientConfig']] = None,
     ) -> 'UtcpClient':
         """
         Create a new instance of UtcpClient.
@@ -63,12 +63,11 @@ class UtcpClient(ABC):
         Returns:
             A new instance of UtcpClient.
         """
+        ensure_plugins_initialized()
         from utcp.implementations.utcp_client_implementation import UtcpClientImplementation
         return await UtcpClientImplementation.create(
             root_dir=root_dir,
-            config=config,
-            tool_repository=tool_repository,
-            search_strategy=search_strategy
+            config=config
         )
     
     @abstractmethod

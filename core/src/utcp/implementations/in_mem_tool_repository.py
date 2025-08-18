@@ -5,6 +5,7 @@ from utcp.python_specific_tooling.async_rwlock import AsyncRWLock
 from utcp.data.call_template import CallTemplate
 from utcp.data.tool import Tool
 from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
+from utcp.interfaces.serializer import Serializer
 
 class InMemToolRepository(ConcurrentToolRepository):
     """Thread-safe in-memory implementation of `ConcurrentToolRepository`.
@@ -15,6 +16,7 @@ class InMemToolRepository(ConcurrentToolRepository):
     """
 
     def __init__(self):
+        super().__init__(tool_repository_type="in_memory")
         # RW lock to allow concurrent reads and exclusive writes
         self._rwlock = AsyncRWLock()
 
@@ -100,3 +102,12 @@ class InMemToolRepository(ConcurrentToolRepository):
     async def get_manual_call_templates(self) -> List[CallTemplate]:
         async with self._rwlock.read():
             return list(self._manual_call_templates.values())
+
+class InMemToolRepositoryConfigSerializer(Serializer[InMemToolRepository]):
+    def to_dict(self, obj: InMemToolRepository) -> dict:
+        return {
+            "tool_repository_type": obj.tool_repository_type,
+        }
+
+    def validate_dict(self, data: dict) -> InMemToolRepository:
+        return InMemToolRepository()

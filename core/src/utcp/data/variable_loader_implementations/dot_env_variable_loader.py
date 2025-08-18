@@ -1,9 +1,9 @@
 from utcp.data.variable_loader import VariableLoader
-from typing import Optional
+from typing import Optional, Literal
 from dotenv import dotenv_values
-from pydantic import Literal
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 
 class DotEnvVariableLoader(VariableLoader):
     """Environment file variable loader implementation.
@@ -21,7 +21,7 @@ class DotEnvVariableLoader(VariableLoader):
         api_key = loader.get("API_KEY")
         ```
     """
-    type: Literal["dotenv"] = "dotenv"
+    variable_loader_type: Literal["dotenv"] = "dotenv"
     env_file_path: str
 
     def get(self, key: str) -> Optional[str]:
@@ -43,4 +43,4 @@ class DotEnvVariableLoaderSerializer(Serializer[DotEnvVariableLoader]):
         try:
             return DotEnvVariableLoader.model_validate(data)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid DotEnvVariableLoader: " + str(e))
+            raise UtcpSerializerValidationError("Invalid DotEnvVariableLoader: " + traceback.format_exc()) from e

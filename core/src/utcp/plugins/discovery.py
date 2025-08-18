@@ -1,8 +1,9 @@
 from utcp.data.auth import Auth, AuthSerializer
 from utcp.data.variable_loader import VariableLoader, VariableLoaderSerializer
 from utcp.interfaces.serializer import Serializer
-from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
-from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository, ConcurrentToolRepositoryConfigSerializer
+from utcp.interfaces.tool_search_strategy import ToolSearchStrategy, ToolSearchStrategyConfigSerializer
+from utcp.interfaces.tool_post_processor import ToolPostProcessor, ToolPostProcessorConfigSerializer
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate, CallTemplateSerializer
 import sys
@@ -32,14 +33,20 @@ def register_communication_protocol(communication_protocol_type: str, communicat
     CommunicationProtocol.communication_protocols[communication_protocol_type] = communication_protocol
     return True
 
-def register_tool_repository(tool_repository_name: str, tool_repository: ConcurrentToolRepository, override: bool = False) -> bool:
-    if not override and tool_repository_name in ConcurrentToolRepository.tool_repository_implementations:
+def register_tool_repository(tool_repository_type: str, tool_repository: Serializer[ConcurrentToolRepository], override: bool = False) -> bool:
+    if not override and tool_repository_type in ConcurrentToolRepositoryConfigSerializer.tool_repository_implementations:
         return False
-    ConcurrentToolRepository.tool_repository_implementations[tool_repository_name] = tool_repository
+    ConcurrentToolRepositoryConfigSerializer.tool_repository_implementations[tool_repository_type] = tool_repository
     return True
 
-def register_tool_search_strategy(strategy_name: str, strategy: ToolSearchStrategy, override: bool = False) -> bool:
-    if not override and strategy_name in ToolSearchStrategy.tool_search_strategy_implementations:
+def register_tool_search_strategy(strategy_type: str, strategy: Serializer[ToolSearchStrategy], override: bool = False) -> bool:
+    if not override and strategy_type in ToolSearchStrategyConfigSerializer.tool_search_strategy_implementations:
         return False
-    ToolSearchStrategy.tool_search_strategy_implementations[strategy_name] = strategy
+    ToolSearchStrategyConfigSerializer.tool_search_strategy_implementations[strategy_type] = strategy
+    return True
+
+def register_tool_post_processor(tool_post_processor_type: str, tool_post_processor: Serializer[ToolPostProcessor], override: bool = False) -> bool:
+    if not override and tool_post_processor_type in ToolPostProcessorConfigSerializer.tool_post_processor_implementations:
+        return False
+    ToolPostProcessorConfigSerializer.tool_post_processor_implementations[tool_post_processor_type] = tool_post_processor
     return True

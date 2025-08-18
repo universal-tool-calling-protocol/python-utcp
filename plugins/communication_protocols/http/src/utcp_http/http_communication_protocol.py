@@ -18,6 +18,7 @@ import json
 import yaml
 import base64
 import re
+import traceback
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate
@@ -30,6 +31,7 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 import logging
+from utcp_http.openapi_converter import OpenApiConverter
 
 class HttpCommunicationProtocol(CommunicationProtocol):
     """HTTP communication protocol implementation for UTCP client.
@@ -184,10 +186,8 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                             utcp_manual = UtcpManualSerializer().validate_dict(response_data)
                         else:
                             logging.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
-                            # TODO: For now, we'll create an empty manual - OpenAPI conversion needs to be updated separately
-                            # converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, provider_name=manual_call_template.name)
-                            # utcp_manual = converter.convert()
-                            utcp_manual = UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[])
+                            converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, call_template_name=manual_call_template.name)
+                            utcp_manual = converter.convert()
                         
                         return RegisterManualResult(
                             success=True,
@@ -214,7 +214,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                         errors=[error_msg]
                     )
         except Exception as e:
-            error_msg = f"Unexpected error discovering tools from HTTP provider '{manual_call_template.name}': {e}"
+            error_msg = f"Unexpected error discovering tools from HTTP provider '{manual_call_template.name}': {traceback.format_exc()}"
             logging.error(error_msg)
             return RegisterManualResult(
                 success=False,

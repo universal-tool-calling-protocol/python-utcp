@@ -20,7 +20,7 @@ async def app():
     async def tools_handler(request):
         # The execution call template points to the /tool endpoint
         execution_call_template = {
-            "type": "http",
+            "call_template_type": "http",
             "name": "test-http-call-template-executor",
             "url": str(request.url.origin()) + "/tool",
             "http_method": "GET"

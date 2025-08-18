@@ -9,8 +9,12 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict
 from utcp.data.tool import Tool
 from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
+from utcp.interfaces.serializer import Serializer
+from pydantic import BaseModel
+from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 
-class ToolSearchStrategy(ABC):
+class ToolSearchStrategy(ABC, BaseModel):
     """Abstract interface for tool search implementations.
 
     Defines the contract for tool search strategies that can be plugged into
@@ -24,11 +28,10 @@ class ToolSearchStrategy(ABC):
     - Limiting results appropriately
     - Providing consistent search behavior
     """
-    tool_search_strategy_implementations: Dict[str, 'ToolSearchStrategy'] = {}
-    default_strategy = "tag_and_description_word_match"
+    tool_search_strategy_type: str
 
     @abstractmethod
-    async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = []) -> List[Tool]:
+    async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = None) -> List[Tool]:
         """Search for tools relevant to the query.
 
         Executes a search against the available tools and returns the most
@@ -52,3 +55,18 @@ class ToolSearchStrategy(ABC):
             RuntimeError: If the search operation fails unexpectedly.
         """
         pass
+
+class ToolSearchStrategyConfigSerializer(Serializer[ToolSearchStrategy]):
+    tool_search_strategy_implementations: Dict[str, Serializer['ToolSearchStrategy']] = {}
+    default_strategy = "tag_and_description_word_match"
+
+    def to_dict(self, obj: ToolSearchStrategy) -> dict:
+        return ToolSearchStrategyConfigSerializer.tool_search_strategy_implementations[obj.tool_search_strategy_type].to_dict(obj)
+
+    def validate_dict(self, data: dict) -> ToolSearchStrategy:
+        try:
+            return ToolSearchStrategyConfigSerializer.tool_search_strategy_implementations[data['tool_search_strategy_type']].validate_dict(data)
+        except KeyError:
+            raise ValueError(f"Invalid tool search strategy type: {data['tool_search_strategy_type']}")
+        except Exception as e:
+            raise UtcpSerializerValidationError("Invalid ToolSearchStrategy: " + traceback.format_exc()) from e

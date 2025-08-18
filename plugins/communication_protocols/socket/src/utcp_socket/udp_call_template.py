@@ -25,7 +25,7 @@ class UDPProvider(CallTemplate):
         auth: Always None - UDP providers don't support authentication.
     """
 
-    type: Literal["udp"] = "udp"
+    call_template_type: Literal["udp"] = "udp"
     host: str
     port: int
     number_of_response_datagrams: int = 1

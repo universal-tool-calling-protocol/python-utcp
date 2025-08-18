@@ -4,7 +4,7 @@ from pydantic import Field
 from utcp.data.call_template import CallTemplate
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
-
+import traceback
 
 class CliCallTemplate(CallTemplate):
     """Call template configuration for Command Line Interface tools.
@@ -20,7 +20,7 @@ class CliCallTemplate(CallTemplate):
         auth: Always None - CLI providers don't support authentication.
     """
 
-    type: Literal["cli"] = "cli"
+    call_template_type: Literal["cli"] = "cli"
     command_name: str
     env_vars: Optional[Dict[str, str]] = Field(
         default=None, description="Environment variables to set when executing the command"
@@ -41,4 +41,4 @@ class CliCallTemplateSerializer(Serializer[CliCallTemplate]):
         try:
             return CliCallTemplate.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid CliCallTemplate: " + str(e)) from e
+            raise UtcpSerializerValidationError("Invalid CliCallTemplate: " + traceback.format_exc()) from e

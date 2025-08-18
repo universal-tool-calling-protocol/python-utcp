@@ -26,11 +26,15 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[dev]"
+        pip install -e "core[dev]"
+        pip install -e plugins/communication_protocols/cli[dev]
+        pip install -e plugins/communication_protocols/http[dev]
+        pip install -e plugins/communication_protocols/mcp[dev]
+        pip install -e plugins/communication_protocols/text[dev]
 
     - name: Run tests with pytest
       run: |
-        pytest tests/ --doctest-modules --junitxml=junit/test-results.xml --cov=src/utcp --cov-report=xml --cov-report=html
+        pytest core/tests/ plugins/communication_protocols/cli/tests/ plugins/communication_protocols/http/tests/ plugins/communication_protocols/mcp/tests/ plugins/communication_protocols/text/tests/ --doctest-modules --junitxml=junit/test-results.xml --cov=core/src/utcp --cov-report=xml --cov-report=html
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3

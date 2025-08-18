@@ -3,6 +3,7 @@ from utcp.interfaces.serializer import Serializer
 from pydantic import Field
 from typing import Literal
 from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 
 class ApiKeyAuth(Auth):
     """Authentication using an API key.
@@ -37,4 +38,4 @@ class ApiKeyAuthSerializer(Serializer[ApiKeyAuth]):
         try:
             return ApiKeyAuth.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid ApiKeyAuth: " + str(e))
+            raise UtcpSerializerValidationError("Invalid ApiKeyAuth: " + traceback.format_exc()) from e

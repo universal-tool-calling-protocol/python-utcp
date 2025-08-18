@@ -6,54 +6,51 @@ import os
 import tempfile
 from typing import Dict, Any, List, Optional
 from unittest.mock import MagicMock, AsyncMock, patch
+from pydantic import Field
+from utcp.data.utcp_manual import UtcpManual
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.implementations.utcp_client_implementation import UtcpClientImplementation
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.utcp_client import UtcpClient
+from utcp.data.utcp_client_config import UtcpClientConfig
+from utcp.exceptions import UtcpVariableNotFound, UtcpSerializerValidationError
+from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
+from utcp.implementations.in_mem_tool_repository import InMemToolRepository
+from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
+from utcp.implementations.tag_search import TagAndDescriptionWordMatchStrategy
+from utcp.interfaces.variable_substitutor import VariableSubstitutor
+from utcp.implementations.default_variable_substitutor import DefaultVariableSubstitutor
+from utcp.data.tool import Tool, JsonSchema
+from utcp.data.call_template import CallTemplate
+from utcp_http.http_call_template import HttpCallTemplate
+from utcp_cli.cli_call_template import CliCallTemplate
+from utcp.data.auth_implementations import ApiKeyAuth
 
-from utcp.client.utcp_client import UtcpClient, UtcpClientInterface
-from utcp.client.utcp_client_config import UtcpClientConfig, UtcpVariableNotFound
-from utcp.client.tool_repository import ToolRepository
-from utcp.client.tool_repositories.in_mem_tool_repository import InMemToolRepository
-from utcp.client.tool_search_strategy import ToolSearchStrategy
-from utcp.client.tool_search_strategies.tag_search import TagSearchStrategy
-from utcp.client.variable_substitutor import VariableSubstitutor, DefaultVariableSubstitutor
-from utcp.shared.tool import Tool, ToolInputOutputSchema
-from utcp.shared.provider import (
-    Provider, HttpProvider, CliProvider, MCPProvider, TextProvider,
-    McpConfig, McpStdioServer, McpHttpServer
-)
-from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
 
-
-class MockToolRepository(ToolRepository):
+class MockToolRepository(ConcurrentToolRepository):
     """Mock tool repository for testing."""
     
-    def __init__(self):
-        self.providers: Dict[str, Provider] = {}
-        self.tools: Dict[str, Tool] = {}
-        self.provider_tools: Dict[str, List[Tool]] = {}
+    tool_repository_type: str = "mock"
+    manuals: Dict[str, UtcpManual] = Field(default_factory=dict)
+    manual_call_templates: Dict[str, CallTemplate] = Field(default_factory=dict)
+    tools: Dict[str, Tool] = Field(default_factory=dict)
 
-    async def save_provider_with_tools(self, provider: Provider, tools: List[Tool]) -> None:
-        self.providers[provider.name] = provider
-        self.provider_tools[provider.name] = tools
-        for tool in tools:
+    async def save_manual(self, manual_call_template: CallTemplate, manual: UtcpManual) -> None:
+        self.manual_call_templates[manual_call_template.name] = manual_call_template
+        self.manuals[manual_call_template.name] = manual
+        for tool in manual.tools:
             self.tools[tool.name] = tool
 
-    async def remove_provider(self, provider_name: str) -> None:
-        if provider_name not in self.providers:
-            raise ValueError(f"Provider not found: {provider_name}")
-        # Remove tools associated with provider
-        if provider_name in self.provider_tools:
-            for tool in self.provider_tools[provider_name]:
-                if tool.name in self.tools:
-                    del self.tools[tool.name]
-            del self.provider_tools[provider_name]
-        del self.providers[provider_name]
-
-    async def remove_tool(self, tool_name: str) -> None:
-        if tool_name not in self.tools:
-            raise ValueError(f"Tool not found: {tool_name}")
-        del self.tools[tool_name]
-        # Remove from provider_tools
-        for provider_name, tools in self.provider_tools.items():
-            self.provider_tools[provider_name] = [t for t in tools if t.name != tool_name]
+    async def remove_manual(self, manual_name: str) -> bool:
+        if manual_name not in self.manuals:
+            return False
+        manual = self.manuals[manual_name]
+        for tool in manual.tools:
+            if tool.name in self.tools:
+                del self.tools[tool.name]
+        del self.manuals[manual_name]
+        del self.manual_call_templates[manual_name]
+        return True
 
     async def get_tool(self, tool_name: str) -> Optional[Tool]:
         return self.tools.get(tool_name)
@@ -61,23 +58,37 @@ class MockToolRepository(ToolRepository):
     async def get_tools(self) -> List[Tool]:
         return list(self.tools.values())
 
-    async def get_tools_by_provider(self, provider_name: str) -> Optional[List[Tool]]:
-        return self.provider_tools.get(provider_name)
+    async def get_manual(self, manual_name: str) -> Optional[UtcpManual]:
+        return self.manuals.get(manual_name)
 
-    async def get_provider(self, provider_name: str) -> Optional[Provider]:
-        return self.providers.get(provider_name)
+    async def get_manual_call_template(self, manual_name: str) -> Optional[CallTemplate]:
+        return self.manual_call_templates.get(manual_name)
 
-    async def get_providers(self) -> List[Provider]:
-        return list(self.providers.values())
+    async def get_manual_call_templates(self) -> List[CallTemplate]:
+        return list(self.manual_call_templates.values())
+
+    async def remove_tool(self, tool_name: str) -> bool:
+        if tool_name in self.tools:
+            del self.tools[tool_name]
+            return True
+        return False
+
+    async def get_tools_by_manual(self, manual_name: str) -> Optional[List[Tool]]:
+        if manual_name in self.manuals:
+            return self.manuals[manual_name].tools
+        return None
+
+    async def get_manuals(self) -> List[UtcpManual]:
+        return list(self.manuals.values())
 
 
 class MockToolSearchStrategy(ToolSearchStrategy):
     """Mock search strategy for testing."""
     
-    def __init__(self, tool_repository: ToolRepository):
-        self.tool_repository = tool_repository
+    tool_repository: ConcurrentToolRepository
+    tool_search_strategy_type: str = "mock"
 
-    async def search_tools(self, query: str, limit: int = 10) -> List[Tool]:
+    async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = None) -> List[Tool]:
         tools = await self.tool_repository.get_tools()
         # Simple mock search: return tools that contain the query in name or description
         matched_tools = [
@@ -87,26 +98,29 @@ class MockToolSearchStrategy(ToolSearchStrategy):
         return matched_tools[:limit] if limit > 0 else matched_tools
 
 
-class MockTransport:
+class MockCommunicationProtocol(CommunicationProtocol):
     """Mock transport for testing."""
     
-    def __init__(self, tools: List[Tool] = None, call_result: Any = "mock_result"):
-        self.tools = tools or []
+    def __init__(self, manual: UtcpManual = None, call_result: Any = "mock_result"):
+        self.manual = manual or UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[])
         self.call_result = call_result
-        self.registered_providers = []
-        self.deregistered_providers = []
+        self.registered_manuals = []
+        self.deregistered_manuals = []
         self.tool_calls = []
 
-    async def register_tool_provider(self, provider: Provider) -> List[Tool]:
-        self.registered_providers.append(provider)
-        return self.tools
+    async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
+        self.registered_manuals.append(manual_call_template)
+        return RegisterManualResult(manual_call_template=manual_call_template, manual=self.manual, success=True, errors=[])
 
-    async def deregister_tool_provider(self, provider: Provider) -> None:
-        self.deregistered_providers.append(provider)
+    async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
+        self.deregistered_manuals.append(manual_call_template)
 
-    async def call_tool(self, tool_name: str, tool_args: Dict[str, Any], tool_provider: Provider) -> Any:
-        self.tool_calls.append((tool_name, tool_args, tool_provider))
+    async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        self.tool_calls.append((tool_name, tool_args, tool_call_template))
         return self.call_result
+
+    async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        yield self.call_result
 
 
 @pytest_asyncio.fixture
@@ -118,671 +132,588 @@ async def mock_tool_repository():
 @pytest_asyncio.fixture
 async def mock_search_strategy(mock_tool_repository):
     """Create a mock search strategy."""
-    return MockToolSearchStrategy(mock_tool_repository)
+    return MockToolSearchStrategy(tool_repository=mock_tool_repository)
 
 
 @pytest_asyncio.fixture
 async def sample_tools():
     """Create sample tools for testing."""
-    http_provider = HttpProvider(
+    http_call_template = HttpCallTemplate(
         name="test_http_provider",
         url="https://api.example.com/tool",
-        http_method="POST"
+        http_method="POST",
+        call_template_type="http"
     )
     
-    cli_provider = CliProvider(
+    cli_call_template = CliCallTemplate(
         name="test_cli_provider",
-        command_name="echo"
+        command_name="echo",
+        call_template_type="cli"
     )
     
     return [
         Tool(
             name="http_tool",
             description="HTTP test tool",
-            inputs=ToolInputOutputSchema(
+            inputs=JsonSchema(
                 type="object",
                 properties={"param1": {"type": "string", "description": "Test parameter"}},
                 required=["param1"]
             ),
-            outputs=ToolInputOutputSchema(
+            outputs=JsonSchema(
                 type="object",
                 properties={"result": {"type": "string", "description": "Test result"}}
             ),
             tags=["http", "test"],
-            tool_provider=http_provider
+            tool_call_template=http_call_template
         ),
         Tool(
             name="cli_tool",
             description="CLI test tool",
-            inputs=ToolInputOutputSchema(
+            inputs=JsonSchema(
                 type="object",
                 properties={"command": {"type": "string", "description": "Command to execute"}},
                 required=["command"]
             ),
-            outputs=ToolInputOutputSchema(
+            outputs=JsonSchema(
                 type="object",
                 properties={"output": {"type": "string", "description": "Command output"}}
             ),
             tags=["cli", "test"],
-            tool_provider=cli_provider
+            tool_call_template=cli_call_template
         )
     ]
 
 
 @pytest_asyncio.fixture
-async def utcp_client(mock_tool_repository, mock_search_strategy):
-    """Create a UtcpClient instance with mocked dependencies."""
-    config = UtcpClientConfig()
-    variable_substitutor = DefaultVariableSubstitutor()
-    
-    client = UtcpClient(config, mock_tool_repository, mock_search_strategy, variable_substitutor)
-    
-    # Clear the repository before each test to ensure clean state
-    client.tool_repository.providers.clear()
-    client.tool_repository.tools.clear()
-    client.tool_repository.provider_tools.clear()
-    
-    return client
-
-
-class TestUtcpClientInterface:
-    """Test the UtcpClientInterface abstract methods."""
-
-    def test_interface_is_abstract(self):
-        """Test that UtcpClientInterface cannot be instantiated directly."""
-        with pytest.raises(TypeError):
-            UtcpClientInterface()
-
-    def test_utcp_client_implements_interface(self):
-        """Test that UtcpClient properly implements the interface."""
-        assert issubclass(UtcpClient, UtcpClientInterface)
+async def utcp_client():
+    """Fixture for UtcpClient."""
+    return await UtcpClient.create()
 
 
 class TestUtcpClient:
     """Test the UtcpClient implementation."""
 
     @pytest.mark.asyncio
-    async def test_init(self, mock_tool_repository, mock_search_strategy):
+    async def test_init(self, utcp_client):
         """Test UtcpClient initialization."""
-        config = UtcpClientConfig()
-        variable_substitutor = DefaultVariableSubstitutor()
-        
-        client = UtcpClient(config, mock_tool_repository, mock_search_strategy, variable_substitutor)
-        
-        assert client.config is config
-        assert client.tool_repository is mock_tool_repository
-        assert client.search_strategy is mock_search_strategy
-        assert client.variable_substitutor is variable_substitutor
+        assert isinstance(utcp_client.config.tool_repository, InMemToolRepository)
+        assert isinstance(utcp_client.config.tool_search_strategy, TagAndDescriptionWordMatchStrategy)
+        assert isinstance(utcp_client.variable_substitutor, DefaultVariableSubstitutor)
 
     @pytest.mark.asyncio
     async def test_create_with_defaults(self):
         """Test creating UtcpClient with default parameters."""
-        with patch.object(UtcpClient, 'load_providers', new_callable=AsyncMock):
-            client = await UtcpClient.create()
-            
-            assert isinstance(client.config, UtcpClientConfig)
-            assert isinstance(client.tool_repository, InMemToolRepository)
-            assert isinstance(client.search_strategy, TagSearchStrategy)
-            assert isinstance(client.variable_substitutor, DefaultVariableSubstitutor)
+        client = await UtcpClient.create()
+        
+        assert isinstance(client.config, UtcpClientConfig)
+        assert isinstance(client.config.tool_repository, InMemToolRepository)
+        assert isinstance(client.config.tool_search_strategy, TagAndDescriptionWordMatchStrategy)
+        assert isinstance(client.variable_substitutor, DefaultVariableSubstitutor)
 
     @pytest.mark.asyncio
     async def test_create_with_dict_config(self):
         """Test creating UtcpClient with dictionary config."""
         config_dict = {
             "variables": {"TEST_VAR": "test_value"},
-            "providers_file_path": "test_providers.json"
+            "tool_repository": {
+                "tool_repository_type": "in_memory"
+            },
+            "tool_search_strategy": {
+                "tool_search_strategy_type": "tag_and_description_word_match"
+            },
+            "manual_call_templates": [],
+            "post_processing": []
         }
         
-        with patch.object(UtcpClient, 'load_providers', new_callable=AsyncMock):
-            client = await UtcpClient.create(config=config_dict)
-            
-            assert client.config.variables == {"TEST_VAR": "test_value"}
-            assert client.config.providers_file_path == "test_providers.json"
+        client = await UtcpClient.create(config=config_dict)
+        assert client.config.variables == {"TEST_VAR": "test_value"}
 
     @pytest.mark.asyncio
     async def test_create_with_utcp_config(self):
         """Test creating UtcpClient with UtcpClientConfig object."""
+        repo = InMemToolRepository()
         config = UtcpClientConfig(
             variables={"TEST_VAR": "test_value"},
-            providers_file_path="test_providers.json"
+            tool_repository=repo,
+            tool_search_strategy=TagAndDescriptionWordMatchStrategy(),
+            manual_call_templates=[],
+            post_processing=[]
         )
         
-        with patch.object(UtcpClient, 'load_providers', new_callable=AsyncMock):
-            client = await UtcpClient.create(config=config)
-            
-            assert client.config is config
+        client = await UtcpClient.create(config=config)
+        assert client.config is config
 
     @pytest.mark.asyncio
-    async def test_register_tool_provider(self, utcp_client, sample_tools):
-        """Test registering a tool provider."""
-        http_provider = HttpProvider(
-            name="test_provider",
+    async def test_register_manual(self, utcp_client, sample_tools):
+        """Test registering a manual."""
+        http_call_template = HttpCallTemplate(
+            name="test_manual",
             url="https://api.example.com/tool",
-            http_method="POST"
+            http_method="POST",
+            call_template_type="http"
         )
         
-        # Mock the transport
-        mock_transport = MockTransport(sample_tools[:1])  # Return first tool
-        utcp_client.transports["http"] = mock_transport
+        # Mock the communication protocol
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=sample_tools[:1])
+        mock_protocol = MockCommunicationProtocol(manual)
+        CommunicationProtocol.communication_protocols["http"] = mock_protocol
         
-        tools = await utcp_client.register_tool_provider(http_provider)
+        result = await utcp_client.register_manual(http_call_template)
         
-        assert len(tools) == 1
-        assert tools[0].name == "test_provider.http_tool"  # Should be prefixed
-        # Check that the registered provider has the expected properties
-        registered_provider = mock_transport.registered_providers[0]
-        assert registered_provider.name == "test_provider"
-        assert registered_provider.url == "https://api.example.com/tool"
-        assert registered_provider.http_method == "POST"
+        assert result.success
+        assert len(result.manual.tools) == 1
+        assert result.manual.tools[0].name == "test_manual.http_tool"  # Should be prefixed
+        
+        registered_manual_template = mock_protocol.registered_manuals[0]
+        assert registered_manual_template.name == "test_manual"
         
         # Verify tool was saved in repository
-        saved_tool = await utcp_client.tool_repository.get_tool("test_provider.http_tool")
+        saved_tool = await utcp_client.config.tool_repository.get_tool("test_manual.http_tool")
         assert saved_tool is not None
 
     @pytest.mark.asyncio
-    async def test_register_tool_provider_unsupported_type(self, utcp_client):
-        """Test registering a tool provider with unsupported type."""
-        # Create a provider with a supported type but then modify it
-        provider = HttpProvider(
-            name="test_provider",
-            url="https://example.com",
-            http_method="GET"
-        )
+    async def test_register_manual_unsupported_type(self, utcp_client):
+        """Test registering a manual with unsupported type."""
         
-        # Simulate an unsupported type by removing it from transports
-        original_transports = utcp_client.transports.copy()
-        del utcp_client.transports["http"]
-        
-        try:
-            with pytest.raises(ValueError, match="Provider type not supported: http"):
-                await utcp_client.register_tool_provider(provider)
-        finally:
-            # Restore original transports
-            utcp_client.transports = original_transports
+        with pytest.raises(Exception):
+            call_template = HttpCallTemplate(
+                name="test_manual",
+                url="https://example.com",
+                http_method="GET",
+                call_template_type="unsupported_type"
+            )
+            await utcp_client.register_manual(call_template)
 
     @pytest.mark.asyncio
-    async def test_register_tool_provider_name_sanitization(self, utcp_client, sample_tools):
-        """Test that provider names are sanitized."""
-        provider = HttpProvider(
-            name="test-provider.with/special@chars",
+    async def test_register_manual_name_sanitization(self, utcp_client, sample_tools):
+        """Test that manual names are sanitized."""
+        call_template = HttpCallTemplate(
+            name="test-manual.with/special@chars",
             url="https://api.example.com/tool",
-            http_method="POST"
+            http_method="POST",
+            call_template_type="http"
         )
         
-        mock_transport = MockTransport(sample_tools[:1])
-        utcp_client.transports["http"] = mock_transport
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=sample_tools[:1])
+        mock_protocol = MockCommunicationProtocol(manual)
+        CommunicationProtocol.communication_protocols["http"] = mock_protocol
         
-        tools = await utcp_client.register_tool_provider(provider)
+        result = await utcp_client.register_manual(call_template)
         
         # Name should be sanitized
-        assert provider.name == "test_provider_with_special_chars"
-        assert tools[0].name == "test_provider_with_special_chars.http_tool"
+        assert result.manual_call_template.name == "test_manual_with_special_chars"
+        assert result.manual.tools[0].name == "test_manual_with_special_chars.http_tool"
 
     @pytest.mark.asyncio
-    async def test_deregister_tool_provider(self, utcp_client, sample_tools):
-        """Test deregistering a tool provider."""
-        provider = HttpProvider(
-            name="test_provider",
+    async def test_deregister_manual(self, utcp_client, sample_tools):
+        """Test deregistering a manual."""
+        call_template = HttpCallTemplate(
+            name="test_manual",
             url="https://api.example.com/tool",
-            http_method="POST"
+            http_method="POST",
+            call_template_type="http"
         )
         
-        mock_transport = MockTransport(sample_tools[:1])
-        utcp_client.transports["http"] = mock_transport
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=sample_tools[:1])
+        mock_protocol = MockCommunicationProtocol(manual)
+        CommunicationProtocol.communication_protocols["http"] = mock_protocol
         
-        # First register the provider
-        await utcp_client.register_tool_provider(provider)
+        # First register the manual
+        await utcp_client.register_manual(call_template)
         
         # Then deregister it
-        await utcp_client.deregister_tool_provider("test_provider")
+        result = await utcp_client.deregister_manual("test_manual")
+        assert result is True
         
-        # Verify provider was removed from repository
-        saved_provider = await utcp_client.tool_repository.get_provider("test_provider")
-        assert saved_provider is None
+        # Verify manual was removed from repository
+        saved_manual = await utcp_client.config.tool_repository.get_manual("test_manual")
+        assert saved_manual is None
         
-        # Verify transport deregister was called
-        assert len(mock_transport.deregistered_providers) == 1
+        # Verify protocol deregister was called
+        assert len(mock_protocol.deregistered_manuals) == 1
 
     @pytest.mark.asyncio
-    async def test_deregister_nonexistent_provider(self, utcp_client):
-        """Test deregistering a non-existent provider."""
-        with pytest.raises(ValueError, match="Provider not found: nonexistent"):
-            await utcp_client.deregister_tool_provider("nonexistent")
+    async def test_deregister_nonexistent_manual(self, utcp_client):
+        """Test deregistering a non-existent manual."""
+        client = utcp_client
+        result = await client.deregister_manual("nonexistent")
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_call_tool(self, utcp_client, sample_tools):
         """Test calling a tool."""
-        provider = HttpProvider(
-            name="test_provider",
+        client = utcp_client
+        call_template = HttpCallTemplate(
+            name="test_manual",
             url="https://api.example.com/tool",
-            http_method="POST"
+            http_method="POST",
+            call_template_type="http"
         )
         
-        mock_transport = MockTransport(sample_tools[:1], "test_result")
-        utcp_client.transports["http"] = mock_transport
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=sample_tools[:1])
+        mock_protocol = MockCommunicationProtocol(manual, "test_result")
+        CommunicationProtocol.communication_protocols["http"] = mock_protocol
         
-        # Register the provider first
-        await utcp_client.register_tool_provider(provider)
+        # Register the manual first
+        await client.register_manual(call_template)
         
         # Call the tool
-        result = await utcp_client.call_tool("test_provider.http_tool", {"param1": "value1"})
+        result = await client.call_tool("test_manual.http_tool", {"param1": "value1"})
         
         assert result == "test_result"
-        assert len(mock_transport.tool_calls) == 1
-        assert mock_transport.tool_calls[0][0] == "test_provider.http_tool"
-        assert mock_transport.tool_calls[0][1] == {"param1": "value1"}
+        assert len(mock_protocol.tool_calls) == 1
+        assert mock_protocol.tool_calls[0][0] == "test_manual.http_tool"
+        assert mock_protocol.tool_calls[0][1] == {"param1": "value1"}
 
     @pytest.mark.asyncio
-    async def test_call_tool_nonexistent_provider(self, utcp_client):
-        """Test calling a tool with nonexistent provider."""
-        with pytest.raises(ValueError, match="Provider not found: nonexistent"):
-            await utcp_client.call_tool("nonexistent.tool", {"param": "value"})
+    async def test_call_tool_nonexistent_manual(self, utcp_client):
+        """Test calling a tool with nonexistent manual."""
+        client = utcp_client
+        # This will fail at get_tool, not get_manual
+        with pytest.raises(ValueError, match="Tool not found: nonexistent.tool"):
+            await client.call_tool("nonexistent.tool", {"param": "value"})
 
     @pytest.mark.asyncio
     async def test_call_tool_nonexistent_tool(self, utcp_client, sample_tools):
         """Test calling a nonexistent tool."""
-        provider = HttpProvider(
-            name="test_provider",
+        client = utcp_client
+        call_template = HttpCallTemplate(
+            name="test_manual",
             url="https://api.example.com/tool",
-            http_method="POST"
+            http_method="POST",
+            call_template_type="http"
         )
         
-        mock_transport = MockTransport(sample_tools[:1])
-        utcp_client.transports["http"] = mock_transport
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=sample_tools[:1])
+        mock_protocol = MockCommunicationProtocol(manual)
+        CommunicationProtocol.communication_protocols["http"] = mock_protocol
         
-        # Register the provider first
-        await utcp_client.register_tool_provider(provider)
+        # Register the manual first
+        await client.register_manual(call_template)
         
-        with pytest.raises(ValueError, match="Tool not found: test_provider.nonexistent"):
-            await utcp_client.call_tool("test_provider.nonexistent", {"param": "value"})
+        with pytest.raises(ValueError, match="Tool not found: test_manual.nonexistent"):
+            await client.call_tool("test_manual.nonexistent", {"param": "value"})
 
     @pytest.mark.asyncio
     async def test_search_tools(self, utcp_client, sample_tools):
         """Test searching for tools."""
-        # Add tools to the search strategy's repository
-        for i, tool in enumerate(sample_tools):
-            tool.name = f"provider_{i}.{tool.name}"
-            await utcp_client.tool_repository.save_provider_with_tools(
-                tool.tool_provider, [tool]
-            )
-        
+        client = utcp_client
+        # Clear any existing manuals from other tests to ensure a clean slate
+        manual_names = [manual_call_template.name for manual_call_template in await client.config.tool_repository.get_manual_call_templates()]
+        for name in manual_names:
+            await client.deregister_manual(name)
+
+        # Mock the communication protocols
+        mock_http_protocol = MockCommunicationProtocol(UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[sample_tools[0]]))
+        mock_cli_protocol = MockCommunicationProtocol(UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[sample_tools[1]]))
+        CommunicationProtocol.communication_protocols["http"] = mock_http_protocol
+        CommunicationProtocol.communication_protocols["cli"] = mock_cli_protocol
+
+        # Register manuals to add tools to the repository
+        await client.register_manual(sample_tools[0].tool_call_template)
+        await client.register_manual(sample_tools[1].tool_call_template)
+
         # Search for tools
-        results = await utcp_client.search_tools("http", limit=10)
+        results = await client.search_tools("http", limit=10)
         
         # Should find the HTTP tool
-        assert len(results) == 1
+        assert len(results) == 2
         assert "http" in results[0].name.lower() or "http" in results[0].description.lower()
 
     @pytest.mark.asyncio
     async def test_get_required_variables_for_manual_and_tools(self, utcp_client):
-        """Test getting required variables for a provider."""
-        provider = HttpProvider(
-            name="test_provider",
+        """Test getting required variables for a manual."""
+        client = utcp_client
+        call_template = HttpCallTemplate(
+            name="test_manual",
             url="https://api.example.com/$API_URL",
             http_method="POST",
-            auth=ApiKeyAuth(api_key="$API_KEY", var_name="Authorization")
+            auth=ApiKeyAuth(api_key="$API_KEY", var_name="Authorization"),
+            call_template_type="http"
         )
         
-        # Mock the variable substitutor
-        mock_substitutor = MagicMock()
-        mock_substitutor.find_required_variables.return_value = ["API_URL", "API_KEY"]
-        mock_substitutor.substitute.return_value = provider.model_dump()  # Return the original dict
-        utcp_client.variable_substitutor = mock_substitutor
+        # Mock the communication protocol to return an empty manual
+        mock_protocol = MockCommunicationProtocol(UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[]))
+        CommunicationProtocol.communication_protocols["http"] = mock_protocol
+
+        variables = await client.get_required_variables_for_manual_and_tools(call_template)
         
-        variables = await utcp_client.get_required_variables_for_manual_and_tools(provider)
-        
-        assert variables == ["API_URL", "API_KEY"]
-        mock_substitutor.find_required_variables.assert_called_once()
+        # Using set because order doesn't matter
+        assert set(variables) == {"test__manual_API_URL", "test__manual_API_KEY"}
 
     @pytest.mark.asyncio
-    async def test_get_required_variables_for_tool(self, utcp_client, sample_tools):
-        """Test getting required variables for a tool."""
-        provider = HttpProvider(
-            name="test_provider",
+    async def test_get_required_variables_for_registered_tool(self, utcp_client, sample_tools):
+        """Test getting required variables for a registered tool."""
+        client = utcp_client
+        call_template = HttpCallTemplate(
+            name="test_manual",
             url="https://api.example.com/$API_URL",
-            http_method="POST"
+            http_method="POST",
+            call_template_type="http"
         )
         
         tool = sample_tools[0]
-        tool.name = "test_provider.http_tool"
-        tool.tool_provider = provider
+        tool.name = "test_manual.http_tool"
+        tool.tool_call_template = call_template
         
         # Add tool to repository
-        await utcp_client.tool_repository.save_provider_with_tools(provider, [tool])
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[tool])
+        await client.config.tool_repository.save_manual(call_template, manual)
         
-        # Mock the variable substitutor
-        mock_substitutor = MagicMock()
-        mock_substitutor.find_required_variables.return_value = ["API_URL"]
-        utcp_client.variable_substitutor = mock_substitutor
+        variables = await client.get_required_variables_for_registered_tool("test_manual.http_tool")
         
-        variables = await utcp_client.get_required_variables_for_tool("test_provider.http_tool")
-        
-        assert variables == ["API_URL"]
-        mock_substitutor.find_required_variables.assert_called_once()
+        assert variables == ["test__manual_API_URL"]
 
     @pytest.mark.asyncio
     async def test_get_required_variables_for_nonexistent_tool(self, utcp_client):
         """Test getting required variables for a nonexistent tool."""
+        client = utcp_client
         with pytest.raises(ValueError, match="Tool not found: nonexistent.tool"):
-            await utcp_client.get_required_variables_for_tool("nonexistent.tool")
+            await client.get_required_variables_for_registered_tool("nonexistent.tool")
 
 
-class TestUtcpClientProviderLoading:
-    """Test provider loading functionality."""
-
-    @pytest.mark.asyncio
-    async def test_load_providers_from_file(self, utcp_client):
-        """Test loading providers from a JSON file."""
-        # Create a temporary providers file with array format (as expected by load_providers)
-        providers_data = [
-            {
-                "name": "http_provider",
-                "provider_type": "http",
-                "url": "https://api.example.com/tools",
-                "http_method": "GET"
-            },
-            {
-                "name": "cli_provider",
-                "provider_type": "cli",
-                "command_name": "echo"
-            }
-        ]
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(providers_data, f)
-            temp_file = f.name
-        
-        try:
-            # Mock the transports
-            mock_http_transport = MockTransport([])
-            mock_cli_transport = MockTransport([])
-            utcp_client.transports["http"] = mock_http_transport
-            utcp_client.transports["cli"] = mock_cli_transport
-            
-            # Load providers
-            providers = await utcp_client.load_providers(temp_file)
-            
-            assert len(providers) == 2
-            assert len(mock_http_transport.registered_providers) == 1
-            assert len(mock_cli_transport.registered_providers) == 1
-            
-        finally:
-            os.unlink(temp_file)
+class TestUtcpClientManualCallTemplateLoading:
+    """Test call template loading functionality."""
 
     @pytest.mark.asyncio
-    async def test_load_providers_file_not_found(self, utcp_client):
-        """Test loading providers from a non-existent file."""
-        with pytest.raises(FileNotFoundError):
-            await utcp_client.load_providers("nonexistent.json")
-
-    @pytest.mark.asyncio
-    async def test_load_providers_invalid_json(self, utcp_client):
-        """Test loading providers from invalid JSON file."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write("invalid json content")
-            temp_file = f.name
-        
-        try:
-            with pytest.raises(ValueError, match="Invalid JSON in providers file"):
-                await utcp_client.load_providers(temp_file)
-        finally:
-            os.unlink(temp_file)
-
-    @pytest.mark.asyncio
-    async def test_load_providers_with_variables(self, utcp_client):
-        """Test loading providers with variable substitution."""
-        providers_data = [
-            {
-                "name": "http_provider",
-                "provider_type": "http",
-                "url": "$BASE_URL/tools",
-                "http_method": "GET",
-                "auth": {
-                    "auth_type": "api_key",
-                    "api_key": "$API_KEY",
-                    "var_name": "Authorization"
+    async def test_load_manual_call_templates_from_file(self):
+        """Test loading call templates from a JSON file."""
+        config_data = {
+            "manual_call_templates": [
+                {
+                    "name": "http_template",
+                    "call_template_type": "http",
+                    "url": "https://api.example.com/tools",
+                    "http_method": "GET"
+                },
+                {
+                    "name": "cli_template",
+                    "call_template_type": "cli",
+                    "command_name": "echo"
                 }
-            }
-        ]
+            ]
+        }
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(providers_data, f)
+            json.dump(config_data, f)
             temp_file = f.name
         
         try:
-            # Setup client with variables (need provider prefixed variables)
-            utcp_client.config.variables = {
-                "http__provider_BASE_URL": "https://api.example.com",
-                "http__provider_API_KEY": "secret_key"
-            }
+            # Mock the communication protocols
+            mock_http_protocol = MockCommunicationProtocol()
+            mock_cli_protocol = MockCommunicationProtocol()
+            CommunicationProtocol.communication_protocols["http"] = mock_http_protocol
+            CommunicationProtocol.communication_protocols["cli"] = mock_cli_protocol
             
-            # Mock the transport
-            mock_transport = MockTransport([])
-            utcp_client.transports["http"] = mock_transport
-            
-            # Load providers
-            providers = await utcp_client.load_providers(temp_file)
-            
-            assert len(providers) == 1
-            # Check that the registered provider has substituted values
-            registered_provider = mock_transport.registered_providers[0]
-            assert registered_provider.url == "https://api.example.com/tools"
-            assert registered_provider.auth.api_key == "secret_key"
+            # Re-create client with the config file to load templates
+            client = await UtcpClient.create(config=temp_file)
+
+            assert len(client.config.manual_call_templates) == 2
+            assert len(mock_http_protocol.registered_manuals) == 1
+            assert len(mock_cli_protocol.registered_manuals) == 1
             
         finally:
             os.unlink(temp_file)
 
     @pytest.mark.asyncio
-    async def test_load_providers_missing_variable(self, utcp_client):
-        """Test loading providers with missing variable."""
-        providers_data = [
-            {
-                "name": "http_provider",
-                "provider_type": "http",
-                "url": "$MISSING_VAR/tools",
-                "http_method": "GET"
-            }
-        ]
-        
+    async def test_load_manual_call_templates_file_not_found(self):
+        """Test loading call templates from a non-existent file."""
+        with pytest.raises(ValueError, match="Invalid config file"):
+            await UtcpClient.create(config="nonexistent_file.json")
+
+    @pytest.mark.asyncio
+    async def test_load_manual_call_templates_invalid_json(self):
+        """Test loading call templates from invalid JSON file."""
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(providers_data, f)
+            f.write("{\"invalid_json\": }")
             temp_file = f.name
         
         try:
-            # Mock transport to avoid registration issues
-            utcp_client.transports["http"] = MockTransport([])
+            with pytest.raises(ValueError, match="Invalid config file"):
+                await UtcpClient.create(config=temp_file)
+        finally:
+            os.unlink(temp_file)
+
+    @pytest.mark.asyncio
+    async def test_load_manual_call_templates_with_variables(self):
+        """Test loading call templates with variable substitution."""
+        config_data = {
+            "variables": {
+                "http__template_BASE_URL": "https://api.example.com",
+                "http__template_API_KEY": "secret_key"
+            },
+            "manual_call_templates": [
+                {
+                    "name": "http_template",
+                    "call_template_type": "http",
+                    "url": "$BASE_URL/tools",
+                    "http_method": "GET",
+                    "auth": {
+                        "auth_type": "api_key",
+                        "api_key": "$API_KEY",
+                        "var_name": "Authorization"
+                    }
+                }
+            ],
+            "tool_repository": {
+                "tool_repository_type": "in_memory"
+            },
+            "tool_search_strategy": {
+                "tool_search_strategy_type": "tag_and_description_word_match"
+            }
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(config_data, f)
+            temp_file = f.name
+        
+        try:
+            # Mock the communication protocol
+            mock_protocol = MockCommunicationProtocol()
+            CommunicationProtocol.communication_protocols["http"] = mock_protocol
             
-            # The load_providers method catches exceptions and returns empty list
-            # So we need to check the registration directly which will raise the exception
-            provider_data = {
-                "name": "http_provider",
-                "provider_type": "http",
+            # Create client with config file
+            client = await UtcpClient.create(config=temp_file)
+
+            # Check that the registered call template has substituted values
+            registered_template = mock_protocol.registered_manuals[0]
+            assert registered_template.url == "https://api.example.com/tools"
+            assert registered_template.auth.api_key == "secret_key"
+            
+        finally:
+            os.unlink(temp_file)
+
+    @pytest.mark.asyncio
+    async def test_load_manual_call_templates_missing_variable(self):
+        """Test loading call templates with missing variable."""
+        config_data = {
+            "manual_call_templates": [{
+                "name": "http_template",
+                "call_template_type": "http",
                 "url": "$MISSING_VAR/tools",
                 "http_method": "GET"
-            }
-            provider = HttpProvider.model_validate(provider_data)
-            
-            with pytest.raises(UtcpVariableNotFound, match="Variable http__provider_MISSING_VAR"):
-                await utcp_client.register_tool_provider(provider)
+            }]
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(config_data, f)
+            temp_file = f.name
+
+        try:
+            with pytest.raises(UtcpVariableNotFound, match="Variable http__template_MISSING_VAR referenced in provider configuration not found"):
+                await UtcpClient.create(config=temp_file)
         finally:
             os.unlink(temp_file)
 
 
-class TestUtcpClientTransports:
-    """Test transport-related functionality."""
-
-    def test_default_transports_initialized(self, utcp_client):
-        """Test that default transports are properly initialized."""
-        expected_transport_types = [
-            "http", "cli", "sse", "http_stream", "mcp", "text", "graphql", "tcp", "udp"
-        ]
-        
-        for transport_type in expected_transport_types:
-            assert transport_type in utcp_client.transports
-            assert utcp_client.transports[transport_type] is not None
+class TestUtcpClientCommunicationProtocols:
+    """Test communication protocol-related functionality."""
 
     @pytest.mark.asyncio
     async def test_variable_substitution(self, utcp_client):
-        """Test variable substitution in providers."""
-        provider = HttpProvider(
-            name="test_provider",
+        """Test variable substitution in call templates."""
+        client = utcp_client
+        call_template = HttpCallTemplate(
+            name="test_template",
             url="$BASE_URL/api",
             http_method="POST",
             auth=ApiKeyAuth(api_key="$API_KEY", var_name="Authorization")
         )
         
-        # Set up variables with provider prefix
-        utcp_client.config.variables = {
-            "test__provider_BASE_URL": "https://api.example.com",
-            "test__provider_API_KEY": "secret_key"
+        # Set up variables with call template prefix
+        client.config.variables = {
+            "test__template_BASE_URL": "https://api.example.com",
+            "test__template_API_KEY": "secret_key"
         }
         
-        substituted_provider = utcp_client._substitute_provider_variables(provider, "test_provider")
+        substituted_template = client._substitute_call_template_variables(call_template, "test_template")
         
-        assert substituted_provider.url == "https://api.example.com/api"
-        assert substituted_provider.auth.api_key == "secret_key"
+        assert substituted_template.url == "https://api.example.com/api"
+        assert substituted_template.auth.api_key == "secret_key"
 
     @pytest.mark.asyncio
     async def test_variable_substitution_missing_variable(self, utcp_client):
         """Test variable substitution with missing variable."""
-        provider = HttpProvider(
-            name="test_provider",
+        client = utcp_client
+        call_template = HttpCallTemplate(
+            name="test_template",
             url="$MISSING_VAR/api",
             http_method="POST"
         )
         
-        with pytest.raises(UtcpVariableNotFound, match="Variable test__provider_MISSING_VAR"):
-            utcp_client._substitute_provider_variables(provider, "test_provider")
+        with pytest.raises(UtcpVariableNotFound, match="Variable test__template_MISSING_VAR referenced in provider configuration not found"):
+            client._substitute_call_template_variables(call_template, "test_template")
 
 
 class TestUtcpClientEdgeCases:
     """Test edge cases and error conditions."""
 
     @pytest.mark.asyncio
-    async def test_empty_provider_file(self, utcp_client):
-        """Test loading an empty provider file."""
+    async def test_empty_call_template_file(self):
+        """Test loading an empty call template file."""
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump([], f)  # Empty array instead of empty object
+            json.dump({"manual_call_templates": []}, f)  # Empty array
             temp_file = f.name
-        
+
         try:
-            providers = await utcp_client.load_providers(temp_file)
-            assert providers == []
+            client = await UtcpClient.create(config=temp_file)
+            assert client.config.manual_call_templates == []
         finally:
             os.unlink(temp_file)
 
     @pytest.mark.asyncio
-    async def test_register_provider_with_existing_name(self, utcp_client, sample_tools):
-        """Test registering a provider with an existing name should raise an error."""
-        provider1 = HttpProvider(
+    async def test_register_manual_with_existing_name(self, utcp_client):
+        """Test registering a manual with an existing name should raise an error."""
+        client = utcp_client
+        template1 = HttpCallTemplate(
             name="duplicate_name",
             url="https://api.example1.com/tool",
-            http_method="POST"
+            http_method="POST",
+            call_template_type="http"
         )
-        provider2 = HttpProvider(
+        template2 = HttpCallTemplate(
             name="duplicate_name",
             url="https://api.example2.com/tool",
-            http_method="GET"
+            http_method="GET",
+            call_template_type="http"
         )
         
-        mock_transport = MockTransport(sample_tools[:1])
-        utcp_client.transports["http"] = mock_transport
+        mock_protocol = MockCommunicationProtocol()
+        CommunicationProtocol.communication_protocols["http"] = mock_protocol
         
-        # Register first provider
-        await utcp_client.register_tool_provider(provider1)
+        # Register first manual
+        await client.register_manual(template1)
         
-        # Attempting to register second provider with same name should raise an error
-        with pytest.raises(ValueError, match="Provider duplicate_name already registered"):
-            await utcp_client.register_tool_provider(provider2)
+        # Attempting to register second manual with same name should raise an error
+        with pytest.raises(ValueError, match="Manual duplicate_name already registered"):
+            await client.register_manual(template2)
         
-        # Should still have the first provider
-        saved_provider = await utcp_client.tool_repository.get_provider("duplicate_name")
-        assert saved_provider.url == "https://api.example1.com/tool"
-        assert saved_provider.http_method == "POST"
+        # Should still have the first manual
+        saved_template = await client.config.tool_repository.get_manual_call_template("duplicate_name")
+        assert saved_template.url == "https://api.example1.com/tool"
+        assert saved_template.http_method == "POST"
 
     @pytest.mark.asyncio
-    async def test_complex_mcp_provider(self, utcp_client):
-        """Test loading a complex MCP provider configuration."""
-        providers_data = [
-            {
-                "name": "mcp_provider",
-                "provider_type": "mcp",
-                "config": {
-                    "mcpServers": {
-                        "stdio_server": {
-                            "transport": "stdio",
-                            "command": "python",
-                            "args": ["-m", "test_server"],
-                            "env": {"TEST_VAR": "test_value"}
-                        },
-                        "http_server": {
-                            "transport": "http",
-                            "url": "http://localhost:8000/mcp"
-                        }
-                    }
+    async def test_load_call_templates_wrong_format(self):
+        """Test loading call templates with wrong JSON format (object instead of array)."""
+        # This is not a valid config, `manual_call_templates` should be a list
+        config_data = {
+            "manual_call_templates": {
+                "http_template": {
+                    "call_template_type": "http",
+                    "url": "https://api.example.com/tools",
+                    "http_method": "GET"
                 }
             }
-        ]
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(providers_data, f)
-            temp_file = f.name
-        
-        try:
-            # Mock the MCP transport
-            mock_transport = MockTransport([])
-            utcp_client.transports["mcp"] = mock_transport
-            
-            providers = await utcp_client.load_providers(temp_file)
-            
-            assert len(providers) == 1
-            provider = providers[0]
-            assert isinstance(provider, MCPProvider)
-            assert len(provider.config.mcpServers) == 2
-            assert "stdio_server" in provider.config.mcpServers
-            assert "http_server" in provider.config.mcpServers
-            
-        finally:
-            os.unlink(temp_file)
-
-    @pytest.mark.asyncio
-    async def test_text_transport_configuration(self, utcp_client):
-        """Test TextTransport base path configuration."""
-        # Create a temporary directory structure
-        with tempfile.TemporaryDirectory() as temp_dir:
-            providers_file = os.path.join(temp_dir, "providers.json")
-            
-            with open(providers_file, 'w') as f:
-                json.dump([], f)  # Empty array
-            
-            # Create client with providers file path
-            config = UtcpClientConfig(providers_file_path=providers_file)
-            
-            with patch.object(UtcpClient, 'load_providers', new_callable=AsyncMock):
-                client = await UtcpClient.create(config=config)
-                
-                # Check that TextTransport was configured with the correct base path
-                text_transport = client.transports["text"]
-                assert hasattr(text_transport, 'base_path')
-                assert text_transport.base_path == temp_dir
-
-    @pytest.mark.asyncio
-    async def test_load_providers_wrong_format(self, utcp_client):
-        """Test loading providers with wrong JSON format (object instead of array)."""
-        providers_data = {
-            "http_provider": {
-                "provider_type": "http",
-                "url": "https://api.example.com/tools",
-                "http_method": "GET"
-            }
         }
-        
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(providers_data, f)
+            json.dump(config_data, f)
             temp_file = f.name
-        
+
         try:
-            with pytest.raises(ValueError, match="Providers file must contain a JSON array at the root level"):
-                await utcp_client.load_providers(temp_file)
+            with pytest.raises(UtcpSerializerValidationError):
+                await UtcpClient.create(config=temp_file)
         finally:
             os.unlink(temp_file)

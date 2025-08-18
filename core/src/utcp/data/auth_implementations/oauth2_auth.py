@@ -3,6 +3,7 @@ from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
 from pydantic import Field
 from typing import Literal, Optional
+import traceback
 
 
 class OAuth2Auth(Auth):
@@ -34,4 +35,4 @@ class OAuth2AuthSerializer(Serializer[OAuth2Auth]):
         try:
             return OAuth2Auth.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid OAuth2Auth: " + str(e))
+            raise UtcpSerializerValidationError("Invalid OAuth2Auth: " + traceback.format_exc()) from e

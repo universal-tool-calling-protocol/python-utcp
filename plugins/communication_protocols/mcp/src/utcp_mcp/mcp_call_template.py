@@ -5,6 +5,7 @@ from utcp.data.auth_implementations import OAuth2Auth
 from utcp.data.call_template import CallTemplate
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 
 """Type alias for MCP server configurations.
 
@@ -38,7 +39,7 @@ class McpCallTemplate(CallTemplate):
         auth: Optional OAuth2 authentication for HTTP-based MCP servers.
     """
 
-    type: Literal["mcp"] = "mcp"
+    call_template_type: Literal["mcp"] = "mcp"
     config: McpConfig
     auth: Optional[OAuth2Auth] = None
 
@@ -50,4 +51,4 @@ class McpCallTemplateSerializer(Serializer[McpCallTemplate]):
         try:
             return McpCallTemplate.model_validate(obj)
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid McpCallTemplate: " + str(e)) from e
+            raise UtcpSerializerValidationError("Invalid McpCallTemplate: " + traceback.format_exc()) from e

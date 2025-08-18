@@ -74,7 +74,7 @@ def http_mcp_provider() -> McpCallTemplate:
     }
     return McpCallTemplate(
         name="mock_http_provider",
-        provider_type="mcp",
+        call_template_type="mcp",
         config=McpConfig(mcpServers={HTTP_SERVER_NAME: server_config})
     )
 
