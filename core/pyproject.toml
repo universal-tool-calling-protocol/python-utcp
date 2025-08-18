@@ -32,8 +32,6 @@ dev = [
     "pytest-cov",
     "coverage",
     "twine",
-    "utcp-http",
-    "utcp-cli",
 ]
 
 [project.urls]
