@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Optional, Callable, AsyncIterator, Tuple, As
 import aiohttp
 import json
 import re
+from urllib.parse import quote
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate
@@ -25,7 +26,6 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
 
     def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-        self._active_connections: Dict[str, Tuple[ClientResponse, ClientSession]] = {}
 
     def _apply_auth(self, provider: StreamableHttpCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
@@ -61,14 +61,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
 
     async def close(self):
         """Close all active connections and clear internal state."""
-        logger.info("Closing all active HTTP stream connections.")
-        for provider_name, (response, session) in list(self._active_connections.items()):
-            logger.info(f"Closing connection for provider: {provider_name}")
-            if not response.closed:
-                response.close()  # Close the response
-            if not session.closed:
-                await session.close()
-        self._active_connections.clear()
+        logger.info("Closing StreamableHttpCommunicationProtocol.")
         self._oauth_tokens.clear()
 
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
@@ -172,17 +165,8 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             )
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
-        """Deregister a StreamableHttp manual and close any active connections."""
-        template_name = manual_call_template.name
-        if template_name in self._active_connections:
-            logger.info(f"Closing active HTTP stream connection for template '{template_name}'")
-            response, session = self._active_connections.pop(template_name)
-            if not response.closed:
-                response.close()
-            if not session.closed:
-                await session.close()
-        else:
-            logger.info(f"No active connection found for template '{template_name}'")
+        """Deregister a StreamableHttp manual. This is a no-op for the stateless streamable HTTP protocol."""
+        logger.info(f"Deregistering manual '{manual_call_template.name}'. No active connection to close.")
 
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Execute a tool call through StreamableHttp transport."""
@@ -233,8 +217,10 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             token = await self._handle_oauth2(tool_call_template.auth)
             request_headers["Authorization"] = f"Bearer {token}"
 
-        session = ClientSession()
+        session = None
+        response = None
         try:
+            session = ClientSession()
             timeout_seconds = tool_call_template.timeout / 1000 if tool_call_template.timeout else 60.0
             timeout = aiohttp.ClientTimeout(total=timeout_seconds)
 
@@ -261,14 +247,17 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             )
             response.raise_for_status()
 
-            self._active_connections[tool_call_template.name] = (response, session)
             async for chunk in self._process_http_stream(response, tool_call_template.chunk_size, tool_call_template.name):
                 yield chunk
 
         except Exception as e:
-            await session.close()
-            logger.error(f"Error establishing HTTP stream connection to '{tool_call_template.name}': {e}")
+            logger.error(f"Error during HTTP stream for '{tool_call_template.name}': {e}")
             raise
+        finally:
+            if response and not response.closed:
+                response.close()
+            if session and not session.closed:
+                await session.close()
 
     async def _process_http_stream(self, response: ClientResponse, chunk_size: Optional[int], provider_name: str) -> AsyncIterator[Any]:
         """Process the HTTP stream and yield chunks based on content type."""
@@ -307,11 +296,8 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             logger.error(f"Error processing HTTP stream for '{provider_name}': {e}")
             raise
         finally:
-            # The session is closed later by deregister_tool_provider or close()
-            if provider_name in self._active_connections:
-                response, _ = self._active_connections[provider_name]
-                if not response.closed:
-                    response.close()
+            # The response and session are managed by the `call_tool_streaming` method.
+            pass
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
         """Handles OAuth2 client credentials flow, trying both body and auth header methods."""
@@ -367,7 +353,8 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         for param_name in path_params:
             if param_name in tool_args:
                 # Replace the parameter in the URL
-                param_value = str(tool_args[param_name])
+                # URL-encode the parameter value to prevent path injection
+                param_value = quote(str(tool_args[param_name]))
                 url = url.replace(f'{{{param_name}}}', param_value)
                 # Remove the parameter from arguments so it's not used as a query parameter
                 tool_args.pop(param_name)

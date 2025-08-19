@@ -6,6 +6,7 @@ tools. It does not maintain any persistent connections.
 """
 import json
 import yaml
+import aiofiles
 from pathlib import Path
 from typing import Dict, Any, Optional, AsyncGenerator, TYPE_CHECKING
 
@@ -48,8 +49,8 @@ class TextCommunicationProtocol(CommunicationProtocol):
             if not file_path.exists():
                 raise FileNotFoundError(f"Manual file not found: {file_path}")
 
-            with open(file_path, "r", encoding="utf-8") as f:
-                file_content = f.read()
+            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+                file_content = await f.read()
 
             # Parse based on extension
             data: Any
@@ -108,12 +109,13 @@ class TextCommunicationProtocol(CommunicationProtocol):
 
         self._log_info(f"Reading content from '{file_path}' for tool '{tool_name}'")
 
-        if not file_path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        return content
+        try:
+            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+                content = await f.read()
+            return content
+        except FileNotFoundError:
+            self._log_error(f"File not found for tool '{tool_name}': {file_path}")
+            raise
 
     async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """Streaming variant: yields the full content as a single chunk."""

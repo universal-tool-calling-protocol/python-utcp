@@ -41,7 +41,7 @@ class FilterDictPostProcessor(ToolPostProcessor):
             new_result = {}
             for key, value in result.items():
                 if key not in self.exclude_keys:
-                    new_result[key] = self._filter_dict(value)
+                    new_result[key] = self._filter_dict_exclude_keys(value)
             return new_result
 
         if isinstance(result, list):

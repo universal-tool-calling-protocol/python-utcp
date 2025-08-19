@@ -41,7 +41,9 @@ class JsonSchema(BaseModel):
     maxLength: Optional[int] = None
 
     model_config = {
-        "populate_by_name": True,  # replaces allow_population_by_field_name
+        "validate_by_name": True,
+        "validate_by_alias": True,
+        "serialize_by_alias": True,
         "extra": "allow"
     }
 
@@ -49,7 +51,7 @@ JsonSchema.model_rebuild()  # replaces update_forward_refs()
 
 class JsonSchemaSerializer(Serializer[JsonSchema]):
     def to_dict(self, obj: JsonSchema) -> dict:
-        return obj.model_dump()
+        return obj.model_dump(by_alias=True)
     
     def validate_dict(self, obj: dict) -> JsonSchema:
         try:
@@ -95,7 +97,7 @@ class Tool(BaseModel):
 
 class ToolSerializer(Serializer[Tool]):
     def to_dict(self, obj: Tool) -> dict:
-        return obj.model_dump()
+        return obj.model_dump(by_alias=True)
 
     def validate_dict(self, obj: dict) -> Tool:
         try:

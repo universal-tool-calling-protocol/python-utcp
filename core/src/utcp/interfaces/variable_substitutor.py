@@ -17,7 +17,6 @@ class VariableSubstitutor(ABC):
 
         Args:
             obj: Object containing potential variable references to substitute.
-                Can be dict, list, str, or any other type.
             config: UTCP client configuration containing variable definitions
                 and loaders.
             variable_namespace: Optional variable namespace.

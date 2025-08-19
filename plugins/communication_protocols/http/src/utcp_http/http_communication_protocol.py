@@ -19,6 +19,7 @@ import yaml
 import base64
 import re
 import traceback
+from urllib.parse import quote
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate
@@ -394,7 +395,8 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         for param_name in path_params:
             if param_name in tool_args:
                 # Replace the parameter in the URL
-                param_value = str(tool_args[param_name])
+                # URL-encode the parameter value to prevent path injection
+                param_value = quote(str(tool_args[param_name]))
                 url = url.replace(f'{{{param_name}}}', param_value)
                 # Remove the parameter from arguments so it's not used as a query parameter
                 tool_args.pop(param_name)

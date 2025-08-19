@@ -15,7 +15,8 @@ dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "utcp>=1.0",
-    "utcp-http>=1.0"
+    "utcp-http>=1.0",
+    "aiofiles>=23.2.1"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

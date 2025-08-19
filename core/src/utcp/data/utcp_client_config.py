@@ -23,12 +23,21 @@ class UtcpClientConfig(BaseModel):
         3. Environment variables
 
     Attributes:
-        variables: Direct variable definitions as key-value pairs.
-            These take precedence over other variable sources.
-        providers_file_path: Optional path to a file containing provider
-            configurations. Supports JSON and YAML formats.
-        load_variables_from: List of variable loaders to use for
-            variable resolution. Loaders are consulted in order.
+        variables (Optional[Dict[str, str]]): A dictionary of directly-defined
+            variables for substitution.
+        load_variables_from (Optional[List[VariableLoader]]): A list of
+            variable loader configurations for loading variables from external
+            sources like .env files or remote services.
+        tool_repository (ConcurrentToolRepository): Configuration for the tool
+            repository, which manages the storage and retrieval of tools.
+            Defaults to an in-memory repository.
+        tool_search_strategy (ToolSearchStrategy): Configuration for the tool
+            search strategy, defining how tools are looked up. Defaults to a
+            tag and description-based search.
+        post_processing (List[ToolPostProcessor]): A list of tool post-processor
+            configurations to be applied after a tool call.
+        manual_call_templates (List[CallTemplate]): A list of manually defined
+            call templates for registering tools that don't have a provider.
 
     Example:
         ```python

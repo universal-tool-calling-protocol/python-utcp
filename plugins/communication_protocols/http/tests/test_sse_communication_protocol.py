@@ -107,12 +107,12 @@ async def error_handler(request):
 
 # --- Pytest Fixtures ---
 
-@pytest.fixture
-def sse_transport():
+@pytest_asyncio.fixture
+async def sse_transport():
     """Fixture to create and properly tear down an SseCommunicationProtocol instance."""
     transport = SseCommunicationProtocol()
     yield transport
-    asyncio.run(transport.close())
+    await transport.close()
 
 @pytest.fixture
 def app():

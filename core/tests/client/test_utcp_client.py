@@ -185,6 +185,12 @@ async def sample_tools():
     ]
 
 
+@pytest.fixture
+def isolated_communication_protocols(monkeypatch):
+    """Isolates the CommunicationProtocol registry for each test."""
+    monkeypatch.setattr(CommunicationProtocol, "communication_protocols", {})
+
+
 @pytest_asyncio.fixture
 async def utcp_client():
     """Fixture for UtcpClient."""
@@ -245,7 +251,7 @@ class TestUtcpClient:
         assert client.config is config
 
     @pytest.mark.asyncio
-    async def test_register_manual(self, utcp_client, sample_tools):
+    async def test_register_manual(self, utcp_client, sample_tools, isolated_communication_protocols):
         """Test registering a manual."""
         http_call_template = HttpCallTemplate(
             name="test_manual",
@@ -286,7 +292,7 @@ class TestUtcpClient:
             await utcp_client.register_manual(call_template)
 
     @pytest.mark.asyncio
-    async def test_register_manual_name_sanitization(self, utcp_client, sample_tools):
+    async def test_register_manual_name_sanitization(self, utcp_client, sample_tools, isolated_communication_protocols):
         """Test that manual names are sanitized."""
         call_template = HttpCallTemplate(
             name="test-manual.with/special@chars",
@@ -306,7 +312,7 @@ class TestUtcpClient:
         assert result.manual.tools[0].name == "test_manual_with_special_chars.http_tool"
 
     @pytest.mark.asyncio
-    async def test_deregister_manual(self, utcp_client, sample_tools):
+    async def test_deregister_manual(self, utcp_client, sample_tools, isolated_communication_protocols):
         """Test deregistering a manual."""
         call_template = HttpCallTemplate(
             name="test_manual",
@@ -341,7 +347,7 @@ class TestUtcpClient:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_call_tool(self, utcp_client, sample_tools):
+    async def test_call_tool(self, utcp_client, sample_tools, isolated_communication_protocols):
         """Test calling a tool."""
         client = utcp_client
         call_template = HttpCallTemplate(
@@ -375,7 +381,7 @@ class TestUtcpClient:
             await client.call_tool("nonexistent.tool", {"param": "value"})
 
     @pytest.mark.asyncio
-    async def test_call_tool_nonexistent_tool(self, utcp_client, sample_tools):
+    async def test_call_tool_nonexistent_tool(self, utcp_client, sample_tools, isolated_communication_protocols):
         """Test calling a nonexistent tool."""
         client = utcp_client
         call_template = HttpCallTemplate(
@@ -396,7 +402,7 @@ class TestUtcpClient:
             await client.call_tool("test_manual.nonexistent", {"param": "value"})
 
     @pytest.mark.asyncio
-    async def test_search_tools(self, utcp_client, sample_tools):
+    async def test_search_tools(self, utcp_client, sample_tools, isolated_communication_protocols):
         """Test searching for tools."""
         client = utcp_client
         # Clear any existing manuals from other tests to ensure a clean slate
@@ -422,7 +428,7 @@ class TestUtcpClient:
         assert "http" in results[0].name.lower() or "http" in results[0].description.lower()
 
     @pytest.mark.asyncio
-    async def test_get_required_variables_for_manual_and_tools(self, utcp_client):
+    async def test_get_required_variables_for_manual_and_tools(self, utcp_client, isolated_communication_protocols):
         """Test getting required variables for a manual."""
         client = utcp_client
         call_template = HttpCallTemplate(
@@ -477,7 +483,7 @@ class TestUtcpClientManualCallTemplateLoading:
     """Test call template loading functionality."""
 
     @pytest.mark.asyncio
-    async def test_load_manual_call_templates_from_file(self):
+    async def test_load_manual_call_templates_from_file(self, isolated_communication_protocols):
         """Test loading call templates from a JSON file."""
         config_data = {
             "manual_call_templates": [
@@ -536,7 +542,7 @@ class TestUtcpClientManualCallTemplateLoading:
             os.unlink(temp_file)
 
     @pytest.mark.asyncio
-    async def test_load_manual_call_templates_with_variables(self):
+    async def test_load_manual_call_templates_with_variables(self, isolated_communication_protocols):
         """Test loading call templates with variable substitution."""
         config_data = {
             "variables": {
@@ -663,7 +669,7 @@ class TestUtcpClientEdgeCases:
             os.unlink(temp_file)
 
     @pytest.mark.asyncio
-    async def test_register_manual_with_existing_name(self, utcp_client):
+    async def test_register_manual_with_existing_name(self, utcp_client, isolated_communication_protocols):
         """Test registering a manual with an existing name should raise an error."""
         client = utcp_client
         template1 = HttpCallTemplate(
@@ -717,3 +723,36 @@ class TestUtcpClientEdgeCases:
                 await UtcpClient.create(config=temp_file)
         finally:
             os.unlink(temp_file)
+
+
+class TestToolSerialization:
+    """Test Tool and JsonSchema serialization."""
+
+    def test_json_schema_serialization_by_alias(self):
+        """Test that JsonSchema serializes using field aliases."""
+        schema = JsonSchema(
+            schema_="http://json-schema.org/draft-07/schema#",
+            id_="test_schema",
+            type="object",
+            properties={
+                "param": JsonSchema(type="string")
+            }
+        )
+
+        serialized_schema = schema.model_dump()
+
+        assert "$schema" in serialized_schema
+        assert "$id" in serialized_schema
+        assert serialized_schema["$schema"] == "http://json-schema.org/draft-07/schema#"
+        assert serialized_schema["$id"] == "test_schema"
+
+    def test_tool_serialization_by_alias(self, sample_tools):
+        """Test that Tool serializes its JsonSchema fields by alias."""
+        tool = sample_tools[0]
+        tool.inputs.schema_ = "http://json-schema.org/draft-07/schema#"
+        
+        serialized_tool = tool.model_dump()
+        
+        assert "inputs" in serialized_tool
+        assert "$schema" in serialized_tool["inputs"]
+        assert serialized_tool["inputs"]["$schema"] == "http://json-schema.org/draft-07/schema#"
