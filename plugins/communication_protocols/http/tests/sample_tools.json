@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "manual_version": "1.0.0",
   "name": "Sample Tool Collection",
   "description": "A collection of sample tools for testing the text transport",
   "tools": [

@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "utcp-mcp"
-version = "1.0.0"
+version = "1.0.1"
 authors = [
   { name = "UTCP Contributors" },
 ]
-description = "Universal Tool Calling Protocol (UTCP) client library for Python"
-readme = "README.md"
+description = "UTCP communication protocol plugin for interoperability with the Model Context Protocol (MCP)."
+readme = "../../../README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",

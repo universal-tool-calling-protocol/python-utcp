@@ -193,7 +193,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
                 return RegisterManualResult(
                     success=False,
                     manual_call_template=manual_call_template,
-                    manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                    manual=UtcpManual(manual_version="0.0.0", tools=[]),
                     errors=[
                         f"No output from discovery command for CLI provider '{manual_call_template.name}'"
                     ],
@@ -212,7 +212,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
                 return RegisterManualResult(
                     success=False,
                     manual_call_template=manual_call_template,
-                    manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                    manual=UtcpManual(manual_version="0.0.0", tools=[]),
                     errors=[error_msg],
                 )
 
@@ -232,7 +232,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
-                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                manual=UtcpManual(manual_version="0.0.0", tools=[]),
                 errors=[error_msg],
             )
     
@@ -285,12 +285,12 @@ class CliCommunicationProtocol(CommunicationProtocol):
                     # Fallback: try to parse tools from possibly-legacy structure
                     tools = self._parse_tool_data(data, provider_name)
                     if tools:
-                        return UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=tools)
+                        return UtcpManual(manual_version="0.0.0", tools=tools)
                     return None
             # Fallback: try to parse as tools
             tools = self._parse_tool_data(data, provider_name)
             if tools:
-                return UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=tools)
+                return UtcpManual(manual_version="0.0.0", tools=tools)
         except json.JSONDecodeError:
             pass
 
@@ -313,7 +313,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
                             # Fallback: try to parse tools from possibly-legacy structure
                             tools = self._parse_tool_data(data, provider_name)
                             if tools:
-                                return UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=tools)
+                                return UtcpManual(manual_version="0.0.0", tools=tools)
                             return None
                     found_tools = self._parse_tool_data(data, provider_name)
                     aggregated_tools.extend(found_tools)
@@ -321,7 +321,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
                     continue
 
         if aggregated_tools:
-            return UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=aggregated_tools)
+            return UtcpManual(manual_version="0.0.0", tools=aggregated_tools)
 
         return None
     

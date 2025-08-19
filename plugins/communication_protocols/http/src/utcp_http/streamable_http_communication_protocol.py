@@ -142,7 +142,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
-                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                manual=UtcpManual(manual_version="0.0.0", tools=[]),
                 errors=[error_msg]
             )
         except (json.JSONDecodeError, aiohttp.ClientError) as e:
@@ -151,7 +151,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
-                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                manual=UtcpManual(manual_version="0.0.0", tools=[]),
                 errors=[error_msg]
             )
         except Exception as e:
@@ -160,7 +160,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
-                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                manual=UtcpManual(manual_version="0.0.0", tools=[]),
                 errors=[error_msg]
             )
 

@@ -113,7 +113,7 @@ class UtcpClientImplementation(UtcpClient):
                     logger.error(f"Error registering manual '{manual_call_template.name}': {traceback.format_exc()}")
                     return RegisterManualResult(
                         manual_call_template=manual_call_template,
-                        manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                        manual=UtcpManual(manual_version="0.0.0", tools=[]),
                         success=False,
                         errors=[traceback.format_exc()]
                     )

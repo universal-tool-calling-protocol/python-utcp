@@ -1,4 +1,4 @@
-# Universal Tool Calling Protocol (UTCP) 1.0.0
+# Universal Tool Calling Protocol (UTCP) 1.0.1
 
 [![Follow Org](https://img.shields.io/github/followers/universal-tool-calling-protocol?label=Follow%20Org&logo=github)](https://github.com/universal-tool-calling-protocol)
 [![PyPI Downloads](https://static.pepy.tech/badge/utcp)](https://pepy.tech/projects/utcp)
@@ -269,7 +269,7 @@ app = FastAPI()
 def utcp_discovery():
     return {
         "manual_version": "1.0.0",
-        "utcp_version": "1.0.0",
+        "utcp_version": "1.0.1",
         "tools": [
             {
                 "name": "get_weather",
