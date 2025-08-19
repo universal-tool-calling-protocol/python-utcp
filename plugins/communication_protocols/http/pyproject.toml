@@ -9,7 +9,7 @@ authors = [
   { name = "UTCP Contributors" },
 ]
 description = "UTCP communication protocol plugin for HTTP, SSE, and streamable HTTP, plus an OpenAPI converter."
-readme = "../../../README.md"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",

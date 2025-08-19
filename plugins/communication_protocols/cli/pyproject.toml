@@ -9,7 +9,7 @@ authors = [
   { name = "UTCP Contributors" },
 ]
 description = "UTCP communication protocol plugin for wrapping local command-line tools."
-readme = "../../../README.md"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
