@@ -65,14 +65,13 @@ class OpenApiConverter:
             openapi_spec: Parsed OpenAPI specification as a dictionary.
             spec_url: Optional URL where the specification was retrieved from.
                 Used for base URL determination if servers are not specified.
-            call_template_name: Optional custom name for the call_template. If not
-                provided, derives name from the specification title.
+            call_template_name: Optional custom name for the call_template if 
+            the specification title is not provided.
         """
         self.spec = openapi_spec
         self.spec_url = spec_url
         # Single counter for all placeholder variables
         self.placeholder_counter = 0
-        # If call_template_name is None then get the first word in spec.info.title
         if call_template_name is None:
             call_template_name = "openapi_call_template_" + uuid.uuid4().hex
         title = openapi_spec.get("info", {}).get("title", call_template_name)

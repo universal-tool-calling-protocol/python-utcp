@@ -354,7 +354,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             if param_name in tool_args:
                 # Replace the parameter in the URL
                 # URL-encode the parameter value to prevent path injection
-                param_value = quote(str(tool_args[param_name]))
+                param_value = quote(str(tool_args[param_name]), safe="")
                 url = url.replace(f'{{{param_name}}}', param_value)
                 # Remove the parameter from arguments so it's not used as a query parameter
                 tool_args.pop(param_name)
