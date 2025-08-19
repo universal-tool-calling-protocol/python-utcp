@@ -19,6 +19,7 @@ import yaml
 import base64
 import re
 import traceback
+from urllib.parse import quote
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate
@@ -203,7 +204,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     return RegisterManualResult(
                         success=False,
                         manual_call_template=manual_call_template,
-                        manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                        manual=UtcpManual(manual_version="0.0.0", tools=[]),
                         errors=[error_msg]
                     )
                 except (json.JSONDecodeError, yaml.YAMLError) as e:
@@ -212,7 +213,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     return RegisterManualResult(
                         success=False,
                         manual_call_template=manual_call_template,
-                        manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                        manual=UtcpManual(manual_version="0.0.0", tools=[]),
                         errors=[error_msg]
                     )
         except Exception as e:
@@ -221,7 +222,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
-                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                manual=UtcpManual(manual_version="0.0.0", tools=[]),
                 errors=[error_msg]
             )
 
@@ -394,7 +395,8 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         for param_name in path_params:
             if param_name in tool_args:
                 # Replace the parameter in the URL
-                param_value = str(tool_args[param_name])
+                # URL-encode the parameter value to prevent path injection
+                param_value = quote(str(tool_args[param_name]), safe="")
                 url = url.replace(f'{{{param_name}}}', param_value)
                 # Remove the parameter from arguments so it's not used as a query parameter
                 tool_args.pop(param_name)

@@ -65,21 +65,19 @@ class OpenApiConverter:
             openapi_spec: Parsed OpenAPI specification as a dictionary.
             spec_url: Optional URL where the specification was retrieved from.
                 Used for base URL determination if servers are not specified.
-            call_template_name: Optional custom name for the call_template. If not
-                provided, derives name from the specification title.
+            call_template_name: Optional custom name for the call_template if 
+            the specification title is not provided.
         """
         self.spec = openapi_spec
         self.spec_url = spec_url
         # Single counter for all placeholder variables
         self.placeholder_counter = 0
-        # If call_template_name is None then get the first word in spec.info.title
         if call_template_name is None:
-            title = openapi_spec.get("info", {}).get("title", "openapi_call_template_" + uuid.uuid4().hex)
-            # Replace characters that are invalid for identifiers
-            invalid_chars = " -.,!?'\"\\/()[]{}#@$%^&*+=~`|;:<>"
-            self.call_template_name = ''.join('_' if c in invalid_chars else c for c in title)
-        else:
-            self.call_template_name = call_template_name
+            call_template_name = "openapi_call_template_" + uuid.uuid4().hex
+        title = openapi_spec.get("info", {}).get("title", call_template_name)
+        # Replace characters that are invalid for identifiers
+        invalid_chars = " -.,!?'\"\\/()[]{}#@$%^&*+=~`|;:<>"
+        self.call_template_name = ''.join('_' if c in invalid_chars else c for c in title)
             
     def _increment_placeholder_counter(self) -> int:
         """Increments the global counter and returns the new value.
@@ -299,13 +297,11 @@ class OpenApiConverter:
         outputs = self._extract_outputs(operation)
         auth = self._extract_auth(operation)
 
-        call_template_name = self.spec.get("info", {}).get("title", "call_template_" + uuid.uuid4().hex)
-
         # Combine base URL and path, ensuring no double slashes
         full_url = base_url.rstrip('/') + '/' + path.lstrip('/')
 
         call_template = HttpCallTemplate(
-            name=call_template_name,
+            name=self.call_template_name,
             http_method=method.upper(),
             url=full_url,
             body_field=body_field if body_field else None,

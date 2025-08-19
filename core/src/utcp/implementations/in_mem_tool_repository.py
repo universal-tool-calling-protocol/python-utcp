@@ -76,32 +76,35 @@ class InMemToolRepository(ConcurrentToolRepository):
 
     async def get_tool(self, tool_name: str) -> Optional[Tool]:
         async with self._rwlock.read():
-            return self._tools_by_name.get(tool_name)
+            tool = self._tools_by_name.get(tool_name)
+            return tool.model_copy(deep=True) if tool else None
 
     async def get_tools(self) -> List[Tool]:
         async with self._rwlock.read():
-            return list(self._tools_by_name.values())
+            return [t.model_copy(deep=True) for t in self._tools_by_name.values()]
 
     async def get_tools_by_manual(self, manual_name: str) -> Optional[List[Tool]]:
         async with self._rwlock.read():
             manual = self._manuals.get(manual_name)
-            return manual.tools if manual is not None else None
+            return [t.model_copy(deep=True) for t in manual.tools] if manual is not None else None
 
     async def get_manual(self, manual_name: str) -> Optional[UtcpManual]:
         async with self._rwlock.read():
-            return self._manuals.get(manual_name)
+            manual = self._manuals.get(manual_name)
+            return manual.model_copy(deep=True) if manual else None
 
     async def get_manuals(self) -> List[UtcpManual]:
         async with self._rwlock.read():
-            return list(self._manuals.values())
+            return [m.model_copy(deep=True) for m in self._manuals.values()]
 
     async def get_manual_call_template(self, manual_call_template_name: str) -> Optional[CallTemplate]:
         async with self._rwlock.read():
-            return self._manual_call_templates.get(manual_call_template_name)
+            manual_call_template = self._manual_call_templates.get(manual_call_template_name)
+            return manual_call_template.model_copy(deep=True) if manual_call_template else None
 
     async def get_manual_call_templates(self) -> List[CallTemplate]:
         async with self._rwlock.read():
-            return list(self._manual_call_templates.values())
+            return [m.model_copy(deep=True) for m in self._manual_call_templates.values()]
 
 class InMemToolRepositoryConfigSerializer(Serializer[InMemToolRepository]):
     def to_dict(self, obj: InMemToolRepository) -> dict:

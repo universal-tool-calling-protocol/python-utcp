@@ -39,7 +39,7 @@ def main():
     if len(sys.argv) == 1:
         # Return UTCP manual
         tools_data = {
-            "version": "1.0.0",
+            "manual_version": "1.0.0",
             "name": "Mock CLI Tools",
             "description": "Mock CLI tools for testing",
             "tools": [

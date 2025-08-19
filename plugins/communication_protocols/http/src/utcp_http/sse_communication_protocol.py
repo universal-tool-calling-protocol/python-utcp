@@ -3,6 +3,7 @@ import aiohttp
 import json
 import asyncio
 import re
+from urllib.parse import quote
 import base64
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
@@ -139,7 +140,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
-                manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
+                manual=UtcpManual(manual_version="0.0.0", tools=[]),
                 errors=[traceback.format_exc()]
             )
 
@@ -327,7 +328,8 @@ class SseCommunicationProtocol(CommunicationProtocol):
         for param_name in path_params:
             if param_name in tool_args:
                 # Replace the parameter in the URL
-                param_value = str(tool_args[param_name])
+                # URL-encode the parameter value to prevent path injection
+                param_value = quote(str(tool_args[param_name]), safe="")
                 url = url.replace(f'{{{param_name}}}', param_value)
                 # Remove the parameter from arguments so it's not used as a query parameter
                 tool_args.pop(param_name)
