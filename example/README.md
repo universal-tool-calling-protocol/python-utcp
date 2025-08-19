@@ -1,1 +1,0 @@
-For full examples please head to the [UTCP Examples Repo](https://github.com/universal-tool-calling-protocol/utcp-examples)
