@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
-class ConcurrentToolRepository(ABC, BaseModel):
+class ConcurrentToolRepository(BaseModel, ABC):
     """Abstract interface for tool and provider storage implementations.
 
     Defines the contract for repositories that manage the lifecycle and storage

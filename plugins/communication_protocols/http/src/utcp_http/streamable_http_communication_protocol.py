@@ -15,6 +15,8 @@ from utcp_http.streamable_http_call_template import StreamableHttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth, ClientResponse
 import logging
 
+logger = logging.getLogger(__name__)
+
 class StreamableHttpCommunicationProtocol(CommunicationProtocol):
     """Streamable HTTP communication protocol implementation for UTCP client.
     
@@ -44,7 +46,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     elif provider.auth.location == "cookie":
                         cookies[provider.auth.var_name] = provider.auth.api_key
                 else:
-                    logging.error("API key not found for ApiKeyAuth.")
+                    logger.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
             
             elif isinstance(provider.auth, BasicAuth):
@@ -59,9 +61,9 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
 
     async def close(self):
         """Close all active connections and clear internal state."""
-        logging.info("Closing all active HTTP stream connections.")
+        logger.info("Closing all active HTTP stream connections.")
         for provider_name, (response, session) in list(self._active_connections.items()):
-            logging.info(f"Closing connection for provider: {provider_name}")
+            logger.info(f"Closing connection for provider: {provider_name}")
             if not response.closed:
                 response.close()  # Close the response
             if not session.closed:
@@ -83,7 +85,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 "Non-secure URLs are vulnerable to man-in-the-middle attacks."
             )
             
-        logging.info(f"Discovering tools from '{manual_call_template.name}' (HTTP Stream) at {url}")
+        logger.info(f"Discovering tools from '{manual_call_template.name}' (HTTP Stream) at {url}")
 
         try:
             # Use the template's configuration (headers, auth, etc.)
@@ -143,7 +145,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     )
         except aiohttp.ClientResponseError as e:
             error_msg = f"Error discovering tools from '{manual_call_template.name}': {e.status}, message='{e.message}', url='{e.request_info.url}'"
-            logging.error(error_msg)
+            logger.error(error_msg)
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
@@ -152,7 +154,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             )
         except (json.JSONDecodeError, aiohttp.ClientError) as e:
             error_msg = f"Error processing request for '{manual_call_template.name}': {e}"
-            logging.error(error_msg)
+            logger.error(error_msg)
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
@@ -161,7 +163,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             )
         except Exception as e:
             error_msg = f"An unexpected error occurred while discovering tools from '{manual_call_template.name}': {e}"
-            logging.error(error_msg)
+            logger.error(error_msg)
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
@@ -173,14 +175,14 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         """Deregister a StreamableHttp manual and close any active connections."""
         template_name = manual_call_template.name
         if template_name in self._active_connections:
-            logging.info(f"Closing active HTTP stream connection for template '{template_name}'")
+            logger.info(f"Closing active HTTP stream connection for template '{template_name}'")
             response, session = self._active_connections.pop(template_name)
             if not response.closed:
                 response.close()
             if not session.closed:
                 await session.close()
         else:
-            logging.info(f"No active connection found for template '{template_name}'")
+            logger.info(f"No active connection found for template '{template_name}'")
 
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Execute a tool call through StreamableHttp transport."""
@@ -265,7 +267,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
 
         except Exception as e:
             await session.close()
-            logging.error(f"Error establishing HTTP stream connection to '{tool_call_template.name}': {e}")
+            logger.error(f"Error establishing HTTP stream connection to '{tool_call_template.name}': {e}")
             raise
 
     async def _process_http_stream(self, response: ClientResponse, chunk_size: Optional[int], provider_name: str) -> AsyncIterator[Any]:
@@ -279,7 +281,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                         try:
                             yield json.loads(line)
                         except json.JSONDecodeError:
-                            logging.error(f"Error parsing NDJSON line for '{provider_name}': {line[:100]}")
+                            logger.error(f"Error parsing NDJSON line for '{provider_name}': {line[:100]}")
                             yield line # Yield raw line on error
             elif 'application/octet-stream' in content_type:
                 async for chunk in response.content.iter_chunked(chunk_size or 8192):
@@ -294,7 +296,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     try:
                         yield json.loads(buffer)
                     except json.JSONDecodeError:
-                        logging.error(f"Error parsing JSON response for '{provider_name}': {buffer[:100]}")
+                        logger.error(f"Error parsing JSON response for '{provider_name}': {buffer[:100]}")
                         yield buffer # Yield raw buffer on error
             else:
                 # Default to binary chunk streaming for unknown content types
@@ -302,7 +304,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     if chunk:
                         yield chunk
         except Exception as e:
-            logging.error(f"Error processing HTTP stream for '{provider_name}': {e}")
+            logger.error(f"Error processing HTTP stream for '{provider_name}': {e}")
             raise
         finally:
             # The session is closed later by deregister_tool_provider or close()
@@ -320,18 +322,18 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         async with aiohttp.ClientSession() as session:
             # Method 1: Credentials in body
             try:
-                logging.info(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
+                logger.info(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
                 async with session.post(auth_details.token_url, data={'grant_type': 'client_credentials', 'client_id': client_id, 'client_secret': auth_details.client_secret, 'scope': auth_details.scope}) as response:
                     response.raise_for_status()
                     token_data = await response.json()
                     self._oauth_tokens[client_id] = token_data
                     return token_data['access_token']
             except aiohttp.ClientError as e:
-                logging.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
+                logger.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
 
             # Method 2: Credentials as Basic Auth header
             try:
-                logging.info(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
+                logger.info(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
                 auth = AiohttpBasicAuth(client_id, auth_details.client_secret)
                 async with session.post(auth_details.token_url, data={'grant_type': 'client_credentials', 'scope': auth_details.scope}, auth=auth) as response:
                     response.raise_for_status()
@@ -339,7 +341,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     self._oauth_tokens[client_id] = token_data
                     return token_data['access_token']
             except aiohttp.ClientError as e:
-                logging.error(f"OAuth2 with Basic Auth header also failed: {e}")
+                logger.error(f"OAuth2 with Basic Auth header also failed: {e}")
                 raise e
     
     def _build_url_with_path_params(self, url_template: str, tool_args: Dict[str, Any]) -> str:

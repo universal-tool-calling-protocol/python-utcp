@@ -10,7 +10,7 @@ from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
-class Auth(ABC, BaseModel):
+class Auth(BaseModel, ABC):
     """Authentication details for a provider.
 
     Attributes:

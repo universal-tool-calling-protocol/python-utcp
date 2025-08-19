@@ -15,7 +15,7 @@ class HttpCallTemplate(CallTemplate):
     URL body, headers or query pattern parameters are passed as query parameters using '?arg_name={arg_value}'.
 
     Attributes:
-        type: Always "http" for HTTP providers.
+        call_template_type: Always "http" for HTTP providers.
         http_method: The HTTP method to use for requests.
         url: The base URL for the HTTP endpoint. Supports path parameters like
             "https://api.example.com/users/{user_id}/posts/{post_id}".

@@ -2,21 +2,22 @@ from typing import Dict, Any, List, Optional, Callable
 import aiohttp
 import asyncio
 import ssl
-import logging
 from gql import Client as GqlClient, gql as gql_query
 from gql.transport.aiohttp import AIOHTTPTransport
 from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.shared.provider import Provider, GraphQLProvider
 from utcp.shared.tool import Tool, ToolInputOutputSchema
 from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
+import logging
+
+logger = logging.getLogger(__name__)
 
 class GraphQLClientTransport(ClientTransportInterface):
     """
     Simple, robust, production-ready GraphQL transport using gql.
     Stateless, per-operation. Supports all GraphQL features.
     """
-    def __init__(self, logger: Optional[Callable[[str, Any], None]] = None):
-        self._log = logger or (lambda msg, error=False: None)
+    def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 
     def _enforce_https_or_localhost(self, url: str):

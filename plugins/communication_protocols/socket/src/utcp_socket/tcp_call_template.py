@@ -1,3 +1,7 @@
+from utcp.data.call_template import CallTemplate
+from typing import Optional, Literal
+from pydantic import Field
+
 class TCPProvider(CallTemplate):
     """Provider configuration for raw TCP socket tools.
 
@@ -20,7 +24,7 @@ class TCPProvider(CallTemplate):
         4. Stream-based: Set framing_strategy='stream' (reads until connection closes)
 
     Attributes:
-        type: Always "tcp" for TCP providers.
+        call_template_type: Always "tcp" for TCP providers.
         host: The hostname or IP address of the TCP server.
         port: The port number of the TCP server.
         request_data_format: Format for request data ('json' or 'text').
@@ -58,7 +62,7 @@ class TCPProvider(CallTemplate):
     )
     # Delimiter-based framing options
     message_delimiter: str = Field(
-        default='\\x00',
+        default='\x00',
         description="Delimiter to detect end of TCP response (e.g., '\\n', '\\r\\n', '\\x00'). Used with 'delimiter' framing."
     )
     # Fixed-length framing options

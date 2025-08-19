@@ -13,7 +13,7 @@ class CliCallTemplate(CallTemplate):
     Supports environment variable injection and custom working directories.
 
     Attributes:
-        type: Always "cli" for CLI providers.
+        call_template_type: Always "cli" for CLI providers.
         command_name: The name or path of the command to execute.
         env_vars: Optional environment variables to set during command execution.
         working_dir: Optional custom working directory for command execution.

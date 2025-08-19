@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
-class ToolSearchStrategy(ABC, BaseModel):
+class ToolSearchStrategy(BaseModel, ABC):
     """Abstract interface for tool search implementations.
 
     Defines the contract for tool search strategies that can be plugged into

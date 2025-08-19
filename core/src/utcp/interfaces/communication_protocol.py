@@ -90,7 +90,7 @@ class CommunicationProtocol(ABC):
         pass
 
     @abstractmethod
-    async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any]:
+    async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """Execute a tool call through this transport streamingly.
 
         Sends a tool invocation request to the provider using the appropriate

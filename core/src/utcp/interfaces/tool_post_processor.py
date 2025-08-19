@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
-class ToolPostProcessor(ABC, BaseModel):
+class ToolPostProcessor(BaseModel, ABC):
     tool_post_processor_type: str
 
     @abstractmethod

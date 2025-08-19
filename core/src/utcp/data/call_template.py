@@ -21,7 +21,7 @@ Supported provider types:
 """
 
 from typing import List, Optional, Union
-from pydantic import BaseModel, field_serializer, field_validator
+from pydantic import BaseModel, field_serializer, field_validator, Field
 import uuid
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
@@ -41,7 +41,7 @@ class CallTemplate(BaseModel):
         call_template_type: The transport protocol type used by this provider.
     """
     
-    name: str = uuid.uuid4().hex
+    name: str = Field(default_factory=lambda: uuid.uuid4().hex)
     call_template_type: str
     auth: Optional[Auth] = None
 

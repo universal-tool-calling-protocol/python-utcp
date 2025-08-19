@@ -15,8 +15,10 @@ from utcp.data.auth_implementations.basic_auth import BasicAuth
 from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.sse_call_template import SseCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
-import logging
 import traceback
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SseCommunicationProtocol(CommunicationProtocol):
     """SSE communication protocol implementation for UTCP client.
@@ -47,7 +49,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     elif provider.auth.location == "cookie":
                         cookies[provider.auth.var_name] = provider.auth.api_key
                 else:
-                    logging.error("API key not found for ApiKeyAuth.")
+                    logger.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
             
             elif isinstance(provider.auth, BasicAuth):
@@ -75,7 +77,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     "Non-secure URLs are vulnerable to man-in-the-middle attacks."
                 )
                 
-            logging.info(f"Discovering tools from '{manual_call_template.name}' (SSE) at {url}")
+            logger.info(f"Discovering tools from '{manual_call_template.name}' (SSE) at {url}")
             
             # Use the provider's configuration (headers, auth, etc.)
             request_headers = manual_call_template.headers.copy() if manual_call_template.headers else {}
@@ -133,7 +135,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                         errors=[]
                     )
         except Exception as e:
-            logging.error(f"Error discovering tools from '{manual_call_template.name}': {e}")
+            logger.error(f"Error discovering tools from '{manual_call_template.name}': {e}")
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
@@ -207,7 +209,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 yield event
         except Exception as e:
             await session.close()
-            logging.error(f"Error establishing SSE connection to '{tool_call_template.name}': {e}")
+            logger.error(f"Error establishing SSE connection to '{tool_call_template.name}': {e}")
             raise
 
     async def _process_sse_stream(self, response: aiohttp.ClientResponse, event_type=None):
@@ -259,7 +261,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     except json.JSONDecodeError:
                         yield current_event['data']
         except Exception as e:
-            logging.error(f"Error processing SSE stream: {e}")
+            logger.error(f"Error processing SSE stream: {e}")
             raise
         finally:
             pass # Session is managed and closed by deregister_tool_provider
@@ -279,7 +281,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                logging.error(f"OAuth2 with body failed: {e}. Trying Basic Auth.")
+                logger.error(f"OAuth2 with body failed: {e}. Trying Basic Auth.")
             
             try: # Method 2: Credentials in header
                 header_auth = aiohttp.BasicAuth(client_id, auth_details.client_secret)
@@ -290,7 +292,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                logging.error(f"OAuth2 with header failed: {e}")
+                logger.error(f"OAuth2 with header failed: {e}")
                 raise e
 
     async def close(self):

@@ -1,6 +1,6 @@
 
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Literal, Union, TypeAlias, Any
+from typing import Optional, Dict, Literal, Any
 from utcp.data.auth_implementations import OAuth2Auth
 from utcp.data.call_template import CallTemplate
 from utcp.interfaces.serializer import Serializer
@@ -33,7 +33,7 @@ class McpCallTemplate(CallTemplate):
     transport methods.
 
     Attributes:
-        type: Always "mcp" for MCP providers.
+        call_template_type: Always "mcp" for MCP providers.
         config: Configuration object containing MCP server definitions.
             This follows the same format as the official MCP server configuration.
         auth: Optional OAuth2 authentication for HTTP-based MCP servers.

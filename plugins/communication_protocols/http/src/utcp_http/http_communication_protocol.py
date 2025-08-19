@@ -30,8 +30,10 @@ from utcp.data.auth_implementations.basic_auth import BasicAuth
 from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
-import logging
 from utcp_http.openapi_converter import OpenApiConverter
+import logging
+
+logger = logging.getLogger(__name__)
 
 class HttpCommunicationProtocol(CommunicationProtocol):
     """HTTP communication protocol implementation for UTCP client.
@@ -84,7 +86,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     elif provider.auth.location == "cookie":
                         cookies[provider.auth.var_name] = provider.auth.api_key
                 else:
-                    logging.error("API key not found for ApiKeyAuth.")
+                    logger.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
             
             elif isinstance(provider.auth, BasicAuth):
@@ -120,7 +122,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     "Non-secure URLs are vulnerable to man-in-the-middle attacks."
                 )
                 
-            logging.info(f"Discovering tools from '{manual_call_template.name}' (HTTP) at {url}")
+            logger.info(f"Discovering tools from '{manual_call_template.name}' (HTTP) at {url}")
             
             # Use the call template's configuration (headers, auth, HTTP method, etc.)
             request_headers = manual_call_template.headers.copy() if manual_call_template.headers else {}
@@ -182,10 +184,10 @@ class HttpCommunicationProtocol(CommunicationProtocol):
 
                         # Check if the response is a UTCP manual or an OpenAPI spec
                         if "utcp_version" in response_data and "tools" in response_data:
-                            logging.info(f"Detected UTCP manual from '{manual_call_template.name}'.")
+                            logger.info(f"Detected UTCP manual from '{manual_call_template.name}'.")
                             utcp_manual = UtcpManualSerializer().validate_dict(response_data)
                         else:
-                            logging.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
+                            logger.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
                             converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, call_template_name=manual_call_template.name)
                             utcp_manual = converter.convert()
                         
@@ -197,7 +199,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                         )
                 except aiohttp.ClientResponseError as e:
                     error_msg = f"Error connecting to HTTP provider '{manual_call_template.name}': {e}"
-                    logging.error(error_msg)
+                    logger.error(error_msg)
                     return RegisterManualResult(
                         success=False,
                         manual_call_template=manual_call_template,
@@ -206,7 +208,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     )
                 except (json.JSONDecodeError, yaml.YAMLError) as e:
                     error_msg = f"Error parsing spec from HTTP provider '{manual_call_template.name}': {e}"
-                    logging.error(error_msg)
+                    logger.error(error_msg)
                     return RegisterManualResult(
                         success=False,
                         manual_call_template=manual_call_template,
@@ -215,7 +217,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     )
         except Exception as e:
             error_msg = f"Unexpected error discovering tools from HTTP provider '{manual_call_template.name}': {traceback.format_exc()}"
-            logging.error(error_msg)
+            logger.error(error_msg)
             return RegisterManualResult(
                 success=False,
                 manual_call_template=manual_call_template,
@@ -306,10 +308,10 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     return await response.json()
                     
             except aiohttp.ClientResponseError as e:
-                logging.error(f"Error calling tool '{tool_name}' on call template '{tool_call_template.name}': {e}")
+                logger.error(f"Error calling tool '{tool_name}' on call template '{tool_call_template.name}': {e}")
                 raise
             except Exception as e:
-                logging.error(f"Unexpected error calling tool '{tool_name}': {e}")
+                logger.error(f"Unexpected error calling tool '{tool_name}': {e}")
                 raise
 
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
@@ -338,7 +340,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         async with aiohttp.ClientSession() as session:
             # Method 1: Send credentials in the request body
             try:
-                logging.info("Attempting OAuth2 token fetch with credentials in body.")
+                logger.info("Attempting OAuth2 token fetch with credentials in body.")
                 body_data = {
                     'grant_type': 'client_credentials',
                     'client_id': auth_details.client_id,
@@ -351,11 +353,11 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                logging.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
+                logger.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
 
             # Method 2: Send credentials as Basic Auth header
             try:
-                logging.info("Attempting OAuth2 token fetch with Basic Auth header.")
+                logger.info("Attempting OAuth2 token fetch with Basic Auth header.")
                 header_auth = AiohttpBasicAuth(auth_details.client_id, auth_details.client_secret)
                 header_data = {
                     'grant_type': 'client_credentials',
@@ -367,7 +369,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                logging.error(f"OAuth2 with Basic Auth header also failed: {e}")
+                logger.error(f"OAuth2 with Basic Auth header also failed: {e}")
     
     def _build_url_with_path_params(self, url_template: str, tool_args: Dict[str, Any]) -> str:
         """Build URL by substituting path parameters from arguments.

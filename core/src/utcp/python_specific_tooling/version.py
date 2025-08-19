@@ -3,6 +3,8 @@ import tomli
 from pathlib import Path
 import logging
 
+logger = logging.getLogger(__name__)
+
 __version__ = "1.0.0"
 try:
     __version__ = version("utcp")
@@ -14,6 +16,6 @@ except PackageNotFoundError:
                 pyproject_data = tomli.load(f)
                 __version__ = pyproject_data.get("project", {}).get("version", __version__)
         else:
-            logging.warning("pyproject.toml not found")
+            logger.warning("pyproject.toml not found")
     except (ImportError, FileNotFoundError, KeyError):
-        logging.warning("Failed to load version from pyproject.toml")
+        logger.warning("Failed to load version from pyproject.toml")

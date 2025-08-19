@@ -1,5 +1,4 @@
 from typing import Any, Dict, Optional, AsyncGenerator, TYPE_CHECKING
-import logging
 import json
 
 from mcp import ClientSession, StdioServerParameters
@@ -14,10 +13,11 @@ from utcp.data.register_manual_response import RegisterManualResult
 import aiohttp
 from aiohttp import BasicAuth as AiohttpBasicAuth
 from utcp_mcp.mcp_call_template import McpCallTemplate
-
 if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
+import logging
 
+logger = logging.getLogger(__name__)
 
 class McpCommunicationProtocol(CommunicationProtocol):
     """MCP transport implementation that connects to MCP servers via stdio or HTTP.
@@ -91,9 +91,9 @@ class McpCommunicationProtocol(CommunicationProtocol):
         if manual_call_template.config and manual_call_template.config.mcpServers:
             for server_name, server_config in manual_call_template.config.mcpServers.items():
                 try:
-                    logging.info(f"Discovering tools for server '{server_name}' via {server_config}")
+                    logger.info(f"Discovering tools for server '{server_name}' via {server_config}")
                     mcp_tools = await self._list_tools_with_session(server_config, auth=manual_call_template.auth)
-                    logging.info(f"Discovered {len(mcp_tools)} tools for server '{server_name}'")
+                    logger.info(f"Discovered {len(mcp_tools)} tools for server '{server_name}'")
                     for mcp_tool in mcp_tools:
                         # Convert mcp.Tool to utcp.data.tool.Tool
                         utcp_tool = Tool(
@@ -105,7 +105,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                         )
                         all_tools.append(utcp_tool)
                 except Exception as e:
-                    logging.error(f"Failed to discover tools for server '{server_name}': {e}")
+                    logger.error(f"Failed to discover tools for server '{server_name}': {e}")
                     errors.append(f"Failed to discover tools for server '{server_name}': {e}")
         return RegisterManualResult(
             manual_call_template=manual_call_template,
@@ -125,14 +125,14 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # Try each server until we find one that has the tool
         for server_name, server_config in tool_call_template.config.mcpServers.items():
             try:
-                logging.info(f"Attempting to call tool '{tool_name}' on server '{server_name}'")
+                logger.info(f"Attempting to call tool '{tool_name}' on server '{server_name}'")
                 
                 # First check if this server has the tool
                 tools = await self._list_tools_with_session(server_config, auth=tool_call_template.auth)
                 tool_names = [tool.name for tool in tools]
                 
                 if tool_name not in tool_names:
-                    logging.info(f"Tool '{tool_name}' not found in server '{server_name}'")
+                    logger.info(f"Tool '{tool_name}' not found in server '{server_name}'")
                     continue  # Try next server
                 
                 # Call the tool
@@ -141,7 +141,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 # Process the result
                 return self._process_tool_result(result, tool_name)
             except Exception as e:
-                logging.error(f"Error calling tool '{tool_name}' on server '{server_name}': {e}")
+                logger.error(f"Error calling tool '{tool_name}' on server '{server_name}': {e}")
                 continue  # Try next server
         
         raise ValueError(f"Tool '{tool_name}' not found in any configured server")
@@ -150,21 +150,21 @@ class McpCommunicationProtocol(CommunicationProtocol):
         yield self.call_tool(caller, tool_name, tool_args, tool_call_template)
 
     def _process_tool_result(self, result, tool_name: str) -> Any:
-        logging.info(f"Processing tool result for '{tool_name}', type: {type(result)}")
+        logger.info(f"Processing tool result for '{tool_name}', type: {type(result)}")
         
         # Check for structured output first
         if hasattr(result, 'structured_output'):
-            logging.info(f"Found structured_output: {result.structured_output}")
+            logger.info(f"Found structured_output: {result.structured_output}")
             return result.structured_output
         
         # Process content if available
         if hasattr(result, 'content'):
             content = result.content
-            logging.info(f"Content type: {type(content)}")
+            logger.info(f"Content type: {type(content)}")
             
             # Handle list content
             if isinstance(content, list):
-                logging.info(f"Content is a list with {len(content)} items")
+                logger.info(f"Content is a list with {len(content)} items")
                 
                 if not content:
                     return []
@@ -227,7 +227,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
 
     async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
         """Deregister an MCP manual. This is a no-op in session-per-operation mode."""
-        logging.info(f"Deregistering manual '{manual_call_template.name}' (no-op in session-per-operation mode)")
+        logger.info(f"Deregistering manual '{manual_call_template.name}' (no-op in session-per-operation mode)")
         pass
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
@@ -241,7 +241,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         async with aiohttp.ClientSession() as session:
             # Method 1: Send credentials in the request body
             try:
-                logging.info(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
+                logger.info(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
                 body_data = {
                     'grant_type': 'client_credentials',
                     'client_id': client_id,
@@ -254,11 +254,11 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                logging.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
+                logger.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
                 
             # Method 2: Send credentials as Basic Auth header
             try:
-                logging.info(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
+                logger.info(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
                 header_auth = AiohttpBasicAuth(client_id, auth_details.client_secret)
                 header_data = {
                     'grant_type': 'client_credentials',
@@ -270,5 +270,5 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
-                logging.error(f"OAuth2 with Basic Auth header also failed: {e}")
+                logger.error(f"OAuth2 with Basic Auth header also failed: {e}")
                 raise e

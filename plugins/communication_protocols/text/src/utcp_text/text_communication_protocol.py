@@ -5,7 +5,6 @@ This protocol reads UTCP manuals (or OpenAPI specs) from local files to register
 tools. It does not maintain any persistent connections.
 """
 import json
-import logging
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, AsyncGenerator, TYPE_CHECKING
@@ -21,14 +20,18 @@ import traceback
 if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 class TextCommunicationProtocol(CommunicationProtocol):
     """Communication protocol for file-based UTCP manuals and tools."""
 
     def _log_info(self, message: str) -> None:
-        logging.info(f"[TextCommunicationProtocol] {message}")
+        logger.info(f"[TextCommunicationProtocol] {message}")
 
     def _log_error(self, message: str) -> None:
-        logging.error(f"[TextCommunicationProtocol Error] {message}")
+        logger.error(f"[TextCommunicationProtocol Error] {message}")
 
     async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
         """Register a text manual and return its tools as a UtcpManual."""

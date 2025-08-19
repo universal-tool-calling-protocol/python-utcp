@@ -89,6 +89,7 @@ class UtcpManual(BaseModel):
         """
         if exclude is None:
             exclude = []
+        ensure_plugins_initialized()
         return UtcpManual(
             tools=[tool for tool in ToolContext.get_tools() if tool.name not in exclude],
             manual_version=manual_version,

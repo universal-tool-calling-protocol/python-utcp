@@ -30,37 +30,56 @@ class FilterDictPostProcessor(ToolPostProcessor):
 
         if not self.exclude_keys and not self.only_include_keys:
             return result
-        return self._filter_dict(result)
+        if self.exclude_keys:
+            result = self._filter_dict_exclude_keys(result)
+        if self.only_include_keys:
+            result = self._filter_dict_only_include_keys(result)
+        return result
 
-    def _filter_dict(self, result: Any) -> Any:
+    def _filter_dict_exclude_keys(self, result: Any) -> Any:
         if isinstance(result, dict):
             new_result = {}
-            if self.exclude_keys:
-                for key, value in result.items():
-                    if key not in self.exclude_keys:
-                        new_result[key] = self._filter_dict(value)
-                return new_result
-            
-            if self.only_include_keys:
-                for key, value in result.items():
-                    if key in self.only_include_keys:
-                        new_result[key] = self._filter_dict(value)
-                    else:
-                        # If the key is not in the include list, we still want to check its children
-                        processed_value = self._filter_dict(value)
-                        # Add the child back if it's a non-empty dictionary or a non-empty list after filtering
-                        if (isinstance(processed_value, dict) and processed_value) or \
-                           (isinstance(processed_value, list) and processed_value):
-                            new_result[key] = processed_value
-                return new_result
-
-            return {key: self._filter_dict(value) for key, value in result.items()}
+            for key, value in result.items():
+                if key not in self.exclude_keys:
+                    new_result[key] = self._filter_dict(value)
+            return new_result
 
         if isinstance(result, list):
             new_list = []
             for item in result:
-                processed_item = self._filter_dict(item)
-                # Filter out empty dicts and lists, but keep other falsy values like 0, False, etc.
+                processed_item = self._filter_dict_exclude_keys(item)
+                if isinstance(processed_item, dict):
+                    if processed_item:
+                        new_list.append(processed_item)
+                elif isinstance(processed_item, list):
+                    if processed_item:
+                        new_list.append(processed_item)
+                else:
+                    new_list.append(processed_item)
+            return new_list
+
+        return result
+    
+    def _filter_dict_only_include_keys(self, result: Any) -> Any:
+        if isinstance(result, dict):
+            new_result = {}
+            for key, value in result.items():
+                if key in self.only_include_keys:
+                    if isinstance(value, dict):
+                        new_result[key] = self._filter_dict_only_include_keys(value)
+                    else:
+                        new_result[key] = value
+                else:
+                    processed_value = self._filter_dict_only_include_keys(value)
+                    if (isinstance(processed_value, dict) and processed_value) or \
+                    (isinstance(processed_value, list) and processed_value):
+                        new_result[key] = processed_value
+            return new_result
+
+        if isinstance(result, list):
+            new_list = []
+            for item in result:
+                processed_item = self._filter_dict_only_include_keys(item)
                 if isinstance(processed_item, dict) and processed_item:
                     new_list.append(processed_item)
                 if isinstance(processed_item, list) and processed_item:

@@ -124,7 +124,7 @@ class UtcpClient(ABC):
         pass
 
     @abstractmethod
-    async def call_tool_streaming(self, tool_name: str, tool_args: Dict[str, Any]) -> AsyncGenerator[Any]:
+    async def call_tool_streaming(self, tool_name: str, tool_args: Dict[str, Any]) -> AsyncGenerator[Any, None]:
         """
         Call a tool streamingly.
 

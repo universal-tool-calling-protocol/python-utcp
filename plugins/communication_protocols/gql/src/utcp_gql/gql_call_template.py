@@ -1,3 +1,8 @@
+from utcp.data.call_template import CallTemplate
+from utcp.data.auth import Auth
+from typing import Dict, List, Optional, Literal
+from pydantic import Field
+
 class GraphQLProvider(CallTemplate):
     """Provider configuration for GraphQL-based tools.
 
@@ -6,7 +11,7 @@ class GraphQLProvider(CallTemplate):
     and authentication.
 
     Attributes:
-        type: Always "graphql" for GraphQL providers.
+        call_template_type: Always "graphql" for GraphQL providers.
         url: The GraphQL endpoint URL.
         operation_type: The type of GraphQL operation (query, mutation, subscription).
         operation_name: Optional name for the GraphQL operation.

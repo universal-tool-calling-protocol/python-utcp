@@ -179,7 +179,10 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
             for match in re.finditer(pattern, obj):
                 # The first group that is not None is the one that matched
                 var_name = next(g for g in match.groups() if g is not None)
-                full_var_name = variable_namespace.replace("_", "!").replace("!", "__") + "_" + var_name
+                if variable_namespace:
+                    full_var_name = variable_namespace.replace("_", "!").replace("!", "__") + "_" + var_name
+                else:
+                    full_var_name = var_name
                 variables.append(full_var_name)
             
             return variables

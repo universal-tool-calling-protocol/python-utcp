@@ -5,7 +5,6 @@ This transport communicates with tools over UDP sockets.
 """
 import asyncio
 import json
-import logging
 import socket
 import traceback
 from typing import Dict, Any, List, Optional, Callable, Union
@@ -13,7 +12,9 @@ from typing import Dict, Any, List, Optional, Callable, Union
 from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.shared.provider import Provider, UDPProvider
 from utcp.shared.tool import Tool
+import logging
 
+logger = logging.getLogger(__name__)
 
 class UDPTransport(ClientTransportInterface):
     """Transport implementation for UDP-based tool providers.
@@ -43,7 +44,7 @@ class UDPTransport(ClientTransportInterface):
         
     def _log_error(self, message: str):
         """Log error messages."""
-        logging.error(f"[UDPTransport Error] {message}")
+        logger.error(f"[UDPTransport Error] {message}")
     
     def _format_tool_call_message(
         self,

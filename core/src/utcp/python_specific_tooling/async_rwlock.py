@@ -25,27 +25,33 @@ class AsyncRWLock:
         self._turnstile.release()
 
         await self._readers_lock.acquire()
-        self._readers += 1
-        if self._readers == 1:
-            # First reader locks the resource
-            await self._resource_lock.acquire()
-        self._readers_lock.release()
+        try:
+            self._readers += 1
+            if self._readers == 1:
+                # First reader locks the resource
+                await self._resource_lock.acquire()
+        finally:
+            self._readers_lock.release()
 
     async def release_read(self) -> None:
         await self._readers_lock.acquire()
-        self._readers -= 1
-        if self._readers == 0:
-            # Last reader releases the resource
-            self._resource_lock.release()
-        self._readers_lock.release()
+        try:
+            self._readers -= 1
+            if self._readers == 0:
+                # Last reader releases the resource
+                self._resource_lock.release()
+        finally:
+            self._readers_lock.release()
 
     async def acquire_write(self) -> None:
         # Ensure only one writer at a time attempts to block readers
         await self._writers_lock.acquire()
-        await self._turnstile.acquire()
-        # Now block new readers and take the resource
-        await self._resource_lock.acquire()
-        self._writers_lock.release()
+        try:
+            await self._turnstile.acquire()
+            # Now block new readers and take the resource
+            await self._resource_lock.acquire()
+        finally:
+            self._writers_lock.release()
 
     async def release_write(self) -> None:
         self._resource_lock.release()

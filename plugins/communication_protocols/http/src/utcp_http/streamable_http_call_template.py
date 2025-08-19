@@ -15,7 +15,7 @@ class StreamableHttpCallTemplate(CallTemplate):
     or query pattern parameters are passed as query parameters using '?arg_name={arg_value}'.
 
     Attributes:
-        type: Always "streamable_http" for HTTP streaming providers.
+        call_template_type: Always "streamable_http" for HTTP streaming providers.
         url: The streaming HTTP endpoint URL. Supports path parameters.
         http_method: The HTTP method to use (GET or POST).
         content_type: The Content-Type header for requests.

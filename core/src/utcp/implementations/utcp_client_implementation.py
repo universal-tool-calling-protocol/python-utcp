@@ -19,9 +19,11 @@ from utcp.exceptions import UtcpVariableNotFound
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.exceptions import UtcpSerializerValidationError
-import logging
 import traceback
 from utcp.utcp_client import UtcpClient
+import logging
+
+logger = logging.getLogger(__name__)
 
 class UtcpClientImplementation(UtcpClient):
     def __init__(
@@ -101,14 +103,14 @@ class UtcpClientImplementation(UtcpClient):
                 try:
                     result = await self.register_manual(manual_call_template)
                     if result.success:
-                        logging.info(f"Successfully registered manual '{manual_call_template.name}' with {len(result.manual.tools)} tools")
+                        logger.info(f"Successfully registered manual '{manual_call_template.name}' with {len(result.manual.tools)} tools")
                     else:
-                        logging.error(f"Error registering manual '{manual_call_template.name}': {result.errors}")
+                        logger.error(f"Error registering manual '{manual_call_template.name}': {result.errors}")
                     return result
                 except UtcpVariableNotFound as e:
                     raise e
                 except Exception as e:
-                    logging.error(f"Error registering manual '{manual_call_template.name}': {traceback.format_exc()}")
+                    logger.error(f"Error registering manual '{manual_call_template.name}': {traceback.format_exc()}")
                     return RegisterManualResult(
                         manual_call_template=manual_call_template,
                         manual=UtcpManual(utcp_version="1.0.0", manual_version="0.0.0", tools=[]),
@@ -142,7 +144,7 @@ class UtcpClientImplementation(UtcpClient):
             result = post_processor.post_process(self, tool, tool_call_template, result)
         return result
 
-    async def call_tool_streaming(self, tool_name: str, tool_args: Dict[str, Any]) -> AsyncGenerator[Any]:
+    async def call_tool_streaming(self, tool_name: str, tool_args: Dict[str, Any]) -> AsyncGenerator[Any, None]:
         manual_name = tool_name.split(".")[0]
         tool = await self.config.tool_repository.get_tool(tool_name)
         if tool is None:

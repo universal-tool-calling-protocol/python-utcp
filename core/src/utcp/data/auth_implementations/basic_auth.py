@@ -1,9 +1,8 @@
 from utcp.data.auth import Auth
 from utcp.interfaces.serializer import Serializer
-from pydantic import Field
+from pydantic import Field, ValidationError
 from typing import Literal
 from utcp.exceptions import UtcpSerializerValidationError
-import traceback
 
 class BasicAuth(Auth):
     """Authentication using HTTP Basic Authentication.
@@ -29,5 +28,7 @@ class BasicAuthSerializer(Serializer[BasicAuth]):
     def validate_dict(self, obj: dict) -> BasicAuth:
         try:
             return BasicAuth.model_validate(obj)
+        except ValidationError as e:
+            raise UtcpSerializerValidationError(f"Invalid BasicAuth: {e}") from e
         except Exception as e:
-            raise UtcpSerializerValidationError("Invalid BasicAuth: " + traceback.format_exc()) from e
+            raise UtcpSerializerValidationError("An unexpected error occurred during BasicAuth validation.") from e

@@ -5,7 +5,6 @@ This transport communicates with tools over TCP sockets.
 """
 import asyncio
 import json
-import logging
 import socket
 import struct
 from typing import Dict, Any, List, Optional, Callable, Union
@@ -13,7 +12,9 @@ from typing import Dict, Any, List, Optional, Callable, Union
 from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.shared.provider import Provider, TCPProvider
 from utcp.shared.tool import Tool
+import logging
 
+logger = logging.getLogger(__name__)
 
 class TCPTransport(ClientTransportInterface):
     """Transport implementation for TCP-based tool providers.
@@ -42,7 +43,7 @@ class TCPTransport(ClientTransportInterface):
         
     def _log_error(self, message: str):
         """Log error messages."""
-        logging.error(f"[TCPTransport Error] {message}")
+        logger.error(f"[TCPTransport Error] {message}")
     
     def _format_tool_call_message(
         self,

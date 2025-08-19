@@ -1,3 +1,7 @@
+from utcp.data.call_template import CallTemplate
+from typing import Optional, Literal
+from pydantic import Field
+
 class UDPProvider(CallTemplate):
     """Provider configuration for UDP (User Datagram Protocol) socket tools.
 
@@ -14,7 +18,7 @@ class UDPProvider(CallTemplate):
         - If response_byte_format is encoding string: Decodes bytes to text
 
     Attributes:
-        type: Always "udp" for UDP providers.
+        call_template_type: Always "udp" for UDP providers.
         host: The hostname or IP address of the UDP server.
         port: The port number of the UDP server.
         number_of_response_datagrams: Expected number of response datagrams (0 for no response).

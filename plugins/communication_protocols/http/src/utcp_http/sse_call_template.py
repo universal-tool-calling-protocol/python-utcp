@@ -15,7 +15,7 @@ class SseCallTemplate(CallTemplate):
     or query pattern parameters are passed as query parameters using '?arg_name={arg_value}'.
 
     Attributes:
-        type: Always "sse" for SSE providers.
+        call_template_type: Always "sse" for SSE providers.
         url: The SSE endpoint URL to connect to.
         event_type: Optional filter for specific event types. If None, all events are received.
         reconnect: Whether to automatically reconnect on connection loss.

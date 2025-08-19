@@ -21,7 +21,6 @@ Security:
 """
 import asyncio
 import json
-import logging
 import os
 import shlex
 from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
@@ -32,6 +31,9 @@ from utcp.data.tool import Tool
 from utcp.data.utcp_manual import UtcpManual, UtcpManualSerializer
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp_cli.cli_call_template import CliCallTemplate, CliCallTemplateSerializer
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class CliCommunicationProtocol(CommunicationProtocol):
@@ -60,21 +62,16 @@ class CliCommunicationProtocol(CommunicationProtocol):
         _log: Logger function for debugging and error reporting.
     """
     
-    def __init__(self, logger: Optional[Callable[[str], None]] = None):
-        """Initialize the CLI transport.
-        
-        Args:
-            logger: Optional logger function for debugging
-        """
-        self._log = logger or (lambda *args, **kwargs: None)
+    def __init__(self):
+        """Initialize the CLI transport."""
     
     def _log_info(self, message: str):
         """Log informational messages."""
-        self._log(f"[CliCommunicationProtocol] {message}")
+        logger.info(f"[CliCommunicationProtocol] {message}")
         
     def _log_error(self, message: str):
         """Log error messages."""
-        logging.error(f"[CliCommunicationProtocol Error] {message}")
+        logger.error(f"[CliCommunicationProtocol Error] {message}")
     
     def _prepare_environment(self, provider: CliCallTemplate) -> Dict[str, str]:
         """Prepare environment variables for command execution.

@@ -28,11 +28,18 @@ def _load_plugins():
         register_func()
 
 plugins_initialized = False
+loading_plugins = False
 
 def ensure_plugins_initialized():
     global plugins_initialized
+    global loading_plugins
     if plugins_initialized:
         return
-    plugins_initialized = True
-
-    _load_plugins()
+    if loading_plugins:
+        return
+    loading_plugins = True
+    try:
+        _load_plugins()
+        plugins_initialized = True
+    finally:
+        loading_plugins = False

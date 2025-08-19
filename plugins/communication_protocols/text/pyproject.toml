@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "utcp-text"
 version = "1.0.0"
 authors = [
-  { name = "https://www.utcp.io/about" },
+  { name = "UTCP Contributors" },
 ]
 description = "Universal Tool Calling Protocol (UTCP) client library for Python"
 readme = "README.md"
