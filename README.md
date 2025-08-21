@@ -7,7 +7,7 @@
 
 ## Introduction
 
-The Universal Tool Calling Protocol (UTCP) is a modern, flexible, and scalable standard for defining and interacting with tools across a wide variety of communication protocols. UTCP 1.0.0 introduces a modular core with a plugin-based architecture, making it more extensible, testable, and easier to package.
+The Universal Tool Calling Protocol (UTCP) is a secure, scalable standard for defining and interacting with tools across a wide variety of communication protocols. UTCP 1.0.0 introduces a modular core with a plugin-based architecture, making it more extensible, testable, and easier to package.
 
 In contrast to other protocols, UTCP places a strong emphasis on:
 
