@@ -18,7 +18,8 @@ from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
 class ConcurrentToolRepository(BaseModel, ABC):
-    """Abstract interface for tool and provider storage implementations.
+    """REQUIRED
+    Abstract interface for tool and provider storage implementations.
 
     Defines the contract for repositories that manage the lifecycle and storage
     of UTCP tools and call templates. Repositories are responsible for:
@@ -40,7 +41,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def save_manual(self, manual_call_template: CallTemplate, manual: UtcpManual) -> None:
-        """
+        """REQUIRED
         Save a manual and its tools in the repository.
 
         Args:
@@ -51,7 +52,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def remove_manual(self, manual_name: str) -> bool:
-        """
+        """REQUIRED
         Remove a manual and its tools from the repository.
 
         Args:
@@ -64,7 +65,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def remove_tool(self, tool_name: str) -> bool:
-        """
+        """REQUIRED
         Remove a tool from the repository.
 
         Args:
@@ -77,7 +78,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def get_tool(self, tool_name: str) -> Optional[Tool]:
-        """
+        """REQUIRED
         Get a tool from the repository.
 
         Args:
@@ -90,7 +91,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def get_tools(self) -> List[Tool]:
-        """
+        """REQUIRED
         Get all tools from the repository.
 
         Returns:
@@ -100,7 +101,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
     
     @abstractmethod
     async def get_tools_by_manual(self, manual_name: str) -> Optional[List[Tool]]:
-        """
+        """REQUIRED
         Get tools associated with a specific manual.
 
         Args:
@@ -113,7 +114,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def get_manual(self, manual_name: str) -> Optional[UtcpManual]:
-        """
+        """REQUIRED
         Get a manual from the repository.
 
         Args:
@@ -126,7 +127,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def get_manuals(self) -> List[UtcpManual]:
-        """
+        """REQUIRED
         Get all manuals from the repository.
 
         Returns:
@@ -136,7 +137,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def get_manual_call_template(self, manual_call_template_name: str) -> Optional[CallTemplate]:
-        """
+        """REQUIRED
         Get a manual call template from the repository.
 
         Args:
@@ -149,7 +150,7 @@ class ConcurrentToolRepository(BaseModel, ABC):
 
     @abstractmethod
     async def get_manual_call_templates(self) -> List[CallTemplate]:
-        """
+        """REQUIRED
         Get all manual call templates from the repository.
 
         Returns:

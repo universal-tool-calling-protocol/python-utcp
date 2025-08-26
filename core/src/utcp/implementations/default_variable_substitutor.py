@@ -19,7 +19,8 @@ from utcp.interfaces.variable_substitutor import VariableSubstitutor
 from utcp.data.utcp_client_config import UtcpClientConfig
 
 class DefaultVariableSubstitutor(VariableSubstitutor):
-    """Default implementation of variable substitution.
+    """REQUIRED
+    Default implementation of variable substitution.
 
     Provides a hierarchical variable resolution system that searches for
     variables in the following order:
@@ -40,25 +41,6 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
         'web_scraper' becomes 'web__scraper_api_key' internally.
     """
     def _get_variable(self, key: str, config: UtcpClientConfig, variable_namespace: Optional[str] = None) -> str:
-        """Resolve a variable value through the hierarchical resolution system.
-
-        Searches for the variable value in the following order:
-        1. Configuration variables dictionary
-        2. Custom variable loaders (in registration order)
-        3. Environment variables
-
-        Args:
-            key: Variable name to resolve.
-            config: UTCP client configuration containing variable sources.
-            variable_namespace: Optional variable namespace.
-                When provided, the key is prefixed with the variable namespace.
-
-        Returns:
-            Resolved variable value as a string.
-
-        Raises:
-            UtcpVariableNotFound: If the variable cannot be found in any source.
-        """
         if variable_namespace:
             key = variable_namespace.replace("_", "!").replace("!", "__") + "_" + key
         if config.variables and key in config.variables:
@@ -78,7 +60,8 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
         raise UtcpVariableNotFound(key)
         
     def substitute(self, obj: dict | list | str, config: UtcpClientConfig, variable_namespace: Optional[str] = None) -> Any:
-        """Recursively substitute variables in nested data structures.
+        """REQUIRED
+        Recursively substitute variables in nested data structures.
 
         Performs deep substitution on dictionaries, lists, and strings.
         Non-string types are returned unchanged. String values are scanned
@@ -128,7 +111,8 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
             return obj
 
     def find_required_variables(self, obj: dict | list | str, variable_namespace: Optional[str] = None) -> List[str]:
-        """Recursively discover all variable references in a data structure.
+        """REQUIRED
+        Recursively discover all variable references in a data structure.
 
         Scans the object for variable references using ${VAR} and $VAR syntax,
         returning fully-qualified variable names with variable namespacing.

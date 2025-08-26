@@ -1,17 +1,3 @@
-"""Main UTCP client implementation.
-
-This module provides the primary client interface for the Universal Tool Calling
-Protocol. The UtcpClient class manages multiple transport implementations,
-tool repositories, search strategies, and CallTemplate configurations.
-
-Key Features:
-    - Multi-transport support (HTTP, CLI, WebSocket, etc.)
-    - Dynamic CallTemplate registration and deregistration
-    - Tool discovery and search capabilities
-    - Variable substitution for configuration
-    - Pluggable tool repositories and search strategies
-"""
-
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Union, Optional, AsyncGenerator, TYPE_CHECKING
 
@@ -24,17 +10,12 @@ if TYPE_CHECKING:
     from utcp.data.utcp_client_config import UtcpClientConfig
 
 class UtcpClient(ABC):
-    """Abstract interface for UTCP client implementations.
+    """REQUIRED
+    Abstract interface for UTCP client implementations.
 
     Defines the core contract for UTCP clients, including CallTemplate management,
     tool execution, search capabilities, and variable handling. This interface
     allows for different client implementations while maintaining consistency.
-
-    The interface supports:
-    - CallTemplate lifecycle management (register/deregister)
-    - Tool discovery and execution
-    - Tool search and filtering
-    - Configuration variable validation
     """
 
     def __init__(
@@ -51,7 +32,7 @@ class UtcpClient(ABC):
         root_dir: Optional[str] = None,
         config: Optional[Union[str, Dict[str, Any], 'UtcpClientConfig']] = None,
     ) -> 'UtcpClient':
-        """
+        """REQUIRED
         Create a new instance of UtcpClient.
         
         Args:
@@ -72,7 +53,7 @@ class UtcpClient(ABC):
     
     @abstractmethod
     async def register_manual(self, manual_call_template: CallTemplate) -> RegisterManualResult:
-        """
+        """REQUIRED
         Register a tool CallTemplate and its tools.
 
         Args:
@@ -85,7 +66,7 @@ class UtcpClient(ABC):
 
     @abstractmethod
     async def register_manuals(self, manual_call_templates: List[CallTemplate]) -> List[RegisterManualResult]:
-        """
+        """REQUIRED
         Register multiple tool CallTemplates and their tools.
 
         Args:
@@ -98,7 +79,7 @@ class UtcpClient(ABC):
     
     @abstractmethod
     async def deregister_manual(self, manual_call_template_name: str) -> bool:
-        """
+        """REQUIRED
         Deregister a tool CallTemplate.
 
         Args:
@@ -111,7 +92,7 @@ class UtcpClient(ABC):
     
     @abstractmethod
     async def call_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Any:
-        """
+        """REQUIRED
         Call a tool.
 
         Args:
@@ -125,7 +106,7 @@ class UtcpClient(ABC):
 
     @abstractmethod
     async def call_tool_streaming(self, tool_name: str, tool_args: Dict[str, Any]) -> AsyncGenerator[Any, None]:
-        """
+        """REQUIRED
         Call a tool streamingly.
 
         Args:
@@ -139,7 +120,7 @@ class UtcpClient(ABC):
 
     @abstractmethod
     async def search_tools(self, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = None) -> List[Tool]:
-        """
+        """REQUIRED
         Search for tools relevant to the query.
 
         Args:
@@ -154,7 +135,7 @@ class UtcpClient(ABC):
 
     @abstractmethod
     async def get_required_variables_for_manual_and_tools(self, manual_call_template: CallTemplate) -> List[str]:
-        """
+        """REQUIRED
         Get the required variables for a manual CallTemplate and its tools.
 
         Args:
@@ -167,7 +148,7 @@ class UtcpClient(ABC):
 
     @abstractmethod
     async def get_required_variables_for_registered_tool(self, tool_name: str) -> List[str]:
-        """
+        """REQUIRED
         Get the required variables for a registered tool.
 
         Args:

@@ -7,7 +7,8 @@ from typing import Optional, Dict, List, Literal
 from pydantic import Field
 
 class StreamableHttpCallTemplate(CallTemplate):
-    """Provider configuration for HTTP streaming tools.
+    """REQUIRED
+    Provider configuration for HTTP streaming tools.
 
     Uses HTTP Chunked Transfer Encoding to enable streaming of large responses
     or real-time data. Useful for tools that return large datasets or provide
@@ -40,12 +41,17 @@ class StreamableHttpCallTemplate(CallTemplate):
 
 
 class StreamableHttpCallTemplateSerializer(Serializer[StreamableHttpCallTemplate]):
-    """Serializer for StreamableHttpCallTemplate."""
+    """REQUIRED
+    Serializer for StreamableHttpCallTemplate."""
     
     def to_dict(self, obj: StreamableHttpCallTemplate) -> dict:
+        """REQUIRED
+        Converts a StreamableHttpCallTemplate to a dictionary."""
         return obj.model_dump()
     
     def validate_dict(self, obj: dict) -> StreamableHttpCallTemplate:
+        """REQUIRED
+        Validates a dictionary and returns a StreamableHttpCallTemplate."""
         try:
             return StreamableHttpCallTemplate.model_validate(obj)
         except Exception as e:

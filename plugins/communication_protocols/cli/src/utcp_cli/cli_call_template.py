@@ -7,7 +7,8 @@ from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
 class CliCallTemplate(CallTemplate):
-    """Call template configuration for Command Line Interface tools.
+    """REQUIRED
+    Call template configuration for Command Line Interface tools.
 
     Enables execution of command-line tools and programs as UTCP providers.
     Supports environment variable injection and custom working directories.
@@ -32,12 +33,17 @@ class CliCallTemplate(CallTemplate):
 
 
 class CliCallTemplateSerializer(Serializer[CliCallTemplate]):
-    """Serializer for CliCallTemplate."""
+    """REQUIRED
+    Serializer for CliCallTemplate."""
 
     def to_dict(self, obj: CliCallTemplate) -> dict:
+        """REQUIRED
+        Converts a CliCallTemplate to a dictionary."""
         return obj.model_dump()
 
     def validate_dict(self, obj: dict) -> CliCallTemplate:
+        """REQUIRED
+        Validates a dictionary and returns a CliCallTemplate."""
         try:
             return CliCallTemplate.model_validate(obj)
         except Exception as e:

@@ -14,7 +14,11 @@ including both stdio and HTTP-based servers.
 """
 
 class McpConfig(BaseModel):
-    """Configuration container for multiple MCP servers.
+    """REQUIRED
+    Implementing this class is not required!!!
+    The McpCallTemplate just needs to support a MCP compliant server configuration.
+
+    Configuration container for multiple MCP servers.
 
     Holds a collection of named MCP server configurations, allowing
     a single MCP provider to manage multiple server connections.
@@ -26,7 +30,8 @@ class McpConfig(BaseModel):
     mcpServers: Dict[str, Dict[str, Any]]
 
 class McpCallTemplate(CallTemplate):
-    """Provider configuration for Model Context Protocol (MCP) tools.
+    """REQUIRED
+    Provider configuration for Model Context Protocol (MCP) tools.
 
     Enables communication with MCP servers that provide structured tool
     interfaces. Supports both stdio (local process) and HTTP (remote)
@@ -44,10 +49,19 @@ class McpCallTemplate(CallTemplate):
     auth: Optional[OAuth2Auth] = None
 
 class McpCallTemplateSerializer(Serializer[McpCallTemplate]):
+    """REQUIRED
+    Serializer for McpCallTemplate.
+    """
     def to_dict(self, obj: McpCallTemplate) -> dict:
+        """REQUIRED
+        Convert McpCallTemplate to dictionary.
+        """
         return obj.model_dump()
     
     def validate_dict(self, obj: dict) -> McpCallTemplate:
+        """REQUIRED
+        Validate and convert dictionary to McpCallTemplate.
+        """
         try:
             return McpCallTemplate.model_validate(obj)
         except Exception as e:

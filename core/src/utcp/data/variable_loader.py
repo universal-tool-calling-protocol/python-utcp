@@ -7,7 +7,8 @@ from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
 class VariableLoader(BaseModel, ABC):
-    """Abstract base class for variable loading configurations.
+    """REQUIRED
+    Abstract base class for variable loading configurations.
 
     Defines the interface for variable loaders that can retrieve variable
     values from different sources such as files, databases, or external
@@ -21,7 +22,8 @@ class VariableLoader(BaseModel, ABC):
 
     @abstractmethod
     def get(self, key: str) -> Optional[str]:
-        """Retrieve a variable value by key.
+        """REQUIRED
+        Retrieve a variable value by key.
 
         Args:
             key: Variable name to retrieve.
@@ -32,13 +34,32 @@ class VariableLoader(BaseModel, ABC):
         pass
 
 class VariableLoaderSerializer(Serializer[VariableLoader]):
-    """Custom serializer for VariableLoader model."""
+    """REQUIRED
+    Serializer for VariableLoader model."""
     loader_serializers: Dict[str, Type[Serializer[VariableLoader]]] = {}
     
     def to_dict(self, obj: VariableLoader) -> dict:
+        """REQUIRED
+        Convert a VariableLoader object to a dictionary.
+
+        Args:
+            obj: The VariableLoader object to convert.
+
+        Returns:
+            The dictionary converted from the VariableLoader object.
+        """
         return VariableLoaderSerializer.loader_serializers[obj.variable_loader_type].to_dict(obj)
     
     def validate_dict(self, data: dict) -> VariableLoader:
+        """REQUIRED
+        Validate a dictionary and convert it to a VariableLoader object.
+
+        Args:
+            data: The dictionary to validate and convert.
+
+        Returns:
+            The VariableLoader object converted from the dictionary.
+        """
         try:
             return VariableLoaderSerializer.loader_serializers[data["variable_loader_type"]].validate_dict(data)
         except KeyError:

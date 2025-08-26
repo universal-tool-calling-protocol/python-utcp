@@ -6,7 +6,8 @@ from typing import Literal, Optional
 
 
 class OAuth2Auth(Auth):
-    """Authentication using OAuth2 client credentials flow.
+    """REQUIRED
+    Authentication using OAuth2 client credentials flow.
 
     Implements the OAuth2 client credentials grant type for machine-to-machine
     authentication. The client automatically handles token acquisition and refresh.
@@ -27,10 +28,30 @@ class OAuth2Auth(Auth):
 
 
 class OAuth2AuthSerializer(Serializer[OAuth2Auth]):
+    """REQUIRED
+    Serializer for OAuth2Auth model."""
     def to_dict(self, obj: OAuth2Auth) -> dict:
+        """REQUIRED
+        Convert an OAuth2Auth object to a dictionary.
+
+        Args:
+            obj: The OAuth2Auth object to convert.
+
+        Returns:
+            The dictionary converted from the OAuth2Auth object.
+        """
         return obj.model_dump()
     
     def validate_dict(self, obj: dict) -> OAuth2Auth:
+        """REQUIRED
+        Validate a dictionary and convert it to an OAuth2Auth object.
+
+        Args:
+            obj: The dictionary to validate and convert.
+
+        Returns:
+            The OAuth2Auth object converted from the dictionary.
+        """
         try:
             return OAuth2Auth.model_validate(obj)
         except ValidationError as e:

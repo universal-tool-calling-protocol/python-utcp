@@ -21,6 +21,24 @@ import traceback
 JsonType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
 
 class JsonSchema(BaseModel):
+    """REQUIRED
+    JSON Schema for tool inputs and outputs.
+
+    Attributes:
+        schema_: Optional schema identifier.
+        id_: Optional schema identifier.
+        title: Optional schema title.
+        description: Optional schema description.
+        type: Optional schema type.
+        properties: Optional schema properties.
+        items: Optional schema items.
+        required: Optional schema required fields.
+        enum: Optional schema enum values.
+        const: Optional schema constant value.
+        default: Optional schema default value.
+        format: Optional schema format.
+        additionalProperties: Optional schema additional properties.
+    """
     schema_: Optional[str] = Field(None, alias="$schema")
     id_: Optional[str] = Field(None, alias="$id")
     title: Optional[str] = None
@@ -50,17 +68,45 @@ class JsonSchema(BaseModel):
 JsonSchema.model_rebuild()  # replaces update_forward_refs()
 
 class JsonSchemaSerializer(Serializer[JsonSchema]):
+    """REQUIRED
+    Serializer for JSON Schema.
+
+    Defines the contract for serializers that convert JSON Schema to and from
+    dictionaries for storage or transmission. Serializers are responsible for:
+    - Converting JSON Schema to dictionaries for storage or transmission
+    - Converting dictionaries back to JSON Schema
+    - Ensuring data consistency during serialization and deserialization
+    """
     def to_dict(self, obj: JsonSchema) -> dict:
+        """REQUIRED
+        Convert a JsonSchema object to a dictionary.
+
+        Args:
+            obj: The JsonSchema object to convert.
+
+        Returns:
+            The dictionary converted from the JsonSchema object.
+        """
         return obj.model_dump(by_alias=True)
     
     def validate_dict(self, obj: dict) -> JsonSchema:
+        """REQUIRED
+        Validate a dictionary and convert it to a JsonSchema object.
+
+        Args:
+            obj: The dictionary to validate and convert.
+
+        Returns:
+            The JsonSchema object converted from the dictionary.
+        """
         try:
             return JsonSchema.model_validate(obj)
         except Exception as e:
             raise UtcpSerializerValidationError("Invalid JSONSchema: " + traceback.format_exc()) from e
 
 class Tool(BaseModel):
-    """Definition of a UTCP tool.
+    """REQUIRED
+    Definition of a UTCP tool.
 
     Represents a callable tool with its metadata, input/output schemas,
     and provider configuration. Tools are the fundamental units of
@@ -96,10 +142,37 @@ class Tool(BaseModel):
         return CallTemplateSerializer().validate_dict(v)
 
 class ToolSerializer(Serializer[Tool]):
+    """REQUIRED
+    Serializer for tools.
+
+    Defines the contract for serializers that convert tools to and from
+    dictionaries for storage or transmission. Serializers are responsible for:
+    - Converting tools to dictionaries for storage or transmission
+    - Converting dictionaries back to tools
+    - Ensuring data consistency during serialization and deserialization
+    """
     def to_dict(self, obj: Tool) -> dict:
+        """REQUIRED
+        Convert a Tool object to a dictionary.
+
+        Args:
+            obj: The Tool object to convert.
+
+        Returns:
+            The dictionary converted from the Tool object.
+        """
         return obj.model_dump(by_alias=True)
 
     def validate_dict(self, obj: dict) -> Tool:
+        """REQUIRED
+        Validate a dictionary and convert it to a Tool object.
+
+        Args:
+            obj: The dictionary to validate and convert.
+
+        Returns:
+            The Tool object converted from the dictionary.
+        """
         try:
             return Tool.model_validate(obj)
         except Exception as e:

@@ -5,7 +5,8 @@ from typing import Literal
 from utcp.exceptions import UtcpSerializerValidationError
 
 class BasicAuth(Auth):
-    """Authentication using HTTP Basic Authentication.
+    """REQUIRED
+    Authentication using HTTP Basic Authentication.
 
     Uses the standard HTTP Basic Authentication scheme with username and password
     encoded in the Authorization header.
@@ -22,10 +23,30 @@ class BasicAuth(Auth):
 
 
 class BasicAuthSerializer(Serializer[BasicAuth]):
+    """REQUIRED
+    Serializer for BasicAuth model."""
     def to_dict(self, obj: BasicAuth) -> dict:
+        """REQUIRED
+        Convert a BasicAuth object to a dictionary.
+
+        Args:
+            obj: The BasicAuth object to convert.
+
+        Returns:
+            The dictionary converted from the BasicAuth object.
+        """
         return obj.model_dump()
     
     def validate_dict(self, obj: dict) -> BasicAuth:
+        """REQUIRED
+        Validate a dictionary and convert it to a BasicAuth object.
+
+        Args:
+            obj: The dictionary to validate and convert.
+
+        Returns:
+            The BasicAuth object converted from the dictionary.
+        """
         try:
             return BasicAuth.model_validate(obj)
         except ValidationError as e:
