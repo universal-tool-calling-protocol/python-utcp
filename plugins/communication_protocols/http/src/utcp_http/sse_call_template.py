@@ -7,7 +7,8 @@ from typing import Optional, Dict, List, Literal
 from pydantic import Field
 
 class SseCallTemplate(CallTemplate):
-    """Provider configuration for Server-Sent Events (SSE) tools.
+    """REQUIRED
+    Provider configuration for Server-Sent Events (SSE) tools.
 
     Enables real-time streaming of events from server to client using the
     Server-Sent Events protocol. Supports automatic reconnection and
@@ -38,12 +39,17 @@ class SseCallTemplate(CallTemplate):
 
 
 class SSECallTemplateSerializer(Serializer[SseCallTemplate]):
-    """Serializer for SSECallTemplate."""
+    """REQUIRED
+    Serializer for SSECallTemplate."""
     
     def to_dict(self, obj: SseCallTemplate) -> dict:
+        """REQUIRED
+        Converts a SSECallTemplate to a dictionary."""
         return obj.model_dump()
     
     def validate_dict(self, obj: dict) -> SseCallTemplate:
+        """REQUIRED
+        Validates a dictionary and returns a SSECallTemplate."""
         try:
             return SseCallTemplate.model_validate(obj)
         except Exception as e:

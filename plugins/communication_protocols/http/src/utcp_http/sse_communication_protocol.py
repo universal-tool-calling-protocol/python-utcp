@@ -22,7 +22,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class SseCommunicationProtocol(CommunicationProtocol):
-    """SSE communication protocol implementation for UTCP client.
+    """REQUIRED
+    SSE communication protocol implementation for UTCP client.
     
     Handles Server-Sent Events based tool providers with streaming capabilities.
     """
@@ -64,7 +65,8 @@ class SseCommunicationProtocol(CommunicationProtocol):
         return auth, cookies
 
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
-        """Register a manual and its tools from an SSE provider."""
+        """REQUIRED
+        Register a manual and its tools from an SSE provider."""
         if not isinstance(manual_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 
@@ -145,7 +147,8 @@ class SseCommunicationProtocol(CommunicationProtocol):
             )
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
-        """Deregister an SSE manual and close any active connections."""
+        """REQUIRED
+        Deregister an SSE manual and close any active connections."""
         template_name = manual_call_template.name
         if template_name in self._active_connections:
             response, session = self._active_connections.pop(template_name)
@@ -153,7 +156,8 @@ class SseCommunicationProtocol(CommunicationProtocol):
             await session.close()
 
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
-        """Execute a tool call through SSE transport."""
+        """REQUIRED
+        Execute a tool call through SSE transport."""
         if not isinstance(tool_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
         
@@ -163,7 +167,8 @@ class SseCommunicationProtocol(CommunicationProtocol):
         return event_list
     
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
-        """Execute a tool call through SSE transport with streaming."""
+        """REQUIRED
+        Execute a tool call through SSE transport with streaming."""
         if not isinstance(tool_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 

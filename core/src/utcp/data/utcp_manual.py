@@ -18,7 +18,8 @@ from utcp.plugins.plugin_loader import ensure_plugins_initialized
 import traceback
 
 class UtcpManual(BaseModel):
-    """Standard format for tool provider responses during discovery.
+    """REQUIRED
+    Standard format for tool provider responses during discovery.
 
     Represents the complete set of tools available from a provider, along
     with version information for compatibility checking. This format is
@@ -106,12 +107,31 @@ class UtcpManual(BaseModel):
 
     
 class UtcpManualSerializer(Serializer[UtcpManual]):
-    """Custom serializer for UtcpManual model."""
+    """REQUIRED
+    Serializer for UtcpManual model."""
     
     def to_dict(self, obj: UtcpManual) -> dict:
+        """REQUIRED
+        Convert a UtcpManual object to a dictionary.
+
+        Args:
+            obj: The UtcpManual object to convert.
+
+        Returns:
+            The dictionary converted from the UtcpManual object.
+        """
         return obj.model_dump()
     
     def validate_dict(self, data: dict) -> UtcpManual:
+        """REQUIRED
+        Validate a dictionary and convert it to a UtcpManual object.
+
+        Args:
+            data: The dictionary to validate and convert.
+
+        Returns:
+            The UtcpManual object converted from the dictionary.
+        """
         try:
             return UtcpManual.model_validate(data)
         except Exception as e:

@@ -29,7 +29,8 @@ import traceback
 from utcp.data.auth import Auth, AuthSerializer
 
 class CallTemplate(BaseModel):
-    """Base class for all UTCP tool providers.
+    """REQUIRED
+    Base class for all UTCP tool providers.
 
     This is the abstract base class that all specific call template implementations
     inherit from. It provides the common fields that every provider must have.
@@ -61,12 +62,39 @@ class CallTemplate(BaseModel):
         return AuthSerializer().validate_dict(v)
 
 class CallTemplateSerializer(Serializer[CallTemplate]):
+    """REQUIRED
+    Serializer for call templates.
+
+    Defines the contract for serializers that convert call templates to and from
+    dictionaries for storage or transmission. Serializers are responsible for:
+    - Converting call templates to dictionaries for storage or transmission
+    - Converting dictionaries back to call templates
+    - Ensuring data consistency during serialization and deserialization
+    """
     call_template_serializers: dict[str, Serializer[CallTemplate]] = {}
 
     def to_dict(self, obj: CallTemplate) -> dict:
+        """REQUIRED
+        Convert a CallTemplate object to a dictionary.
+
+        Args:
+            obj: The CallTemplate object to convert.
+
+        Returns:
+            The dictionary converted from the CallTemplate object.
+        """
         return CallTemplateSerializer.call_template_serializers[obj.call_template_type].to_dict(obj)
     
     def validate_dict(self, obj: dict) -> CallTemplate:
+        """REQUIRED
+        Validate a dictionary and convert it to a CallTemplate object.
+
+        Args:
+            obj: The dictionary to validate and convert.
+
+        Returns:
+            The CallTemplate object converted from the dictionary.
+        """
         try:
             return CallTemplateSerializer.call_template_serializers[obj["call_template_type"]].validate_dict(obj)
         except KeyError:

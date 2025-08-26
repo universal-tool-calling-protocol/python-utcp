@@ -13,7 +13,8 @@ if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
 
 class CommunicationProtocol(ABC):
-    """Abstract interface for UTCP client transport implementations.
+    """REQUIRED
+    Abstract interface for UTCP client transport implementations.
 
     Defines the contract that all transport implementations must follow to
     integrate with the UTCP client. Each transport handles communication
@@ -28,7 +29,8 @@ class CommunicationProtocol(ABC):
 
     @abstractmethod
     async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
-        """Register a manual and its tools.
+        """REQUIRED
+        Register a manual and its tools.
 
         Connects to the provider and retrieves the list of tools it offers.
         This may involve making discovery requests, parsing configuration files,
@@ -49,7 +51,8 @@ class CommunicationProtocol(ABC):
 
     @abstractmethod
     async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
-        """Deregister a manual and its tools.
+        """REQUIRED
+        Deregister a manual and its tools.
 
         Cleanly disconnects from the provider and releases any associated
         resources such as connections, processes, or file handles.
@@ -66,7 +69,8 @@ class CommunicationProtocol(ABC):
 
     @abstractmethod
     async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
-        """Execute a tool call through this transport.
+        """REQUIRED
+        Execute a tool call through this transport.
 
         Sends a tool invocation request to the provider using the appropriate
         protocol and returns the result. Handles serialization of arguments
@@ -91,7 +95,8 @@ class CommunicationProtocol(ABC):
 
     @abstractmethod
     async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
-        """Execute a tool call through this transport streamingly.
+        """REQUIRED
+        Execute a tool call through this transport streamingly.
 
         Sends a tool invocation request to the provider using the appropriate
         protocol and returns the result. Handles serialization of arguments

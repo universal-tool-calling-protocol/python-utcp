@@ -7,7 +7,7 @@
 
 ## Introduction
 
-The Universal Tool Calling Protocol (UTCP) is a modern, flexible, and scalable standard for defining and interacting with tools across a wide variety of communication protocols. UTCP 1.0.0 introduces a modular core with a plugin-based architecture, making it more extensible, testable, and easier to package.
+The Universal Tool Calling Protocol (UTCP) is a secure, scalable standard for defining and interacting with tools across a wide variety of communication protocols. UTCP 1.0.0 introduces a modular core with a plugin-based architecture, making it more extensible, testable, and easier to package.
 
 In contrast to other protocols, UTCP places a strong emphasis on:
 
@@ -87,7 +87,7 @@ Version 1.0.0 introduces several breaking changes. Follow these steps to migrate
 3.  **Update Imports**: Change your imports to reflect the new modular structure. For example, `from utcp.client.transport_interfaces.http_transport import HttpProvider` becomes `from utcp_http.http_call_template import HttpCallTemplate`.
 4.  **Tool Search**: If you were using the default search, the new strategy is `TagAndDescriptionWordMatchStrategy`. This is the new default and requires no changes unless you were implementing a custom strategy.
 5.  **Tool Naming**: Tool names are now namespaced as `manual_name.tool_name`. The client handles this automatically.
-6   **Variable Substitution Namespacing**: Variables that are subsituted in different `call_templates`, are first namespaced with the name of the manual with the `_` duplicated. So a key in a tool call template called `API_KEY` from the manual `manual_1` would be converted to `manual__1_API_KEY`.
+6.  **Variable Substitution Namespacing**: Variables that are substituted in different `call_templates`, are first namespaced with the name of the manual with the `_` duplicated. So a key in a tool call template called `API_KEY` from the manual `manual_1` would be converted to `manual__1_API_KEY`.
 
 ## Usage Examples
 
@@ -226,7 +226,7 @@ if __name__ == "__main__":
 
 ### 2. Providing a UTCP Manual
 
-A `UTCPManual` describes the tools you offer. The key change is replacing `tool_provider` with `call_template`.
+A `UTCPManual` describes the tools you offer. The key change is replacing `tool_provider` with `tool_call_template`.
 
 **`server.py`**
 
@@ -288,7 +288,7 @@ def utcp_discovery():
                         "conditions": {"type": "string"}
                     }
                 },
-                "call_template": {
+                "tool_call_template": {
                     "call_template_type": "http",
                     "url": "https://example.com/api/weather",
                     "http_method": "GET"
@@ -311,7 +311,7 @@ You can find full examples in the [examples repository](https://github.com/unive
 
 ### `UtcpManual` and `Tool` Models
 
-The `tool_provider` object inside a `Tool` has been replaced by `call_template`.
+The `tool_provider` object inside a `Tool` has been replaced by `tool_call_template`.
 
 ```json
 {
@@ -324,7 +324,7 @@ The `tool_provider` object inside a `Tool` has been replaced by `call_template`.
       "inputs": { ... },
       "outputs": { ... },
       "tags": ["string"],
-      "call_template": {
+      "tool_call_template": {
         "call_template_type": "http",
         "url": "https://...",
         "http_method": "GET"

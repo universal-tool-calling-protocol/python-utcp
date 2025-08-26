@@ -6,11 +6,28 @@ import re
 from utcp.interfaces.serializer import Serializer
 
 class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
+    """REQUIRED
+    Tag and description word match strategy.
+
+    This strategy matches tools based on the presence of tags and words in the description.
+    """
     tool_search_strategy_type: Literal["tag_and_description_word_match"] = "tag_and_description_word_match"
     description_weight: float = 1
     tag_weight: float = 3
 
     async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = None) -> List[Tool]:
+        """REQUIRED
+        Search for tools based on the given query.
+
+        Args:
+            tool_repository: The tool repository to search in.
+            query: The query to search for.
+            limit: The maximum number of results to return.
+            any_of_tags_required: A list of tags that must be present in the tool.
+
+        Returns:
+            A list of tools that match the query.
+        """
         if limit < 0:
             raise ValueError("limit must be non-negative")
         # Normalize query to lowercase and split into words
@@ -61,10 +78,33 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
         return sorted_tools[:limit]
 
 class TagAndDescriptionWordMatchStrategyConfigSerializer(Serializer[TagAndDescriptionWordMatchStrategy]):
+    """REQUIRED
+    Serializer for `TagAndDescriptionWordMatchStrategy`.
+
+    Converts a `TagAndDescriptionWordMatchStrategy` instance to a dictionary and vice versa.
+    """
     def to_dict(self, obj: TagAndDescriptionWordMatchStrategy) -> dict:
+        """REQUIRED
+        Convert a `TagAndDescriptionWordMatchStrategy` instance to a dictionary.
+
+        Args:
+            obj: The `TagAndDescriptionWordMatchStrategy` instance to convert.
+
+        Returns:
+            A dictionary representing the `TagAndDescriptionWordMatchStrategy` instance.
+        """
         return obj.model_dump()
 
     def validate_dict(self, data: dict) -> TagAndDescriptionWordMatchStrategy:
+        """REQUIRED
+        Convert a dictionary to a `TagAndDescriptionWordMatchStrategy` instance.
+
+        Args:
+            data: The dictionary to convert.
+
+        Returns:
+            A `TagAndDescriptionWordMatchStrategy` instance representing the dictionary.
+        """
         try:
             return TagAndDescriptionWordMatchStrategy.model_validate(data)
         except Exception as e:

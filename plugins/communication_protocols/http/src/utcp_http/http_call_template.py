@@ -7,7 +7,8 @@ from typing import Optional, Dict, List, Literal
 from pydantic import Field
 
 class HttpCallTemplate(CallTemplate):
-    """Provider configuration for HTTP-based tools.
+    """REQUIRED
+    Provider configuration for HTTP-based tools.
 
     Supports RESTful HTTP/HTTPS APIs with various HTTP methods, authentication,
     custom headers, and flexible request/response handling. Supports URL path
@@ -37,12 +38,17 @@ class HttpCallTemplate(CallTemplate):
 
 
 class HttpCallTemplateSerializer(Serializer[HttpCallTemplate]):
-    """Serializer for HttpCallTemplate."""
+    """REQUIRED
+    Serializer for HttpCallTemplate."""
     
     def to_dict(self, obj: HttpCallTemplate) -> dict:
+        """REQUIRED
+        Convert HttpCallTemplate to dictionary."""
         return obj.model_dump()
     
     def validate_dict(self, obj: dict) -> HttpCallTemplate:
+        """REQUIRED
+        Validate dictionary and convert to HttpCallTemplate."""
         try:
             return HttpCallTemplate.model_validate(obj)
         except Exception as e:

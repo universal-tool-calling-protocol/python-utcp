@@ -26,7 +26,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class TextCommunicationProtocol(CommunicationProtocol):
-    """Communication protocol for file-based UTCP manuals and tools."""
+    """REQUIRED
+    Communication protocol for file-based UTCP manuals and tools."""
 
     def _log_info(self, message: str) -> None:
         logger.info(f"[TextCommunicationProtocol] {message}")
@@ -35,7 +36,8 @@ class TextCommunicationProtocol(CommunicationProtocol):
         logger.error(f"[TextCommunicationProtocol Error] {message}")
 
     async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
-        """Register a text manual and return its tools as a UtcpManual."""
+        """REQUIRED
+        Register a text manual and return its tools as a UtcpManual."""
         if not isinstance(manual_call_template, TextCallTemplate):
             raise ValueError("TextCommunicationProtocol requires a TextCallTemplate")
 
@@ -94,12 +96,14 @@ class TextCommunicationProtocol(CommunicationProtocol):
             )
 
     async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
-        """Deregister a text manual (no-op)."""
+        """REQUIRED
+        Deregister a text manual (no-op)."""
         if isinstance(manual_call_template, TextCallTemplate):
             self._log_info(f"Deregistering text manual '{manual_call_template.name}' (no-op)")
 
     async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
-        """Call a tool: for text templates, return file content from the configured path."""
+        """REQUIRED
+        Call a tool: for text templates, return file content from the configured path."""
         if not isinstance(tool_call_template, TextCallTemplate):
             raise ValueError("TextCommunicationProtocol requires a TextCallTemplate for tool calls")
 
@@ -118,6 +122,7 @@ class TextCommunicationProtocol(CommunicationProtocol):
             raise
 
     async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
-        """Streaming variant: yields the full content as a single chunk."""
+        """REQUIRED
+        Streaming variant: yields the full content as a single chunk."""
         result = await self.call_tool(caller, tool_name, tool_args, tool_call_template)
         yield result

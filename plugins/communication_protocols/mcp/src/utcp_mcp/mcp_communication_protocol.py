@@ -20,7 +20,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class McpCommunicationProtocol(CommunicationProtocol):
-    """MCP transport implementation that connects to MCP servers via stdio or HTTP.
+    """REQUIRED
+    MCP transport implementation that connects to MCP servers via stdio or HTTP.
     
     This implementation uses a session-per-operation approach where each operation
     (register, call_tool) opens a fresh session, performs the operation, and closes.
@@ -84,6 +85,9 @@ class McpCommunicationProtocol(CommunicationProtocol):
             raise ValueError(f"Unsupported MCP transport: {json.dumps(server_config)}")
 
     async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
+        """REQUIRED
+        Register a manual with the communication protocol.
+        """
         if not isinstance(manual_call_template, McpCallTemplate):
             raise ValueError("manual_call_template must be a McpCallTemplate")
         all_tools = []
@@ -117,6 +121,9 @@ class McpCommunicationProtocol(CommunicationProtocol):
         )
 
     async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        """REQUIRED
+        Call a tool using the model context protocol.
+        """
         if not isinstance(tool_call_template, McpCallTemplate):
             raise ValueError("tool_call_template must be a McpCallTemplate")
         if not tool_call_template.config or not tool_call_template.config.mcpServers:
@@ -147,6 +154,8 @@ class McpCommunicationProtocol(CommunicationProtocol):
         raise ValueError(f"Tool '{tool_name}' not found in any configured server")
 
     async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+        """REQUIRED
+        Streaming calls are not supported for MCP protocol, so we just call the tool and return the result as one item."""
         yield self.call_tool(caller, tool_name, tool_args, tool_call_template)
 
     def _process_tool_result(self, result, tool_name: str) -> Any:

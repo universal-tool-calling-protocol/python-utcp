@@ -1,5 +1,6 @@
 class UtcpVariableNotFound(Exception):
-    """Exception raised when a required variable cannot be found.
+    """REQUIRED
+    Exception raised when a required variable cannot be found.
 
     This exception is thrown during variable substitution when a referenced
     variable cannot be resolved through any of the configured variable sources.
@@ -12,7 +13,8 @@ class UtcpVariableNotFound(Exception):
     variable_name: str
 
     def __init__(self, variable_name: str):
-        """Initialize the exception with the missing variable name.
+        """REQUIRED
+        Initialize the exception with the missing variable name.
 
         Args:
             variable_name: Name of the variable that could not be found.
