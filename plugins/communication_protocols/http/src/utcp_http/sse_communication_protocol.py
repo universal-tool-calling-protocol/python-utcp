@@ -30,7 +30,6 @@ class SseCommunicationProtocol(CommunicationProtocol):
 
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-        self._active_connections: Dict[str, tuple[aiohttp.ClientResponse, aiohttp.ClientSession]] = {}
 
     def _apply_auth(self, provider: SseCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
@@ -148,13 +147,9 @@ class SseCommunicationProtocol(CommunicationProtocol):
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
         """REQUIRED
-        Deregister an SSE manual and close any active connections."""
-        template_name = manual_call_template.name
-        if template_name in self._active_connections:
-            response, session = self._active_connections.pop(template_name)
-            response.close()
-            await session.close()
-
+        Deregister an SSE manual."""
+        pass
+    
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """REQUIRED
         Execute a tool call through SSE transport."""
@@ -210,7 +205,6 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 auth=auth, cookies=cookies, json=json_data, data=data, timeout=None
             )
             response.raise_for_status()
-            self._active_connections[tool_call_template.name] = (response, session)
             async for event in self._process_sse_stream(response, tool_call_template.event_type):
                 yield event
         except Exception as e:
@@ -300,15 +294,6 @@ class SseCommunicationProtocol(CommunicationProtocol):
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with header failed: {e}")
                 raise e
-
-    async def close(self):
-        """Closes all active connections and sessions."""
-        for provider_name in list(self._active_connections.keys()):
-            if provider_name in self._active_connections:
-                response, session = self._active_connections.pop(provider_name)
-                response.close()
-                await session.close()
-        self._active_connections.clear()
     
     def _build_url_with_path_params(self, url_template: str, tool_args: Dict[str, Any]) -> str:
         """Build URL by substituting path parameters from arguments.
