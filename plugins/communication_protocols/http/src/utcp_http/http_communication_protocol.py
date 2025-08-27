@@ -311,7 +311,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     
-                    content_type = response.headers.get('Content-Type', '')
+                    content_type = response.headers.get('Content-Type', '').lower()
                     if 'application/json' in content_type:
                         return await response.json()
                     return await response.text()
