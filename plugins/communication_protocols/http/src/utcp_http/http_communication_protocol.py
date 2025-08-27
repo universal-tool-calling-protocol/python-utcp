@@ -310,7 +310,11 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     timeout=aiohttp.ClientTimeout(total=30.0)
                 ) as response:
                     response.raise_for_status()
-                    return await response.json()
+                    
+                    content_type = response.headers.get('Content-Type', '').lower()
+                    if 'application/json' in content_type:
+                        return await response.json()
+                    return await response.text()
                     
             except aiohttp.ClientResponseError as e:
                 logger.error(f"Error calling tool '{tool_name}' on call template '{tool_call_template.name}': {e}")

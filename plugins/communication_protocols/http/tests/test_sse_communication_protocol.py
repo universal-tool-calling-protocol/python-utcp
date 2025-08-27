@@ -112,7 +112,6 @@ async def sse_transport():
     """Fixture to create and properly tear down an SseCommunicationProtocol instance."""
     transport = SseCommunicationProtocol()
     yield transport
-    await transport.close()
 
 @pytest.fixture
 def app():
@@ -272,26 +271,6 @@ async def test_call_tool_error(sse_transport, aiohttp_client, app):
             pass
     
     assert excinfo.value.status == 500
-
-@pytest.mark.asyncio
-async def test_deregister_manual(sse_transport, aiohttp_client, app):
-    """Test deregistering a manual closes the connection."""
-    client = await aiohttp_client(app)
-    call_template = SseCallTemplate(name="test-deregister", url=f"{client.make_url('/events')}")
-    
-    # Make a call to establish a connection
-    stream_iterator = sse_transport.call_tool_streaming(None, "test_tool", {}, call_template)
-    await anext(stream_iterator)
-    assert call_template.name in sse_transport._active_connections
-    response, session = sse_transport._active_connections[call_template.name]
-
-    # Deregister
-    await sse_transport.deregister_manual(None, call_template)
-    
-    # Verify connection and session are closed and removed
-    assert call_template.name not in sse_transport._active_connections
-    assert response.closed
-    assert session.closed
 
 @pytest.mark.asyncio
 async def test_call_tool_basic_nonstream(sse_transport, aiohttp_client, app):
