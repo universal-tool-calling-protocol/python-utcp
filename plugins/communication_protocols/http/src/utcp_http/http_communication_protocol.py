@@ -313,7 +313,11 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     
                     content_type = response.headers.get('Content-Type', '').lower()
                     if 'application/json' in content_type:
-                        return await response.json()
+                        try:
+                            return await response.json()
+                        except Exception:
+                            logger.error(f"Error parsing JSON response from tool '{tool_name}' on call template '{tool_call_template.name}', even though Content-Type was application/json")
+                            return await response.text()
                     return await response.text()
                     
             except aiohttp.ClientResponseError as e:
