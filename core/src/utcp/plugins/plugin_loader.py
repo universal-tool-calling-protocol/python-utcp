@@ -33,6 +33,11 @@ plugins_initialized = False
 loading_plugins = False
 
 def ensure_plugins_initialized():
+    """REQUIRED
+    Ensure that plugins are initialized.
+
+    This function should be called before using any plugin related functionality is used.
+    """
     global plugins_initialized
     global loading_plugins
     if plugins_initialized:

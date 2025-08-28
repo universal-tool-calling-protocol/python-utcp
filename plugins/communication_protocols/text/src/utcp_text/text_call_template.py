@@ -7,7 +7,8 @@ from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
 class TextCallTemplate(CallTemplate):
-    """Call template for text file-based manuals and tools.
+    """REQUIRED
+    Call template for text file-based manuals and tools.
 
     Reads UTCP manuals or tool definitions from local JSON/YAML files. Useful for
     static tool configurations or environments where manuals are distributed as files.
@@ -24,12 +25,17 @@ class TextCallTemplate(CallTemplate):
 
 
 class TextCallTemplateSerializer(Serializer[TextCallTemplate]):
-    """Serializer for TextCallTemplate."""
+    """REQUIRED
+    Serializer for TextCallTemplate."""
 
     def to_dict(self, obj: TextCallTemplate) -> dict:
+        """REQUIRED
+        Convert a TextCallTemplate to a dictionary."""
         return obj.model_dump()
 
     def validate_dict(self, obj: dict) -> TextCallTemplate:
+        """REQUIRED
+        Validate and convert a dictionary to a TextCallTemplate."""
         try:
             return TextCallTemplate.model_validate(obj)
         except Exception as e:

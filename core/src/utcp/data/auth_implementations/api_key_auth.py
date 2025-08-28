@@ -5,7 +5,8 @@ from typing import Literal
 from utcp.exceptions import UtcpSerializerValidationError
 
 class ApiKeyAuth(Auth):
-    """Authentication using an API key.
+    """REQUIRED
+    Authentication using an API key.
 
     The key can be provided directly or sourced from an environment variable.
     Supports placement in headers, query parameters, or cookies.
@@ -30,10 +31,30 @@ class ApiKeyAuth(Auth):
 
 
 class ApiKeyAuthSerializer(Serializer[ApiKeyAuth]):
+    """REQUIRED
+    Serializer for ApiKeyAuth model."""
     def to_dict(self, obj: ApiKeyAuth) -> dict:
+        """REQUIRED
+        Convert an ApiKeyAuth object to a dictionary.
+
+        Args:
+            obj: The ApiKeyAuth object to convert.
+
+        Returns:
+            The dictionary converted from the ApiKeyAuth object.
+        """
         return obj.model_dump()
     
     def validate_dict(self, obj: dict) -> ApiKeyAuth:
+        """REQUIRED
+        Validate a dictionary and convert it to an ApiKeyAuth object.
+
+        Args:
+            obj: The dictionary to validate and convert.
+
+        Returns:
+            The ApiKeyAuth object converted from the dictionary.
+        """
         try:
             return ApiKeyAuth.model_validate(obj)
         except ValidationError as e:

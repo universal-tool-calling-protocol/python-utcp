@@ -10,7 +10,8 @@ from utcp.interfaces.tool_post_processor import ToolPostProcessor, ToolPostProce
 import traceback
 
 class UtcpClientConfig(BaseModel):
-    """Configuration model for UTCP client setup.
+    """REQUIRED
+    Configuration model for UTCP client setup.
 
     Provides comprehensive configuration options for UTCP clients including
     variable definitions, provider file locations, and variable loading
@@ -118,10 +119,37 @@ class UtcpClientConfig(BaseModel):
         return [v if isinstance(v, ToolPostProcessor) else ToolPostProcessorConfigSerializer().validate_dict(v) for v in v]
 
 class UtcpClientConfigSerializer(Serializer[UtcpClientConfig]):
+    """REQUIRED
+    Serializer for UTCP client configurations.
+
+    Defines the contract for serializers that convert UTCP client configurations to and from
+    dictionaries for storage or transmission. Serializers are responsible for:
+    - Converting UTCP client configurations to dictionaries for storage or transmission
+    - Converting dictionaries back to UTCP client configurations
+    - Ensuring data consistency during serialization and deserialization
+    """
     def to_dict(self, obj: UtcpClientConfig) -> dict:
+        """REQUIRED
+        Convert a UtcpClientConfig object to a dictionary.
+
+        Args:
+            obj: The UtcpClientConfig object to convert.
+
+        Returns:
+            The dictionary converted from the UtcpClientConfig object.
+        """
         return obj.model_dump()
     
     def validate_dict(self, data: dict) -> UtcpClientConfig:
+        """REQUIRED
+        Validate a dictionary and convert it to a UtcpClientConfig object.
+
+        Args:
+            data: The dictionary to validate and convert.
+
+        Returns:
+            The UtcpClientConfig object converted from the dictionary.
+        """
         try:
             return UtcpClientConfig.model_validate(data)
         except Exception as e:

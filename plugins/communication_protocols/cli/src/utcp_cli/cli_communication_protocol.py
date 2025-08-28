@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 
 
 class CliCommunicationProtocol(CommunicationProtocol):
-    """Transport implementation for CLI-based tool providers.
+    """REQUIRED
+    Transport implementation for CLI-based tool providers.
 
     Handles communication with command-line tools by executing processes
     and managing their input/output. Supports both tool discovery and
@@ -154,7 +155,8 @@ class CliCommunicationProtocol(CommunicationProtocol):
             raise
     
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
-        """Register a CLI manual and discover its tools.
+        """REQUIRED
+        Register a CLI manual and discover its tools.
         
         Executes the call template's command_name and looks for a UTCP manual JSON in the output.
         """
@@ -237,7 +239,8 @@ class CliCommunicationProtocol(CommunicationProtocol):
             )
     
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
-        """Deregister a CLI manual (no-op)."""
+        """REQUIRED
+        Deregister a CLI manual (no-op)."""
         if isinstance(manual_call_template, CliCallTemplate):
             self._log_info(
                 f"Deregistering CLI manual '{manual_call_template.name}' (no-op)"
@@ -399,7 +402,8 @@ class CliCommunicationProtocol(CommunicationProtocol):
         return tools
     
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
-        """Call a CLI tool.
+        """REQUIRED
+        Call a CLI tool.
         
         Executes the command specified by provider.command_name with the provided arguments.
         
@@ -471,11 +475,13 @@ class CliCommunicationProtocol(CommunicationProtocol):
             raise
 
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
-        """Streaming calls are not supported for CLI protocol."""
+        """REQUIRED
+        Streaming calls are not supported for CLI protocol."""
         raise NotImplementedError("Streaming is not supported by the CLI communication protocol.")
     
     async def close(self) -> None:
-        """Close the transport.
+        """
+        Close the transport.
         
         This is a no-op for CLI transports since they don't maintain connections.
         """

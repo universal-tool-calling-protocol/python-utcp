@@ -3,7 +3,8 @@ from typing import Any, Optional, List
 from utcp.data.utcp_client_config import UtcpClientConfig
 
 class VariableSubstitutor(ABC):
-    """Abstract interface for variable substitution implementations.
+    """REQUIRED
+    Abstract interface for variable substitution implementations.
 
     Defines the contract for variable substitution systems that can replace
     placeholders in configuration data with actual values from various sources.
@@ -13,7 +14,8 @@ class VariableSubstitutor(ABC):
 
     @abstractmethod
     def substitute(self, obj: dict | list | str, config: UtcpClientConfig, variable_namespace: Optional[str] = None) -> Any:
-        """Substitute variables in the given object.
+        """REQUIRED
+        Substitute variables in the given object.
 
         Args:
             obj: Object containing potential variable references to substitute.
@@ -31,7 +33,8 @@ class VariableSubstitutor(ABC):
 
     @abstractmethod
     def find_required_variables(self, obj: dict | list | str, variable_namespace: Optional[str] = None) -> List[str]:
-        """Find all variable references in the given object.
+        """REQUIRED
+        Find all variable references in the given object.
 
         Args:
             obj: Object to scan for variable references.

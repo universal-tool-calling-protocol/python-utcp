@@ -19,7 +19,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class StreamableHttpCommunicationProtocol(CommunicationProtocol):
-    """Streamable HTTP communication protocol implementation for UTCP client.
+    """REQUIRED
+    Streamable HTTP communication protocol implementation for UTCP client.
     
     Handles HTTP streaming with chunked transfer encoding for real-time data.
     """
@@ -65,7 +66,8 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         self._oauth_tokens.clear()
 
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
-        """Register a manual and its tools from a StreamableHttp provider."""
+        """REQUIRED
+        Register a manual and its tools from a StreamableHttp provider."""
         if not isinstance(manual_call_template, StreamableHttpCallTemplate):
             raise ValueError("StreamableHttpCommunicationProtocol can only be used with StreamableHttpCallTemplate")
 
@@ -165,11 +167,13 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             )
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
-        """Deregister a StreamableHttp manual. This is a no-op for the stateless streamable HTTP protocol."""
+        """REQUIRED
+        Deregister a StreamableHttp manual. This is a no-op for the stateless streamable HTTP protocol."""
         logger.info(f"Deregistering manual '{manual_call_template.name}'. No active connection to close.")
 
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
-        """Execute a tool call through StreamableHttp transport."""
+        """REQUIRED
+        Execute a tool call through StreamableHttp transport."""
         if not isinstance(tool_call_template, StreamableHttpCallTemplate):
             raise ValueError("StreamableHttpCommunicationProtocol can only be used with StreamableHttpCallTemplate")
         
@@ -187,7 +191,8 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         return chunk_list
     
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
-        """Execute a tool call through StreamableHttp transport with streaming."""
+        """REQUIRED
+        Execute a tool call through StreamableHttp transport with streaming."""
         if not isinstance(tool_call_template, StreamableHttpCallTemplate):
             raise ValueError("StreamableHttpCommunicationProtocol can only be used with StreamableHttpCallTemplate")
 

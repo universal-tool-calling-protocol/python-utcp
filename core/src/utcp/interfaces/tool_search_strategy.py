@@ -15,7 +15,8 @@ from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
 class ToolSearchStrategy(BaseModel, ABC):
-    """Abstract interface for tool search implementations.
+    """REQUIRED
+    Abstract interface for tool search implementations.
 
     Defines the contract for tool search strategies that can be plugged into
     the UTCP client. Different implementations can provide various search
@@ -32,7 +33,8 @@ class ToolSearchStrategy(BaseModel, ABC):
 
     @abstractmethod
     async def search_tools(self, tool_repository: ConcurrentToolRepository, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = None) -> List[Tool]:
-        """Search for tools relevant to the query.
+        """REQUIRED
+        Search for tools relevant to the query.
 
         Executes a search against the available tools and returns the most
         relevant matches ranked by the strategy's scoring algorithm.
@@ -57,13 +59,40 @@ class ToolSearchStrategy(BaseModel, ABC):
         pass
 
 class ToolSearchStrategyConfigSerializer(Serializer[ToolSearchStrategy]):
+    """REQUIRED
+    Serializer for tool search strategies.
+
+    Defines the contract for serializers that convert tool search strategies to and from
+    dictionaries for storage or transmission. Serializers are responsible for:
+    - Converting tool search strategies to dictionaries for storage or transmission
+    - Converting dictionaries back to tool search strategies
+    - Ensuring data consistency during serialization and deserialization
+    """
     tool_search_strategy_implementations: Dict[str, Serializer['ToolSearchStrategy']] = {}
     default_strategy = "tag_and_description_word_match"
 
     def to_dict(self, obj: ToolSearchStrategy) -> dict:
+        """REQUIRED
+        Convert a tool search strategy to a dictionary.
+
+        Args:
+            obj: The tool search strategy to convert.
+
+        Returns:
+            The dictionary converted from the tool search strategy.
+        """
         return ToolSearchStrategyConfigSerializer.tool_search_strategy_implementations[obj.tool_search_strategy_type].to_dict(obj)
 
     def validate_dict(self, data: dict) -> ToolSearchStrategy:
+        """REQUIRED
+        Validate a dictionary and convert it to a tool search strategy.
+
+        Args:
+            data: The dictionary to validate and convert.
+
+        Returns:
+            The tool search strategy converted from the dictionary.
+        """
         try:
             return ToolSearchStrategyConfigSerializer.tool_search_strategy_implementations[data['tool_search_strategy_type']].validate_dict(data)
         except KeyError:

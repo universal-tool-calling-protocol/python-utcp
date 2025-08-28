@@ -22,14 +22,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 class SseCommunicationProtocol(CommunicationProtocol):
-    """SSE communication protocol implementation for UTCP client.
+    """REQUIRED
+    SSE communication protocol implementation for UTCP client.
     
     Handles Server-Sent Events based tool providers with streaming capabilities.
     """
 
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-        self._active_connections: Dict[str, tuple[aiohttp.ClientResponse, aiohttp.ClientSession]] = {}
 
     def _apply_auth(self, provider: SseCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
@@ -64,7 +64,8 @@ class SseCommunicationProtocol(CommunicationProtocol):
         return auth, cookies
 
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
-        """Register a manual and its tools from an SSE provider."""
+        """REQUIRED
+        Register a manual and its tools from an SSE provider."""
         if not isinstance(manual_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 
@@ -145,15 +146,13 @@ class SseCommunicationProtocol(CommunicationProtocol):
             )
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
-        """Deregister an SSE manual and close any active connections."""
-        template_name = manual_call_template.name
-        if template_name in self._active_connections:
-            response, session = self._active_connections.pop(template_name)
-            response.close()
-            await session.close()
-
+        """REQUIRED
+        Deregister an SSE manual."""
+        pass
+    
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
-        """Execute a tool call through SSE transport."""
+        """REQUIRED
+        Execute a tool call through SSE transport."""
         if not isinstance(tool_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
         
@@ -163,7 +162,8 @@ class SseCommunicationProtocol(CommunicationProtocol):
         return event_list
     
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
-        """Execute a tool call through SSE transport with streaming."""
+        """REQUIRED
+        Execute a tool call through SSE transport with streaming."""
         if not isinstance(tool_call_template, SseCallTemplate):
             raise ValueError("SSECommunicationProtocol can only be used with SSECallTemplate")
 
@@ -205,7 +205,6 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 auth=auth, cookies=cookies, json=json_data, data=data, timeout=None
             )
             response.raise_for_status()
-            self._active_connections[tool_call_template.name] = (response, session)
             async for event in self._process_sse_stream(response, tool_call_template.event_type):
                 yield event
         except Exception as e:
@@ -295,15 +294,6 @@ class SseCommunicationProtocol(CommunicationProtocol):
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with header failed: {e}")
                 raise e
-
-    async def close(self):
-        """Closes all active connections and sessions."""
-        for provider_name in list(self._active_connections.keys()):
-            if provider_name in self._active_connections:
-                response, session = self._active_connections.pop(provider_name)
-                response.close()
-                await session.close()
-        self._active_connections.clear()
     
     def _build_url_with_path_params(self, url_template: str, tool_args: Dict[str, Any]) -> str:
         """Build URL by substituting path parameters from arguments.

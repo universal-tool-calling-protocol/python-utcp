@@ -26,6 +26,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 class UtcpClientImplementation(UtcpClient):
+    """REQUIRED
+    Implementation of the `UtcpClient` interface.
+
+    This class provides a concrete implementation of the `UtcpClient` interface.
+    """
     def __init__(
         self,
         config: UtcpClientConfig,
@@ -41,6 +46,16 @@ class UtcpClientImplementation(UtcpClient):
         root_dir: Optional[str] = None,
         config: Optional[Union[str, Dict[str, Any], UtcpClientConfig]] = None,
     ) -> 'UtcpClient':
+        """REQUIRED
+        Create a new `UtcpClient` instance.
+
+        Args:
+            root_dir: The root directory for the client.
+            config: The configuration for the client.
+
+        Returns:
+            A new `UtcpClient` instance.
+        """
         # Validate and load the config
         client_config_serializer = UtcpClientConfigSerializer()
         if config is None:
@@ -77,6 +92,15 @@ class UtcpClientImplementation(UtcpClient):
         return client
 
     async def register_manual(self, manual_call_template: CallTemplate) -> RegisterManualResult:
+        """REQUIRED
+        Register a manual in the client.
+
+        Args:
+            manual_call_template: The `CallTemplate` instance representing the manual to register.
+
+        Returns:
+            A `RegisterManualResult` instance representing the result of the registration.
+        """
         # Replace all non-word characters with underscore
         manual_call_template.name = re.sub(r'[^\w]', '_', manual_call_template.name)
         if await self.config.tool_repository.get_manual(manual_call_template.name) is not None:
@@ -96,6 +120,15 @@ class UtcpClientImplementation(UtcpClient):
         return result
 
     async def register_manuals(self, manual_call_templates: List[CallTemplate]) -> List[RegisterManualResult]:
+        """REQUIRED
+        Register multiple manuals in the client.
+
+        Args:
+            manual_call_templates: A list of `CallTemplate` instances representing the manuals to register.
+
+        Returns:
+            A list of `RegisterManualResult` instances representing the results of the registration.
+        """
         # Create tasks for parallel CallTemplate registration
         tasks = []
         for manual_call_template in manual_call_templates:
@@ -125,6 +158,15 @@ class UtcpClientImplementation(UtcpClient):
         return [p for p in results if p is not None]
 
     async def deregister_manual(self, manual_name: str) -> bool:
+        """REQUIRED
+        Deregister a manual from the client.
+
+        Args:
+            manual_name: The name of the manual to deregister.
+
+        Returns:
+            A boolean indicating whether the manual was successfully deregistered.
+        """
         manual_call_template = await self.config.tool_repository.get_manual_call_template(manual_name)
         if manual_call_template is None:
             return False
@@ -132,6 +174,16 @@ class UtcpClientImplementation(UtcpClient):
         return await self.config.tool_repository.remove_manual(manual_name)
 
     async def call_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Any:
+        """REQUIRED
+        Call a tool in the client.
+
+        Args:
+            tool_name: The name of the tool to call.
+            tool_args: A dictionary of arguments to pass to the tool.
+
+        Returns:
+            The result of the tool call.
+        """
         manual_name = tool_name.split(".")[0]
         tool = await self.config.tool_repository.get_tool(tool_name)
         if tool is None:
@@ -145,6 +197,16 @@ class UtcpClientImplementation(UtcpClient):
         return result
 
     async def call_tool_streaming(self, tool_name: str, tool_args: Dict[str, Any]) -> AsyncGenerator[Any, None]:
+        """REQUIRED
+        Call a tool in the client streamingly.
+
+        Args:
+            tool_name: The name of the tool to call.
+            tool_args: A dictionary of arguments to pass to the tool.
+
+        Returns:
+            An async generator yielding the result of the tool call.
+        """
         manual_name = tool_name.split(".")[0]
         tool = await self.config.tool_repository.get_tool(tool_name)
         if tool is None:
@@ -157,6 +219,17 @@ class UtcpClientImplementation(UtcpClient):
             yield item
 
     async def search_tools(self, query: str, limit: int = 10, any_of_tags_required: Optional[List[str]] = None) -> List[Tool]:
+        """REQUIRED
+        Search for tools based on the given query.
+
+        Args:
+            query: The query to search for.
+            limit: The maximum number of results to return.
+            any_of_tags_required: A list of tags that must be present in the tool.
+
+        Returns:
+            A list of tools that match the query.
+        """
         return await self.config.tool_search_strategy.search_tools(
             tool_repository=self.config.tool_repository,
             query=query,
@@ -165,6 +238,15 @@ class UtcpClientImplementation(UtcpClient):
         )
 
     async def get_required_variables_for_manual_and_tools(self, manual_call_template: CallTemplate) -> List[str]:
+        """REQUIRED
+        Get the required variables for a manual and its tools.
+
+        Args:
+            manual_call_template: The `CallTemplate` instance representing the manual.
+
+        Returns:
+            A list of required variables for the manual and its tools.
+        """
         manual_call_template.name = re.sub(r'[^\w]', '_', manual_call_template.name)
         variables_for_CallTemplate = self.variable_substitutor.find_required_variables(CallTemplateSerializer().to_dict(manual_call_template), manual_call_template.name)
         if len(variables_for_CallTemplate) > 0:
@@ -181,6 +263,15 @@ class UtcpClientImplementation(UtcpClient):
         return variables_for_CallTemplate
 
     async def get_required_variables_for_registered_tool(self, tool_name: str) -> List[str]:
+        """REQUIRED
+        Get the required variables for a registered tool.
+
+        Args:
+            tool_name: The name of the tool.
+
+        Returns:
+            A list of required variables for the tool.
+        """
         manual_name = tool_name.split(".")[0]
         tool = await self.config.tool_repository.get_tool(tool_name)
         if tool is None:

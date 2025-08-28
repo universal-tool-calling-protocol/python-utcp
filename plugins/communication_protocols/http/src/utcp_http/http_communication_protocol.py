@@ -37,7 +37,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class HttpCommunicationProtocol(CommunicationProtocol):
-    """HTTP communication protocol implementation for UTCP client.
+    """REQUIRED
+    HTTP communication protocol implementation for UTCP client.
 
     Handles communication with HTTP-based tool providers, supporting various
     authentication methods, URL path parameters, and automatic tool discovery.
@@ -101,7 +102,8 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         return auth, cookies
 
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
-        """Register a manual and its tools.
+        """REQUIRED
+        Register a manual and its tools.
 
         Args:
             caller: The UTCP client that is calling this method.
@@ -227,14 +229,16 @@ class HttpCommunicationProtocol(CommunicationProtocol):
             )
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
-        """Deregister a manual and its tools.
+        """REQUIRED
+        Deregister a manual and its tools.
         
         Deregistering a manual is a no-op for the stateless HTTP communication protocol.
         """
         pass
 
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
-        """Execute a tool call through this transport.
+        """REQUIRED
+        Execute a tool call through this transport.
         
         Args:
             caller: The UTCP client that is calling this method.
@@ -306,7 +310,15 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     timeout=aiohttp.ClientTimeout(total=30.0)
                 ) as response:
                     response.raise_for_status()
-                    return await response.json()
+                    
+                    content_type = response.headers.get('Content-Type', '').lower()
+                    if 'application/json' in content_type:
+                        try:
+                            return await response.json()
+                        except Exception:
+                            logger.error(f"Error parsing JSON response from tool '{tool_name}' on call template '{tool_call_template.name}', even though Content-Type was application/json")
+                            return await response.text()
+                    return await response.text()
                     
             except aiohttp.ClientResponseError as e:
                 logger.error(f"Error calling tool '{tool_name}' on call template '{tool_call_template.name}': {e}")
@@ -316,7 +328,8 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                 raise
 
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
-        """Execute a tool call through this transport streamingly.
+        """REQUIRED
+        Execute a tool call through this transport streamingly.
         
         Args:
             caller: The UTCP client that is calling this method.
@@ -332,7 +345,8 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         yield result
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
-        """Handles OAuth2 client credentials flow, trying both body and auth header methods."""
+        """
+        Handles OAuth2 client credentials flow, trying both body and auth header methods."""
         client_id = auth_details.client_id
 
         if client_id in self._oauth_tokens:
@@ -373,7 +387,8 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                 logger.error(f"OAuth2 with Basic Auth header also failed: {e}")
     
     def _build_url_with_path_params(self, url_template: str, tool_args: Dict[str, Any]) -> str:
-        """Build URL by substituting path parameters from arguments.
+        """
+        Build URL by substituting path parameters from arguments.
         
         Args:
             url_template: URL template with path parameters in {param_name} format

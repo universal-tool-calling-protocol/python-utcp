@@ -29,7 +29,8 @@ from utcp.data.tool import Tool, JsonSchema
 from utcp_http.http_call_template import HttpCallTemplate
 
 class OpenApiConverter:
-    """Converts OpenAPI specifications into UTCP tool definitions.
+    """REQUIRED
+    Converts OpenAPI specifications into UTCP tool definitions.
 
     Processes OpenAPI 2.0 and 3.0 specifications to generate equivalent UTCP
     tools, handling schema resolution, authentication mapping, and proper
@@ -97,7 +98,8 @@ class OpenApiConverter:
         return f"${{{placeholder_name}_{self.placeholder_counter}}}"
 
     def convert(self) -> UtcpManual:
-        """Parses the OpenAPI specification and returns a UtcpManual."""
+        """REQUIRED
+        Parses the OpenAPI specification and returns a UtcpManual."""
         self.placeholder_counter = 0
         tools = []
         servers = self.spec.get("servers")
@@ -121,7 +123,8 @@ class OpenApiConverter:
         return UtcpManual(tools=tools)
 
     def _extract_auth(self, operation: Dict[str, Any]) -> Optional[Auth]:
-        """Extracts authentication information from OpenAPI operation and global security schemes."""
+        """
+        Extracts authentication information from OpenAPI operation and global security schemes."""
         # First check for operation-level security requirements
         security_requirements = operation.get("security", [])
         
@@ -147,7 +150,8 @@ class OpenApiConverter:
         return None
     
     def _get_security_schemes(self) -> Dict[str, Any]:
-        """Gets security schemes supporting both OpenAPI 2.0 and 3.0."""
+        """
+        Gets security schemes supporting both OpenAPI 2.0 and 3.0."""
         # OpenAPI 3.0 format
         if "components" in self.spec:
             return self.spec.get("components", {}).get("securitySchemes", {})
