@@ -1,9 +1,7 @@
 from typing import Any, Dict, Optional, AsyncGenerator, TYPE_CHECKING
 import json
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp_use import MCPClient
 from utcp.data.utcp_manual import UtcpManual
 from utcp.data.call_template import CallTemplate
 from utcp.data.tool import Tool
@@ -23,66 +21,165 @@ class McpCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
     MCP transport implementation that connects to MCP servers via stdio or HTTP.
     
-    This implementation uses a session-per-operation approach where each operation
-    (register, call_tool) opens a fresh session, performs the operation, and closes.
+    This implementation uses MCPClient for simplified session management and reuses
+    sessions for better performance and efficiency.
     """
     
     def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
+        self._mcp_client: Optional[MCPClient] = None
 
-    async def _list_tools_with_session(self, server_config: Dict[str, Any], auth: Optional[OAuth2Auth] = None):
-        # Create client streams based on transport type
-        if "command" in server_config and "args" in server_config:
-            params = StdioServerParameters(**server_config)
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    tools_response = await session.list_tools()
-                    return tools_response.tools
-        elif "url" in server_config:
-            # Get authentication token if OAuth2 is configured
-            auth_header = None
-            if auth and isinstance(auth, OAuth2Auth):
-                token = await self._handle_oauth2(auth)
-                auth_header = {"Authorization": f"Bearer {token}"}
+    async def _ensure_mcp_client(self, manual_call_template: 'McpCallTemplate'):
+        """Ensure MCPClient is initialized with the current configuration."""
+        if self._mcp_client is None or self._mcp_client.config != manual_call_template.config.mcpServers:
+            # Create a new MCPClient with the server configuration
+            config = {"mcpServers": manual_call_template.config.mcpServers}
+            self._mcp_client = MCPClient.from_dict(config)
+
+    async def _get_or_create_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
+        """Get an existing session or create a new one using MCPClient."""
+        await self._ensure_mcp_client(manual_call_template)
+        
+        try:
+            # Try to get existing session
+            session = self._mcp_client.get_session(server_name)
+            logger.info(f"Reusing existing session for server: {server_name}")
+            return session
+        except ValueError:
+            # Session doesn't exist, create a new one
+            logger.info(f"Creating new session for server: {server_name}")
+            session = await self._mcp_client.create_session(server_name, auto_initialize=True)
+            return session
+
+    async def _cleanup_session(self, server_name: str):
+        """Clean up a specific session."""
+        if self._mcp_client:
+            await self._mcp_client.close_session(server_name)
+            logger.info(f"Cleaned up session for server: {server_name}")
+
+    async def _cleanup_all_sessions(self):
+        """Clean up all active sessions."""
+        if self._mcp_client:
+            await self._mcp_client.close_all_sessions()
+            logger.info("Cleaned up all sessions")
+
+    async def _list_tools_with_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
+        """List tools using cached session when possible."""
+        try:
+            session = await self._get_or_create_session(server_name, manual_call_template)
+            tools_response = await session.list_tools()
+            # Handle both direct list return and object with .tools attribute
+            if hasattr(tools_response, 'tools'):
+                return tools_response.tools
+            else:
+                return tools_response
+        except Exception as e:
+            # Check if this is a session-level error
+            error_message = str(e).lower()
+            session_errors = [
+                "connection", "transport", "session", "protocol", "closed", 
+                "disconnected", "timeout", "network", "broken pipe", "eof"
+            ]
             
-            async with streamablehttp_client(server_config["url"], auth=auth_header) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    tools_response = await session.list_tools()
+            is_session_error = any(error_keyword in error_message for error_keyword in session_errors)
+            
+            if is_session_error:
+                # Only restart session for connection/transport level issues
+                await self._cleanup_session(server_name)
+                logger.warning(f"Session-level error for list_tools, retrying with fresh session: {e}")
+                
+                # Retry with a fresh session
+                session = await self._get_or_create_session(server_name, manual_call_template)
+                tools_response = await session.list_tools()
+                # Handle both direct list return and object with .tools attribute
+                if hasattr(tools_response, 'tools'):
                     return tools_response.tools
-        else:
-            raise ValueError(f"Unsupported MCP transport: {json.dumps(server_config)}")
+                else:
+                    return tools_response
+            else:
+                # Protocol-level error, re-raise without session restart
+                logger.error(f"Protocol-level error for list_tools: {e}")
+                raise
+
+    async def _list_resources_with_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
+        """List resources using cached session when possible."""
+        try:
+            session = await self._get_or_create_session(server_name, manual_call_template)
+            resources_response = await session.list_resources()
+            # Handle both direct list return and object with .resources attribute
+            if hasattr(resources_response, 'resources'):
+                return resources_response.resources
+            else:
+                return resources_response
+        except Exception as e:
+            # If there's an error, clean up the potentially bad session and try once more
+            await self._cleanup_session(server_name)
+            logger.warning(f"Session failed for list_resources, retrying: {e}")
+            
+            # Retry with a fresh session
+            session = await self._get_or_create_session(server_name, manual_call_template)
+            resources_response = await session.list_resources()
+            # Handle both direct list return and object with .resources attribute
+            if hasattr(resources_response, 'resources'):
+                return resources_response.resources
+            else:
+                return resources_response
+
+    async def _read_resource_with_session(self, server_name: str, manual_call_template: 'McpCallTemplate', resource_uri: str):
+        """Read a resource using cached session when possible."""
+        try:
+            session = await self._get_or_create_session(server_name, manual_call_template)
+            result = await session.read_resource(resource_uri)
+            return result
+        except Exception as e:
+            # If there's an error, clean up the potentially bad session and try once more
+            await self._cleanup_session(server_name)
+            logger.warning(f"Session failed for read_resource '{resource_uri}', retrying: {e}")
+            
+            # Retry with a fresh session
+            session = await self._get_or_create_session(server_name, manual_call_template)
+            result = await session.read_resource(resource_uri)
+            return result
+
+    async def _handle_resource_call(self, resource_name: str, tool_call_template: 'McpCallTemplate') -> Any:
+        """Handle a resource call by finding and reading the resource from the appropriate server."""
+        if not tool_call_template.config or not tool_call_template.config.mcpServers:
+            raise ValueError(f"No server configuration found for resource '{resource_name}'")
+        
+        # Try each server until we find one that has the resource
+        for server_name, server_config in tool_call_template.config.mcpServers.items():
+            try:
+                logger.info(f"Attempting to find resource '{resource_name}' on server '{server_name}'")
+                
+                # List resources to find the one with matching name
+                resources = await self._list_resources_with_session(server_name, tool_call_template)
+                target_resource = None
+                for resource in resources:
+                    if resource.name == resource_name:
+                        target_resource = resource
+                        break
+                
+                if target_resource is None:
+                    logger.info(f"Resource '{resource_name}' not found in server '{server_name}'")
+                    continue  # Try next server
+                
+                # Read the resource
+                logger.info(f"Reading resource '{resource_name}' with URI '{target_resource.uri}' from server '{server_name}'")
+                result = await self._read_resource_with_session(server_name, tool_call_template, target_resource.uri)
+                
+                # Process the result
+                return result.model_dump()
+            except Exception as e:
+                logger.error(f"Error reading resource '{resource_name}' on server '{server_name}': {e}")
+                continue  # Try next server
+        
+        raise ValueError(f"Resource '{resource_name}' not found in any configured server")
     
-    async def _call_tool_with_session(self, server_config: Dict[str, Any], tool_name: str, inputs: Dict[str, Any], auth: Optional[OAuth2Auth] = None):
-        if "command" in server_config and "args" in server_config:
-            params = StdioServerParameters(**server_config)
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool(tool_name, arguments=inputs)
-                    return result
-        elif "url" in server_config:
-            # Get authentication token if OAuth2 is configured
-            auth_header = None
-            if auth and isinstance(auth, OAuth2Auth):
-                token = await self._handle_oauth2(auth)
-                auth_header = {"Authorization": f"Bearer {token}"}
-            
-            async with streamablehttp_client(
-                url=server_config["url"],
-                headers=server_config.get("headers", None),
-                timeout=server_config.get("timeout", 30),
-                sse_read_timeout=server_config.get("sse_read_timeout", 60 * 5),
-                terminate_on_close=server_config.get("terminate_on_close", True),
-                auth=auth_header
-            ) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool(tool_name, arguments=inputs)
-                    return result
-        else:
-            raise ValueError(f"Unsupported MCP transport: {json.dumps(server_config)}")
+    async def _call_tool_with_session(self, server_name: str, manual_call_template: 'McpCallTemplate', tool_name: str, inputs: Dict[str, Any]):
+        """Call a tool using cached session when possible."""
+        session = await self._get_or_create_session(server_name, manual_call_template)
+        result = await session.call_tool(tool_name, arguments=inputs)
+        return result
 
     async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
         """REQUIRED
@@ -96,7 +193,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
             for server_name, server_config in manual_call_template.config.mcpServers.items():
                 try:
                     logger.info(f"Discovering tools for server '{server_name}' via {server_config}")
-                    mcp_tools = await self._list_tools_with_session(server_config, auth=manual_call_template.auth)
+                    mcp_tools = await self._list_tools_with_session(server_name, manual_call_template)
                     logger.info(f"Discovered {len(mcp_tools)} tools for server '{server_name}'")
                     for mcp_tool in mcp_tools:
                         # Convert mcp.Tool to utcp.data.tool.Tool
@@ -108,6 +205,40 @@ class McpCommunicationProtocol(CommunicationProtocol):
                             tool_call_template=manual_call_template
                         )
                         all_tools.append(utcp_tool)
+                    
+                    # Register resources as tools if enabled
+                    if manual_call_template.register_resources_as_tools:
+                        logger.info(f"Discovering resources for server '{server_name}' to register as tools")
+                        try:
+                            mcp_resources = await self._list_resources_with_session(server_name, manual_call_template)
+                            logger.info(f"Discovered {len(mcp_resources)} resources for server '{server_name}'")
+                            for mcp_resource in mcp_resources:
+                                # Convert mcp.Resource to utcp.data.tool.Tool
+                                # Create a tool that reads the resource when called
+                                resource_tool = Tool(
+                                    name=f"resource_{mcp_resource.name}",
+                                    description=f"Read resource: {mcp_resource.description or mcp_resource.name}. URI: {mcp_resource.uri}",
+                                    input_schema={
+                                        "type": "object",
+                                        "properties": {},
+                                        "required": []
+                                    },
+                                    output_schema={
+                                        "type": "object",
+                                        "properties": {
+                                            "contents": {
+                                                "type": "array",
+                                                "description": "Resource contents"
+                                            }
+                                        }
+                                    },
+                                    tool_call_template=manual_call_template
+                                )
+                                all_tools.append(resource_tool)
+                        except Exception as resource_error:
+                            logger.warning(f"Failed to discover resources for server '{server_name}': {resource_error}")
+                            # Don't add this to errors since resources are optional
+                            
                 except Exception as e:
                     logger.error(f"Failed to discover tools for server '{server_name}': {e}")
                     errors.append(f"Failed to discover tools for server '{server_name}': {e}")
@@ -129,13 +260,21 @@ class McpCommunicationProtocol(CommunicationProtocol):
         if not tool_call_template.config or not tool_call_template.config.mcpServers:
             raise ValueError(f"No server configuration found for tool '{tool_name}'")
         
+        if "." in tool_name:
+            tool_name = tool_name.split(".", 1)[1]
+        
+        # Check if this is a resource call (tools created from resources have "resource_" prefix)
+        if tool_name.startswith("resource_"):
+            resource_name = tool_name[9:]  # Remove "resource_" prefix
+            return await self._handle_resource_call(resource_name, tool_call_template)
+        
         # Try each server until we find one that has the tool
         for server_name, server_config in tool_call_template.config.mcpServers.items():
             try:
                 logger.info(f"Attempting to call tool '{tool_name}' on server '{server_name}'")
                 
                 # First check if this server has the tool
-                tools = await self._list_tools_with_session(server_config, auth=tool_call_template.auth)
+                tools = await self._list_tools_with_session(server_name, tool_call_template)
                 tool_names = [tool.name for tool in tools]
                 
                 if tool_name not in tool_names:
@@ -143,13 +282,13 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     continue  # Try next server
                 
                 # Call the tool
-                result = await self._call_tool_with_session(server_config, tool_name, tool_args, auth=tool_call_template.auth)
+                result = await self._call_tool_with_session(server_name, tool_call_template, tool_name, tool_args)
                 
                 # Process the result
                 return self._process_tool_result(result, tool_name)
             except Exception as e:
                 logger.error(f"Error calling tool '{tool_name}' on server '{server_name}': {e}")
-                continue  # Try next server
+                raise e
         
         raise ValueError(f"Tool '{tool_name}' not found in any configured server")
 
@@ -235,9 +374,25 @@ class McpCommunicationProtocol(CommunicationProtocol):
         return text
 
     async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
-        """Deregister an MCP manual. This is a no-op in session-per-operation mode."""
-        logger.info(f"Deregistering manual '{manual_call_template.name}' (no-op in session-per-operation mode)")
-        pass
+        """Deregister an MCP manual and clean up associated sessions."""
+        if not isinstance(manual_call_template, McpCallTemplate):
+            logger.info(f"Deregistering manual '{manual_call_template.name}' - not an MCP template")
+            return
+            
+        logger.info(f"Deregistering manual '{manual_call_template.name}' and cleaning up sessions")
+        
+        # Clean up sessions for all servers in this manual
+        if manual_call_template.config and manual_call_template.config.mcpServers:
+            for server_name, server_config in manual_call_template.config.mcpServers.items():
+                await self._cleanup_session(server_name)
+                logger.info(f"Cleaned up session for server '{server_name}'")
+
+    async def close(self) -> None:
+        """Close all active sessions and clean up resources."""
+        logger.info("Closing MCP communication protocol and cleaning up all sessions")
+        await self._cleanup_all_sessions()
+        self._session_locks.clear()
+        logger.info("MCP communication protocol closed successfully")
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
         """Handles OAuth2 client credentials flow, trying both body and auth header methods."""

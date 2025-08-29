@@ -42,11 +42,15 @@ class McpCallTemplate(CallTemplate):
         config: Configuration object containing MCP server definitions.
             This follows the same format as the official MCP server configuration.
         auth: Optional OAuth2 authentication for HTTP-based MCP servers.
+        register_resources_as_tools: Whether to register MCP resources as callable tools.
+            When True, server resources are exposed as tools that can be called.
+            Default is False.
     """
 
     call_template_type: Literal["mcp"] = "mcp"
     config: McpConfig
     auth: Optional[OAuth2Auth] = None
+    register_resources_as_tools: bool = False
 
 class McpCallTemplateSerializer(Serializer[McpCallTemplate]):
     """REQUIRED
