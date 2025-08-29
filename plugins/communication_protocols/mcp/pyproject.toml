@@ -10,7 +10,7 @@ authors = [
 ]
 description = "UTCP communication protocol plugin for interoperability with the Model Context Protocol (MCP)."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0",
     "mcp>=1.12",
