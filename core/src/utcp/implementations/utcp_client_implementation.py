@@ -122,6 +122,9 @@ class UtcpClientImplementation(UtcpClient):
                 else:
                     mcp_result = await CommunicationProtocol.communication_protocols["mcp"].register_manual(self, tool.tool_call_template)
                     if mcp_result.success:
+                        for mcp_tool in mcp_result.manual.tools:
+                            if not mcp_tool.name.startswith(tool.name + "."):
+                                mcp_tool.name = tool.name + "." + mcp_tool.name
                         final_tools.extend(mcp_result.manual.tools)
                         
             result.manual.tools = final_tools         
