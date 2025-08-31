@@ -12,6 +12,7 @@ Key Features:
     - Request/response handling with proper error management
 """
 
+import sys
 from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
 import aiohttp
 import json
@@ -35,6 +36,12 @@ from utcp_http.openapi_converter import OpenApiConverter
 import logging
 
 logger = logging.getLogger(__name__)
+
+if not logger.handlers:  # Only add default handler if user didn't configure logging
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 class HttpCommunicationProtocol(CommunicationProtocol):
     """REQUIRED

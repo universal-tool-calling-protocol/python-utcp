@@ -23,6 +23,7 @@ import asyncio
 import json
 import os
 import shlex
+import sys
 from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
@@ -34,6 +35,12 @@ from utcp_cli.cli_call_template import CliCallTemplate, CliCallTemplateSerialize
 import logging
 
 logger = logging.getLogger(__name__)
+
+if not logger.handlers:  # Only add default handler if user didn't configure logging
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 class CliCommunicationProtocol(CommunicationProtocol):

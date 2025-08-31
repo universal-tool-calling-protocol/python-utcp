@@ -5,6 +5,7 @@ This protocol reads UTCP manuals (or OpenAPI specs) from local files to register
 tools. It does not maintain any persistent connections.
 """
 import json
+import sys
 import yaml
 import aiofiles
 from pathlib import Path
@@ -24,6 +25,13 @@ if TYPE_CHECKING:
 import logging
 
 logger = logging.getLogger(__name__)
+
+if not logger.handlers:  # Only add default handler if user didn't configure logging
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
 
 class TextCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
