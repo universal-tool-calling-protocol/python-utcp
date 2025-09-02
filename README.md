@@ -68,7 +68,7 @@ git clone https://github.com/universal-tool-calling-protocol/python-utcp.git
 cd python-utcp
 
 # Install the core package in editable mode with dev dependencies
-pip install -e core[dev]
+pip install -e "core[dev]"
 
 # Install a specific protocol plugin in editable mode
 pip install -e plugins/communication_protocols/http
