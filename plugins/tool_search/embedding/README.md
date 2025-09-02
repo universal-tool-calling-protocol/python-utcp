@@ -11,7 +11,7 @@ pip install utcp-embedding-search
 Optionally, for high-quality embeddings:
 
 ```bash
-pip install utcp-embedding-search[embedding]
+pip install "utcp-embedding-search[embedding]"
 ```
 
 ## How it works
