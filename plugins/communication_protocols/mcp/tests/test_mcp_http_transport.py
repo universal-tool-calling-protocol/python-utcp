@@ -98,15 +98,15 @@ async def test_http_register_manual_discovers_tools(
     assert len(register_result.manual.tools) == 4
 
     # Find the echo tool
-    echo_tool = next((tool for tool in register_result.manual.tools if tool.name == "echo"), None)
+    echo_tool = next((tool for tool in register_result.manual.tools if tool.name == f"{HTTP_SERVER_NAME}.echo"), None)
     assert echo_tool is not None
     assert "echoes back its input" in echo_tool.description
 
     # Check for other tools
     tool_names = [tool.name for tool in register_result.manual.tools]
-    assert "greet" in tool_names
-    assert "list_items" in tool_names
-    assert "add_numbers" in tool_names
+    assert f"{HTTP_SERVER_NAME}.greet" in tool_names
+    assert f"{HTTP_SERVER_NAME}.list_items" in tool_names
+    assert f"{HTTP_SERVER_NAME}.add_numbers" in tool_names
 
 
 @pytest.mark.asyncio
@@ -120,7 +120,7 @@ async def test_http_structured_output(
     await transport.register_manual(None, http_mcp_provider)
     
     # Call the echo tool and verify the result
-    result = await transport.call_tool(None, "echo", {"message": "http_test"}, http_mcp_provider)
+    result = await transport.call_tool(None, f"{HTTP_SERVER_NAME}.echo", {"message": "http_test"}, http_mcp_provider)
     assert result == {"reply": "you said: http_test"}
 
 
@@ -135,7 +135,7 @@ async def test_http_unstructured_output(
     await transport.register_manual(None, http_mcp_provider)
     
     # Call the greet tool and verify the result
-    result = await transport.call_tool(None, "greet", {"name": "Alice"}, http_mcp_provider)
+    result = await transport.call_tool(None, f"{HTTP_SERVER_NAME}.greet", {"name": "Alice"}, http_mcp_provider)
     assert result == "Hello, Alice!"
 
 
@@ -150,7 +150,7 @@ async def test_http_list_output(
     await transport.register_manual(None, http_mcp_provider)
     
     # Call the list_items tool and verify the result
-    result = await transport.call_tool(None, "list_items", {"count": 3}, http_mcp_provider)
+    result = await transport.call_tool(None, f"{HTTP_SERVER_NAME}.list_items", {"count": 3}, http_mcp_provider)
     
     assert isinstance(result, list)
     assert len(result) == 3
@@ -170,7 +170,7 @@ async def test_http_numeric_output(
     await transport.register_manual(None, http_mcp_provider)
     
     # Call the add_numbers tool and verify the result
-    result = await transport.call_tool(None, "add_numbers", {"a": 5, "b": 7}, http_mcp_provider)
+    result = await transport.call_tool(None, f"{HTTP_SERVER_NAME}.add_numbers", {"a": 5, "b": 7}, http_mcp_provider)
     
     assert result == 12
 
@@ -191,5 +191,5 @@ async def test_http_deregister_manual(
     await transport.deregister_manual(None, http_mcp_provider)
 
     # Should still be able to call tools since we create fresh sessions
-    result = await transport.call_tool(None, "echo", {"message": "test"}, http_mcp_provider)
+    result = await transport.call_tool(None, f"{HTTP_SERVER_NAME}.echo", {"message": "test"}, http_mcp_provider)
     assert result == {"reply": "you said: test"}
