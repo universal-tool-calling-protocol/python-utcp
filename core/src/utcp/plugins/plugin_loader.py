@@ -6,7 +6,7 @@ def _load_plugins():
     from utcp.interfaces.tool_search_strategy import ToolSearchStrategyConfigSerializer
     from utcp.implementations.in_mem_tool_repository import InMemToolRepositoryConfigSerializer
     from utcp.implementations.tag_search import TagAndDescriptionWordMatchStrategyConfigSerializer
-    from utcp.implementations.embedding_search import EmbeddingSearchStrategyConfigSerializer
+    from utcp_in_mem_embeddings.in_mem_embeddings_search import InMemEmbeddingsSearchStrategyConfigSerializer
     from utcp.data.auth_implementations import OAuth2AuthSerializer, BasicAuthSerializer, ApiKeyAuthSerializer
     from utcp.data.variable_loader_implementations import DotEnvVariableLoaderSerializer
     from utcp.implementations.post_processors import FilterDictPostProcessorConfigSerializer, LimitStringsPostProcessorConfigSerializer
@@ -20,7 +20,7 @@ def _load_plugins():
     register_tool_repository(ConcurrentToolRepositoryConfigSerializer.default_repository, InMemToolRepositoryConfigSerializer())
 
     register_tool_search_strategy(ToolSearchStrategyConfigSerializer.default_strategy, TagAndDescriptionWordMatchStrategyConfigSerializer())
-    register_tool_search_strategy("embedding_search", EmbeddingSearchStrategyConfigSerializer())
+    register_tool_search_strategy("in_mem_embeddings", InMemEmbeddingsSearchStrategyConfigSerializer())
 
     register_tool_post_processor("filter_dict", FilterDictPostProcessorConfigSerializer())
     register_tool_post_processor("limit_strings", LimitStringsPostProcessorConfigSerializer())
