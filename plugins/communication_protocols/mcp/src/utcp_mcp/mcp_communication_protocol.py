@@ -83,6 +83,14 @@ class McpCommunicationProtocol(CommunicationProtocol):
             await self._mcp_client.close_all_sessions()
             self._log_info("Cleaned up all sessions")
 
+    def _add_server_to_tool_name(self, tools, server_name: str):
+        """Prefix tool names with server name to ensure uniqueness."""
+        for tool in tools:
+            if not tool.name.startswith(f"{server_name}."):
+                tool.name = f"{server_name}.{tool.name}"
+                
+        return tools
+
     async def _list_tools_with_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
         """List tools using cached session when possible."""
         try:
@@ -180,6 +188,8 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 try:
                     self._log_info(f"Discovering tools for server '{server_name}' via {server_config}")
                     mcp_tools = await self._list_tools_with_session(server_name, manual_call_template)
+                    mcp_tools = self._add_server_to_tool_name(mcp_tools, server_name)
+                    
                     self._log_info(f"Discovered {len(mcp_tools)} tools for server '{server_name}'")
                     for mcp_tool in mcp_tools:
                         # Convert mcp.Tool to utcp.data.tool.Tool
@@ -202,7 +212,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                                 # Convert mcp.Resource to utcp.data.tool.Tool
                                 # Create a tool that reads the resource when called
                                 resource_tool = Tool(
-                                    name=f"resource_{mcp_resource.name}",
+                                    name=f"{server_name}.resource_{mcp_resource.name}",
                                     description=f"Read resource: {mcp_resource.description or mcp_resource.name}. URI: {mcp_resource.uri}",
                                     input_schema={
                                         "type": "object",
@@ -228,6 +238,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 except Exception as e:
                     self._log_error(f"Failed to discover tools for server '{server_name}': {e}")
                     errors.append(f"Failed to discover tools for server '{server_name}': {e}")
+
         return RegisterManualResult(
             manual_call_template=manual_call_template,
             manual=UtcpManual(
