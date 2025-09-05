@@ -13,6 +13,61 @@ class CliCallTemplate(CallTemplate):
     Enables execution of command-line tools and programs as UTCP providers.
     Supports environment variable injection and custom working directories.
 
+    Configuration Examples:
+        Basic CLI command:
+        ```json
+        {
+          "name": "file_tools",
+          "call_template_type": "cli",
+          "command_name": "ls -la ${path}",
+          "working_dir": "/tmp"
+        }
+        ```
+
+        With environment variables:
+        ```json
+        {
+          "name": "env_tool",
+          "call_template_type": "cli",
+          "command_name": "python script.py ${input}",
+          "env_vars": {
+            "PYTHONPATH": "/custom/path",
+            "API_KEY": "${API_KEY}"
+          }
+        }
+        ```
+
+        Processing stdin:
+        ```json
+        {
+          "name": "processor",
+          "call_template_type": "cli",
+          "command_name": "jq .data",
+          "stdin": "${json_input}",
+          "timeout": 10
+        }
+        ```
+
+        Safe command with argument validation:
+        ```json
+        {
+          "name": "safe_tool",
+          "call_template_type": "cli",
+          "command_name": "grep ${pattern} ${file}",
+          "working_dir": "/safe/directory",
+          "allowed_args": {
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "file": "^[a-zA-Z0-9_./-]+\\.txt$"
+          }
+        }
+        ```
+
+    Security Considerations:
+        - Commands are executed in a subprocess with limited privileges
+        - Environment variables can be used to pass sensitive data securely
+        - Working directory can be restricted to safe locations
+        - Input validation should be implemented for user-provided arguments
+
     Attributes:
         call_template_type: Always "cli" for CLI providers.
         command_name: The name or path of the command to execute.

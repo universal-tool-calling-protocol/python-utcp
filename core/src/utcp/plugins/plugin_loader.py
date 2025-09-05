@@ -1,6 +1,16 @@
 import importlib.metadata
 
 def _load_plugins():
+    """REQUIRED
+    Load and register all built-in and external UTCP plugins.
+
+    Registers core serializers for authentication, variable loading, tool repositories,
+    search strategies, and post-processors. Also discovers and loads external plugins
+    through the 'utcp.plugins' entry point group.
+
+    This function is called automatically by ensure_plugins_initialized() and should
+    not be called directly.
+    """
     from utcp.plugins.discovery import register_auth, register_variable_loader, register_tool_repository, register_tool_search_strategy, register_tool_post_processor
     from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepositoryConfigSerializer
     from utcp.interfaces.tool_search_strategy import ToolSearchStrategyConfigSerializer

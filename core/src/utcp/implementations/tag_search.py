@@ -9,7 +9,24 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
     """REQUIRED
     Tag and description word match strategy.
 
-    This strategy matches tools based on the presence of tags and words in the description.
+    Implements a weighted scoring system that matches tools based on:
+    1. Tag matches (higher weight)
+    2. Description word matches (lower weight)
+
+    The strategy normalizes queries to lowercase, extracts words using regex,
+    and calculates relevance scores for each tool. Results are sorted by
+    score in descending order.
+
+    Attributes:
+        tool_search_strategy_type: Always "tag_and_description_word_match".
+        description_weight: Weight multiplier for description word matches (default: 1.0).
+        tag_weight: Weight multiplier for tag matches (default: 3.0).
+
+    Scoring Algorithm:
+        - Each matching tag contributes tag_weight points
+        - Each matching description word contributes description_weight points
+        - Tools with higher scores are ranked first
+        - Tools with zero score are excluded from results
     """
     tool_search_strategy_type: Literal["tag_and_description_word_match"] = "tag_and_description_word_match"
     description_weight: float = 1

@@ -47,6 +47,40 @@ class OpenApiConverter:
         - Provider name normalization
         - Placeholder variable generation for configuration
 
+    Usage Examples:
+        Basic OpenAPI conversion:
+        ```python
+        from utcp_http.openapi_converter import OpenApiConverter
+
+        converter = OpenApiConverter()
+        manual = await converter.convert_openapi_to_manual(
+            "https://api.example.com/openapi.json"
+        )
+
+        # Use the generated manual
+        client = await UtcpClient.create()
+        await client.register_manual(manual)
+        ```
+
+        Converting local OpenAPI file:
+        ```python
+        converter = OpenApiConverter()
+        with open("api_spec.yaml", "r") as f:
+            spec_content = f.read()
+        
+        manual = converter.convert_openapi_spec_to_manual(spec_content)
+        ```
+
+        Custom provider name and base URL:
+        ```python
+        converter = OpenApiConverter()
+        manual = await converter.convert_openapi_to_manual(
+            "https://api.example.com/openapi.json",
+            provider_name="my_api",
+            base_url_override="https://custom.api.com"
+        )
+        ```
+
     Architecture:
         The converter works by iterating through all paths and operations
         in the OpenAPI spec, extracting relevant information for each
