@@ -19,46 +19,75 @@ In contrast to other protocols, UTCP places a strong emphasis on:
 
 ![MCP vs. UTCP](https://github.com/user-attachments/assets/3cadfc19-8eea-4467-b606-66e580b89444)
 
-## New Architecture in 1.0.0
+## Repository Structure
 
-UTCP has been refactored into a core library and a set of optional plugins.
+This repository contains the complete UTCP Python implementation:
+
+- **[`core/`](core/)** - Core `utcp` package with foundational components ([README](core/README.md))
+- **[`plugins/communication_protocols/`](plugins/communication_protocols/)** - Protocol-specific plugins:
+  - [`http/`](plugins/communication_protocols/http/) - HTTP/REST, SSE, streaming ([README](plugins/communication_protocols/http/README.md))
+  - [`cli/`](plugins/communication_protocols/cli/) - Command-line tools ([README](plugins/communication_protocols/cli/README.md))
+  - [`mcp/`](plugins/communication_protocols/mcp/) - Model Context Protocol ([README](plugins/communication_protocols/mcp/README.md))
+  - [`text/`](plugins/communication_protocols/text/) - File-based tools, OpenAPI ([README](plugins/communication_protocols/text/README.md))
+  - [`socket/`](plugins/communication_protocols/socket/) - TCP/UDP (🚧 In Progress)
+  - [`gql/`](plugins/communication_protocols/gql/) - GraphQL (🚧 In Progress)
+
+## Architecture Overview
+
+UTCP uses a modular architecture with a core library and protocol plugins:
 
 ### Core Package (`utcp`)
 
-The `utcp` package provides the central components and interfaces:
-*   **Data Models**: Pydantic models for `Tool`, `CallTemplate`, `UtcpManual`, and `Auth`.
-*   **Pluggable Interfaces**:
-    *   `CommunicationProtocol`: Defines the contract for protocol-specific communication (e.g., HTTP, CLI).
-    *   `ConcurrentToolRepository`: An interface for storing and retrieving tools with thread-safe access.
-    *   `ToolSearchStrategy`: An interface for implementing tool search algorithms.
-    *   `VariableSubstitutor`: Handles variable substitution in configurations.
-    *   `ToolPostProcessor`: Allows for modifying tool results before they are returned.
-*   **Default Implementations**:
-    *   `UtcpClient`: The main client for interacting with the UTCP ecosystem.
-    *   `InMemToolRepository`: An in-memory tool repository with asynchronous read-write locks.
-    *   `TagAndDescriptionWordMatchStrategy`: An improved search strategy that matches on tags and description keywords.
+The [`core/`](core/) directory contains the foundational components:
+- **Data Models**: Pydantic models for `Tool`, `CallTemplate`, `UtcpManual`, and `Auth`
+- **Client Interface**: Main `UtcpClient` for tool interaction
+- **Plugin System**: Extensible interfaces for protocols, repositories, and search
+- **Default Implementations**: Built-in tool storage and search strategies
 
-### Protocol Plugins
+## Quick Start
 
-Communication protocols are now separate, installable packages. This keeps the core lean and allows users to install only the protocols they need.
-*   `utcp-http`: Supports HTTP, SSE, and streamable HTTP, plus an OpenAPI converter.
-*   `utcp-cli`: For wrapping local command-line tools.
-*   `utcp-mcp`: For interoperability with the Model Context Protocol (MCP).
-*   `utcp-text`: For reading text files.
-*   `utcp-socket`: Scaffolding for TCP and UDP protocols. (Work in progress, requires update)
-*   `utcp-gql`: Scaffolding for GraphQL. (Work in progress, requires update)
+### Installation
 
-## Installation
-
-Install the core library and any required protocol plugins.
+Install the core library and any required protocol plugins:
 
 ```bash
-# Install the core client and the HTTP plugin
+# Install core + HTTP plugin (most common)
 pip install utcp utcp-http
 
-# Install the CLI plugin as well
-pip install utcp-cli
+# Install additional plugins as needed
+pip install utcp-cli utcp-mcp utcp-text
 ```
+
+### Basic Usage
+
+```python
+from utcp.utcp_client import UtcpClient
+
+# Create client with HTTP API
+client = await UtcpClient.create(config={
+    "manual_call_templates": [{
+        "name": "my_api",
+        "call_template_type": "http",
+        "url": "https://api.example.com/utcp"
+    }]
+})
+
+# Call a tool
+result = await client.call_tool("my_api.get_data", {"id": "123"})
+```
+
+## Protocol Plugins
+
+UTCP supports multiple communication protocols through dedicated plugins:
+
+| Plugin | Description | Status | Documentation |
+|--------|-------------|--------|---------------|
+| [`utcp-http`](plugins/communication_protocols/http/) | HTTP/REST APIs, SSE, streaming | ✅ Stable | [HTTP Plugin README](plugins/communication_protocols/http/README.md) |
+| [`utcp-cli`](plugins/communication_protocols/cli/) | Command-line tools | ✅ Stable | [CLI Plugin README](plugins/communication_protocols/cli/README.md) |
+| [`utcp-mcp`](plugins/communication_protocols/mcp/) | Model Context Protocol | ✅ Stable | [MCP Plugin README](plugins/communication_protocols/mcp/README.md) |
+| [`utcp-text`](plugins/communication_protocols/text/) | Local file-based tools | ✅ Stable | [Text Plugin README](plugins/communication_protocols/text/README.md) |
+| [`utcp-socket`](plugins/communication_protocols/socket/) | TCP/UDP protocols | 🚧 In Progress | [Socket Plugin README](plugins/communication_protocols/socket/README.md) |
+| [`utcp-gql`](plugins/communication_protocols/gql/) | GraphQL APIs | 🚧 In Progress | [GraphQL Plugin README](plugins/communication_protocols/gql/README.md) |
 
 For development, you can install the packages in editable mode from the cloned repository:
 
