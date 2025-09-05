@@ -55,15 +55,15 @@ async def test_register_manual_discovers_tools(transport: McpCommunicationProtoc
     assert len(register_result.manual.tools) == 4
 
     # Find the echo tool
-    echo_tool = next((tool for tool in register_result.manual.tools if tool.name == "echo"), None)
+    echo_tool = next((tool for tool in register_result.manual.tools if tool.name ==f"{SERVER_NAME}.echo"), None)
     assert echo_tool is not None
     assert "echoes back its input" in echo_tool.description
 
     # Check for other tools
     tool_names = [tool.name for tool in register_result.manual.tools]
-    assert "greet" in tool_names
-    assert "list_items" in tool_names
-    assert "add_numbers" in tool_names
+    assert f"{SERVER_NAME}.greet" in tool_names
+    assert f"{SERVER_NAME}.list_items" in tool_names
+    assert f"{SERVER_NAME}.add_numbers" in tool_names
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_call_tool_succeeds(transport: McpCommunicationProtocol, mcp_manua
     """Verify a successful tool call after registration."""
     await transport.register_manual(None, mcp_manual)
 
-    result = await transport.call_tool(None, "echo", {"message": "test"}, mcp_manual)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "test"}, mcp_manual)
 
     assert result == {"reply": "you said: test"}
 
@@ -79,7 +79,7 @@ async def test_call_tool_succeeds(transport: McpCommunicationProtocol, mcp_manua
 @pytest.mark.asyncio
 async def test_call_tool_works_without_register(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate):
     """Verify that calling a tool works without prior registration in session-per-operation mode."""
-    result = await transport.call_tool(None, "echo", {"message": "test"}, mcp_manual)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "test"}, mcp_manual)
     assert result == {"reply": "you said: test"}
 
 
@@ -88,7 +88,7 @@ async def test_structured_output_tool(transport: McpCommunicationProtocol, mcp_m
     """Test that tools with structured output (TypedDict) work correctly."""
     await transport.register_manual(None, mcp_manual)
 
-    result = await transport.call_tool(None, "echo", {"message": "test"}, mcp_manual)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "test"}, mcp_manual)
     assert result == {"reply": "you said: test"}
 
 
@@ -97,7 +97,7 @@ async def test_unstructured_string_output(transport: McpCommunicationProtocol, m
     """Test that tools returning plain strings work correctly."""
     await transport.register_manual(None, mcp_manual)
 
-    result = await transport.call_tool(None, "greet", {"name": "Alice"}, mcp_manual)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.greet", {"name": "Alice"}, mcp_manual)
     assert result == "Hello, Alice!"
 
 
@@ -106,7 +106,7 @@ async def test_list_output(transport: McpCommunicationProtocol, mcp_manual: McpC
     """Test that tools returning lists work correctly."""
     await transport.register_manual(None, mcp_manual)
 
-    result = await transport.call_tool(None, "list_items", {"count": 3}, mcp_manual)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.list_items", {"count": 3}, mcp_manual)
 
     assert isinstance(result, list)
     assert len(result) == 3
@@ -118,7 +118,7 @@ async def test_numeric_output(transport: McpCommunicationProtocol, mcp_manual: M
     """Test that tools returning numeric values work correctly."""
     await transport.register_manual(None, mcp_manual)
 
-    result = await transport.call_tool(None, "add_numbers", {"a": 5, "b": 7}, mcp_manual)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.add_numbers", {"a": 5, "b": 7}, mcp_manual)
 
     assert result == 12
 
@@ -132,7 +132,7 @@ async def test_deregister_manual(transport: McpCommunicationProtocol, mcp_manual
 
     await transport.deregister_manual(None, mcp_manual)
 
-    result = await transport.call_tool(None, "echo", {"message": "test"}, mcp_manual)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "test"}, mcp_manual)
     assert result == {"reply": "you said: test"}
 
 
@@ -145,7 +145,7 @@ async def test_register_resources_as_tools_disabled(transport: McpCommunicationP
 
     # Check that no resource tools are present
     tool_names = [tool.name for tool in register_result.manual.tools]
-    resource_tools = [name for name in tool_names if name.startswith("resource_")]
+    resource_tools = [name for name in tool_names if name.startswith(f"{SERVER_NAME}.resource_")]
     assert len(resource_tools) == 0
 
 
@@ -160,13 +160,13 @@ async def test_register_resources_as_tools_enabled(transport: McpCommunicationPr
 
     # Check that resource tools are present
     tool_names = [tool.name for tool in register_result.manual.tools]
-    resource_tools = [name for name in tool_names if name.startswith("resource_")]
+    resource_tools = [name for name in tool_names if name.startswith(f"{SERVER_NAME}.resource_")]
     assert len(resource_tools) == 2
-    assert "resource_get_test_document" in resource_tools
-    assert "resource_get_config" in resource_tools
+    assert f"{SERVER_NAME}.resource_get_test_document" in resource_tools
+    assert f"{SERVER_NAME}.resource_get_config" in resource_tools
 
     # Check resource tool properties
-    test_doc_tool = next((tool for tool in register_result.manual.tools if tool.name == "resource_get_test_document"), None)
+    test_doc_tool = next((tool for tool in register_result.manual.tools if tool.name == f"{SERVER_NAME}.resource_get_test_document"), None)
     assert test_doc_tool is not None
     assert "Read resource:" in test_doc_tool.description
     assert "file://test_document.txt" in test_doc_tool.description
@@ -179,7 +179,7 @@ async def test_call_resource_tool(transport: McpCommunicationProtocol, mcp_manua
     await transport.register_manual(None, mcp_manual_with_resources)
 
     # Call the test document resource
-    result = await transport.call_tool(None, "resource_get_test_document", {}, mcp_manual_with_resources)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.resource_get_test_document", {}, mcp_manual_with_resources)
     
     # Check that we get the resource content
     assert isinstance(result, dict)
@@ -207,7 +207,7 @@ async def test_call_resource_tool_json_content(transport: McpCommunicationProtoc
     await transport.register_manual(None, mcp_manual_with_resources)
 
     # Call the config.json resource
-    result = await transport.call_tool(None, "resource_get_config", {}, mcp_manual_with_resources)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.resource_get_config", {}, mcp_manual_with_resources)
     
     # Check that we get the resource content
     assert isinstance(result, dict)
@@ -232,14 +232,14 @@ async def test_call_resource_tool_json_content(transport: McpCommunicationProtoc
 async def test_call_nonexistent_resource_tool(transport: McpCommunicationProtocol, mcp_manual_with_resources: McpCallTemplate):
     """Verify that calling a non-existent resource tool raises an error."""
     with pytest.raises(ValueError, match="Resource 'nonexistent' not found in any configured server"):
-        await transport.call_tool(None, "resource_nonexistent", {}, mcp_manual_with_resources)
+        await transport.call_tool(None, f"{SERVER_NAME}.resource_nonexistent", {}, mcp_manual_with_resources)
 
 
 @pytest.mark.asyncio
 async def test_resource_tool_without_registration(transport: McpCommunicationProtocol, mcp_manual_with_resources: McpCallTemplate):
     """Verify that resource tools work even without prior registration."""
     # Don't register the manual first - test direct call
-    result = await transport.call_tool(None, "resource_get_test_document", {}, mcp_manual_with_resources)
+    result = await transport.call_tool(None, f"{SERVER_NAME}.resource_get_test_document", {}, mcp_manual_with_resources)
     
     # Should still work and return content
     assert isinstance(result, dict)

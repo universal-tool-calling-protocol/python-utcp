@@ -1,3 +1,4 @@
+import sys
 from typing import Dict, Any, List, Optional, Callable
 import aiohttp
 import asyncio
@@ -11,6 +12,13 @@ from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
 import logging
 
 logger = logging.getLogger(__name__)
+
+if not logger.hasHandlers():  # Only add default handler if user didn't configure logging
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
 
 class GraphQLClientTransport(ClientTransportInterface):
     """

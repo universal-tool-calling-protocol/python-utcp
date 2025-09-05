@@ -1,3 +1,4 @@
+import sys
 from typing import Dict, Any, List, Optional, Callable, AsyncIterator, AsyncGenerator
 import aiohttp
 import json
@@ -20,6 +21,12 @@ import traceback
 import logging
 
 logger = logging.getLogger(__name__)
+
+if not logger.hasHandlers():  # Only add default handler if user didn't configure logging
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 class SseCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
