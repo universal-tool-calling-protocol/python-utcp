@@ -30,7 +30,15 @@ class InMemEmbeddingsSearchStrategy(ToolSearchStrategy):
     tool_search_strategy_type: Literal["in_mem_embeddings"] = "in_mem_embeddings"
     
     # Configuration parameters
-    model_name: str = Field(default="all-MiniLM-L6-v2", description="Sentence transformer model to use")
+    model_name: str = Field(
+        default="all-MiniLM-L6-v2", 
+        description="Sentence transformer model name to use for embeddings. "
+                   "Accepts any model from Hugging Face sentence-transformers library. "
+                   "Popular options: 'all-MiniLM-L6-v2' (fast, good quality), "
+                   "'all-mpnet-base-v2' (slower, higher quality), "
+                   "'paraphrase-MiniLM-L6-v2' (paraphrase detection). "
+                   "See https://huggingface.co/sentence-transformers for full list."
+    )
     similarity_threshold: float = Field(default=0.3, description="Minimum similarity score to consider a match")
     max_workers: int = Field(default=4, description="Maximum number of worker threads for embedding generation")
     cache_embeddings: bool = Field(default=True, description="Whether to cache tool embeddings for performance")
