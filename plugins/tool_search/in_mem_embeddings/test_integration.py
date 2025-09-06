@@ -67,8 +67,15 @@ async def test_integration():
         ]
         
         # Create repository
-        repo = InMemToolRepository(tools)
+        repo = InMemToolRepository()
         
+        # Create a manual and add it to the repository
+        from utcp.data.utcp_manual import UtcpManual
+        manual = UtcpManual(tools=tools)
+        manual_call_template = CallTemplate(name="test_manual", description="Test manual", call_template_type="default")
+        await repo.save_manual(manual_call_template, manual)
+       
+
         # Test search
         results = await strategy.search_tools(repo, "cooking", limit=1)
         print(f"   ✅ Search completed, found {len(results)} results")
