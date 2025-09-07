@@ -55,7 +55,7 @@ async def test_register_manual_discovers_tools(transport: McpCommunicationProtoc
     assert len(register_result.manual.tools) == 4
 
     # Find the echo tool
-    echo_tool = next((tool for tool in register_result.manual.tools if tool.name ==f"{SERVER_NAME}.echo"), None)
+    echo_tool = next((tool for tool in register_result.manual.tools if tool.name == f"{SERVER_NAME}.echo"), None)
     assert echo_tool is not None
     assert "echoes back its input" in echo_tool.description
 
