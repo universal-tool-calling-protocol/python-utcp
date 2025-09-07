@@ -10,7 +10,6 @@ Key Features:
     - Tool discovery by running a command that outputs a UTCP manual.
     - Flexible argument formatting for different CLI conventions.
     - Support for environment variables and custom working directories.
-    - Automatic parsing of JSON output with a fallback to raw text.
     - Cross-platform command parsing for Windows and Unix-like systems.
 
 Security Considerations:
@@ -588,8 +587,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
         Returns:
             The result of the command execution. If the command exits with a code
             of 0, it returns the content of stdout. If the exit code is non-zero,
-            it returns the content of stderr. The output is parsed as JSON if
-            possible; otherwise, it is returned as a raw string.
+            it returns the content of stderr.
 
         Raises:
             ValueError: If `tool_call_template` is not an instance of
