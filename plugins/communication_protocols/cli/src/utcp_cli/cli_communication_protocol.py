@@ -299,7 +299,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
         else:
             # Unix shell script
             script_lines.append('#!/bin/bash')
-            script_lines.append('set -e')  # Exit on error
+            # Don't use set -e to allow error output capture and processing
             script_lines.append('# Variables to store command outputs')
         
         # Execute each command and store output in variables
