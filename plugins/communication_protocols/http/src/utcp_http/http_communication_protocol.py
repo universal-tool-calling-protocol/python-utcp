@@ -12,6 +12,7 @@ Key Features:
     - Request/response handling with proper error management
 """
 
+import sys
 from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
 import aiohttp
 import json
@@ -33,6 +34,11 @@ from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 from utcp_http.openapi_converter import OpenApiConverter
 import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
 
 logger = logging.getLogger(__name__)
 

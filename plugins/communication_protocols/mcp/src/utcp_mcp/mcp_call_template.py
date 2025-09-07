@@ -37,16 +37,101 @@ class McpCallTemplate(CallTemplate):
     interfaces. Supports both stdio (local process) and HTTP (remote)
     transport methods.
 
+    Configuration Examples:
+        Basic MCP server with stdio transport:
+        ```json
+        {
+          "name": "mcp_server",
+          "call_template_type": "mcp",
+          "config": {
+            "mcpServers": {
+              "filesystem": {
+                "command": "node",
+                "args": ["mcp-server.js"],
+                "env": {"NODE_ENV": "production"}
+              }
+            }
+          }
+        }
+        ```
+
+        MCP server with working directory:
+        ```json
+        {
+          "name": "mcp_tools",
+          "call_template_type": "mcp",
+          "config": {
+            "mcpServers": {
+              "tools": {
+                "command": "python",
+                "args": ["-m", "mcp_server"],
+                "cwd": "/app/mcp",
+                "env": {
+                  "PYTHONPATH": "/app",
+                  "LOG_LEVEL": "INFO"
+                }
+              }
+            }
+          }
+        }
+        ```
+
+        MCP server with OAuth2 authentication:
+        ```json
+        {
+          "name": "secure_mcp",
+          "call_template_type": "mcp",
+          "config": {
+            "mcpServers": {
+              "secure_server": {
+                "transport": "http",
+                "url": "https://mcp.example.com"
+              }
+            }
+          },
+          "auth": {
+            "auth_type": "oauth2",
+            "token_url": "https://auth.example.com/token",
+            "client_id": "${CLIENT_ID}",
+            "client_secret": "${CLIENT_SECRET}",
+            "scope": "read:tools"
+          }
+        }
+        ```
+
+    Migration Examples:
+        During migration (UTCP with MCP):
+        ```python
+        # UTCP Client with MCP plugin
+        client = await UtcpClient.create()
+        result = await client.call_tool("filesystem.read_file", {
+            "path": "/data/file.txt"
+        })
+        ```
+
+        After migration (Pure UTCP):
+        ```python
+        # UTCP Client with native protocol
+        client = await UtcpClient.create()
+        result = await client.call_tool("filesystem.read_file", {
+            "path": "/data/file.txt"
+        })
+        ```
+
     Attributes:
         call_template_type: Always "mcp" for MCP providers.
         config: Configuration object containing MCP server definitions.
             This follows the same format as the official MCP server configuration.
         auth: Optional OAuth2 authentication for HTTP-based MCP servers.
+        register_resources_as_tools: Whether to register MCP resources as callable tools.
+            When True, server resources are exposed as tools that can be called.
+            Default is False.
     """
 
     call_template_type: Literal["mcp"] = "mcp"
     config: McpConfig
     auth: Optional[OAuth2Auth] = None
+    register_resources_as_tools: bool = False
 
 class McpCallTemplateSerializer(Serializer[McpCallTemplate]):
     """REQUIRED

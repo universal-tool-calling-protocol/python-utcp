@@ -39,6 +39,21 @@ def add_numbers(a: int, b: int) -> int:
     return a + b
 
 
+# Add some test resources
+@mcp.resource("file://test_document.txt")
+def get_test_document():
+    """A test document resource"""
+    return "This is a test document with some content for testing MCP resources."
+
+
+@mcp.resource("file://config.json")
+def get_config():
+    """A test configuration file"""
+    return '{"name": "test_config", "version": "1.0", "debug": true}'
+
+
 # Start the server when this script is run directly
 if __name__ == "__main__":
-    mcp.run()
+    def main():
+        mcp.run()
+    main()

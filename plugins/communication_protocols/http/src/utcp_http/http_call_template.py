@@ -15,6 +15,70 @@ class HttpCallTemplate(CallTemplate):
     parameters using {parameter_name} syntax. All tool arguments not mapped to
     URL body, headers or query pattern parameters are passed as query parameters using '?arg_name={arg_value}'.
 
+    Configuration Examples:
+        Basic HTTP GET request:
+        ```json
+        {
+          "name": "my_rest_api",
+          "call_template_type": "http",
+          "url": "https://api.example.com/users/{user_id}",
+          "http_method": "GET"
+        }
+        ```
+
+        POST with authentication:
+        ```json
+        {
+          "name": "secure_api",
+          "call_template_type": "http",
+          "url": "https://api.example.com/users",
+          "http_method": "POST",
+          "content_type": "application/json",
+          "auth": {
+            "auth_type": "api_key",
+            "api_key": "Bearer ${API_KEY}",
+            "var_name": "Authorization",
+            "location": "header"
+          },
+          "headers": {
+            "X-Custom-Header": "value"
+          },
+          "body_field": "body",
+          "header_fields": ["user_id"]
+        }
+        ```
+
+        OAuth2 authentication:
+        ```json
+        {
+          "name": "oauth_api",
+          "call_template_type": "http",
+          "url": "https://api.example.com/data",
+          "http_method": "GET",
+          "auth": {
+            "auth_type": "oauth2",
+            "client_id": "${CLIENT_ID}",
+            "client_secret": "${CLIENT_SECRET}",
+            "token_url": "https://auth.example.com/token"
+          }
+        }
+        ```
+
+        Basic authentication:
+        ```json
+        {
+          "name": "basic_auth_api",
+          "call_template_type": "http",
+          "url": "https://api.example.com/secure",
+          "http_method": "GET",
+          "auth": {
+            "auth_type": "basic",
+            "username": "${USERNAME}",
+            "password": "${PASSWORD}"
+          }
+        }
+        ```
+
     Attributes:
         call_template_type: Always "http" for HTTP providers.
         http_method: The HTTP method to use for requests.

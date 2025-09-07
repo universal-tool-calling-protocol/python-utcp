@@ -1,28 +1,27 @@
-"""Command Line Interface (CLI) transport for UTCP client.
+"""Command Line Interface (CLI) communication protocol for the UTCP client.
 
-This module provides the CLI transport implementation that enables UTCP clients
-to interact with command-line tools and processes. It handles tool discovery
-through startup commands, tool execution with proper argument formatting,
-and output processing with JSON parsing capabilities.
+This module provides an implementation of the `CommunicationProtocol` interface
+that enables the UTCP client to interact with command-line tools. It supports
+discovering tools by executing a command and parsing its output for a UTCP
+manual, as well as calling those tools with arguments.
 
 Key Features:
-    - Asynchronous command execution with timeout handling
-    - Tool discovery via startup commands that output UTCP manuals
-    - Flexible argument formatting for command-line flags
-    - Environment variable support for authentication and configuration
-    - JSON output parsing with fallback to raw text
-    - Cross-platform command parsing (Windows/Unix)
-    - Working directory control for command execution
+    - Asynchronous execution of shell commands.
+    - Tool discovery by running a command that outputs a UTCP manual.
+    - Flexible argument formatting for different CLI conventions.
+    - Support for environment variables and custom working directories.
+    - Automatic parsing of JSON output with a fallback to raw text.
+    - Cross-platform command parsing for Windows and Unix-like systems.
 
-Security:
-    - Command execution is isolated through subprocess
-    - Environment variables can be controlled per provider
-    - Working directory can be restricted
+Security Considerations:
+    Executing arbitrary command-line tools can be dangerous. This protocol
+    should only be used with trusted tools.
 """
 import asyncio
 import json
 import os
 import shlex
+import sys
 from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
@@ -33,38 +32,26 @@ from utcp.data.register_manual_response import RegisterManualResult
 from utcp_cli.cli_call_template import CliCallTemplate, CliCallTemplateSerializer
 import logging
 
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
 
+logger = logging.getLogger(__name__)
 
 class CliCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
-    Transport implementation for CLI-based tool providers.
+    Communication protocol for interacting with CLI-based tool providers.
 
-    Handles communication with command-line tools by executing processes
-    and managing their input/output. Supports both tool discovery and
-    execution phases with comprehensive error handling and timeout management.
-
-    Features:
-        - Asynchronous subprocess execution with proper cleanup
-        - Tool discovery through startup commands returning UTCP manuals
-        - Flexible argument formatting for various CLI conventions
-        - Environment variable injection for authentication
-        - JSON output parsing with graceful fallback to text
-        - Cross-platform command parsing and execution
-        - Configurable working directories and timeouts
-        - Process lifecycle management with proper termination
-
-    Architecture:
-        CLI tools are discovered by executing the provider's command_name
-        and parsing the output for UTCP manual JSON. Tool calls execute
-        the same command with formatted arguments and return processed output.
-
-    Attributes:
-        _log: Logger function for debugging and error reporting.
+    This class implements the `CommunicationProtocol` interface to handle
+    communication with command-line tools. It discovers tools by executing a
+    command specified in a `CliCallTemplate` and parsing the output for a UTCP
+    manual. It also executes tool calls by running the corresponding command
+    with the provided arguments.
     """
     
     def __init__(self):
-        """Initialize the CLI transport."""
+        """Initializes the `CliCommunicationProtocol`."""
     
     def _log_info(self, message: str):
         """Log informational messages."""
@@ -156,9 +143,24 @@ class CliCommunicationProtocol(CommunicationProtocol):
     
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
         """REQUIRED
-        Register a CLI manual and discover its tools.
-        
-        Executes the call template's command_name and looks for a UTCP manual JSON in the output.
+        Registers a CLI-based manual and discovers its tools.
+
+        This method executes the command specified in the `CliCallTemplate`'s
+        `command_name` field. It then attempts to parse the command's output
+        (stdout) as a UTCP manual in JSON format.
+
+        Args:
+            caller: The UTCP client instance that is calling this method.
+            manual_call_template: The `CliCallTemplate` containing the details for
+                tool discovery, such as the command to run.
+
+        Returns:
+            A `RegisterManualResult` object indicating whether the registration
+            was successful and containing the discovered tools.
+
+        Raises:
+            ValueError: If the `manual_call_template` is not an instance of
+                `CliCallTemplate` or if `command_name` is not set.
         """
         if not isinstance(manual_call_template, CliCallTemplate):
             raise ValueError("CliCommunicationProtocol can only be used with CliCallTemplate")
@@ -240,7 +242,15 @@ class CliCommunicationProtocol(CommunicationProtocol):
     
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
         """REQUIRED
-        Deregister a CLI manual (no-op)."""
+        Deregisters a CLI manual.
+
+        For the CLI protocol, this is a no-op as there are no persistent
+        connections to terminate.
+
+        Args:
+            caller: The UTCP client instance that is calling this method.
+            manual_call_template: The call template of the manual to deregister.
+        """
         if isinstance(manual_call_template, CliCallTemplate):
             self._log_info(
                 f"Deregistering CLI manual '{manual_call_template.name}' (no-op)"
@@ -403,23 +413,27 @@ class CliCommunicationProtocol(CommunicationProtocol):
     
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """REQUIRED
-        Call a CLI tool.
-        
-        Executes the command specified by provider.command_name with the provided arguments.
-        
+        Calls a CLI tool by executing its command.
+
+        This method constructs and executes the command specified in the
+        `CliCallTemplate`. It formats the provided `tool_args` as command-line
+        arguments and runs the command in a subprocess.
+
         Args:
-            caller: The UTCP client that is calling this method.
-            tool_name: Name of the tool to call
-            tool_args: Arguments for the tool call
-            tool_call_template: The CliCallTemplate for the tool
-            
+            caller: The UTCP client instance that is calling this method.
+            tool_name: The name of the tool to call.
+            tool_args: A dictionary of arguments for the tool call.
+            tool_call_template: The `CliCallTemplate` for the tool.
+
         Returns:
-            The output from the command execution based on exit code:
-            - If exit code is 0: stdout (parsed as JSON if possible, otherwise raw string)
-            - If exit code is not 0: stderr
-            
+            The result of the command execution. If the command exits with a code
+            of 0, it returns the content of stdout. If the exit code is non-zero,
+            it returns the content of stderr. The output is parsed as JSON if
+            possible; otherwise, it is returned as a raw string.
+
         Raises:
-            ValueError: If provider is not a CliProvider or command_name is not set
+            ValueError: If `tool_call_template` is not an instance of
+                `CliCallTemplate` or if `command_name` is not set.
         """
         if not isinstance(tool_call_template, CliCallTemplate):
             raise ValueError("CliCommunicationProtocol can only be used with CliCallTemplate")
@@ -476,13 +490,9 @@ class CliCommunicationProtocol(CommunicationProtocol):
 
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """REQUIRED
-        Streaming calls are not supported for CLI protocol."""
+        Streaming calls are not supported for the CLI protocol.
+
+        Raises:
+            NotImplementedError: Always, as this functionality is not supported.
+        """
         raise NotImplementedError("Streaming is not supported by the CLI communication protocol.")
-    
-    async def close(self) -> None:
-        """
-        Close the transport.
-        
-        This is a no-op for CLI transports since they don't maintain connections.
-        """
-        self._log_info("Closing CLI transport (no-op)")

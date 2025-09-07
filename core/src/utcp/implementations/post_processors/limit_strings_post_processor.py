@@ -10,6 +10,22 @@ if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
 
 class LimitStringsPostProcessor(ToolPostProcessor):
+    """REQUIRED
+    Post-processor that limits the length of string values in tool results.
+
+    Truncates string values to a specified maximum length to prevent
+    excessively large responses. Processes nested dictionaries and lists
+    recursively. Can be configured to apply limiting only to specific
+    tools or manuals.
+
+    Attributes:
+        tool_post_processor_type: Always "limit_strings" for this processor.
+        limit: Maximum length for string values (default: 10000 characters).
+        exclude_tools: List of tool names to skip processing for.
+        only_include_tools: List of tool names to process (all others skipped).
+        exclude_manuals: List of manual names to skip processing for.
+        only_include_manuals: List of manual names to process (all others skipped).
+    """
     tool_post_processor_type: Literal["limit_strings"] = "limit_strings"
     limit: int = 10000
     exclude_tools: Optional[List[str]] = None
@@ -39,6 +55,8 @@ class LimitStringsPostProcessor(ToolPostProcessor):
         return obj
 
 class LimitStringsPostProcessorConfigSerializer(Serializer[LimitStringsPostProcessor]):
+    """REQUIRED
+    Serializer for LimitStringsPostProcessor configuration."""
     def to_dict(self, obj: LimitStringsPostProcessor) -> dict:
         return obj.model_dump()
     

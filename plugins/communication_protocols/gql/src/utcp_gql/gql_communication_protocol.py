@@ -1,3 +1,4 @@
+import sys
 from typing import Dict, Any, List, Optional, Callable
 import aiohttp
 import asyncio
@@ -9,6 +10,11 @@ from utcp.shared.provider import Provider, GraphQLProvider
 from utcp.shared.tool import Tool, ToolInputOutputSchema
 from utcp.shared.auth import ApiKeyAuth, BasicAuth, OAuth2Auth
 import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
 
 logger = logging.getLogger(__name__)
 

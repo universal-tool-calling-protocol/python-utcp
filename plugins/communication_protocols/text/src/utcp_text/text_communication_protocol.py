@@ -5,6 +5,7 @@ This protocol reads UTCP manuals (or OpenAPI specs) from local files to register
 tools. It does not maintain any persistent connections.
 """
 import json
+import sys
 import yaml
 import aiofiles
 from pathlib import Path
@@ -22,6 +23,11 @@ if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
 
 import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
 
 logger = logging.getLogger(__name__)
 

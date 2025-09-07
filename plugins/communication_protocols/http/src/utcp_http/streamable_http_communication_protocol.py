@@ -1,3 +1,4 @@
+import sys
 from typing import Dict, Any, List, Optional, Callable, AsyncIterator, Tuple, AsyncGenerator
 import aiohttp
 import json
@@ -15,6 +16,11 @@ from utcp.data.auth_implementations import OAuth2Auth
 from utcp_http.streamable_http_call_template import StreamableHttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth, ClientResponse
 import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
 
 logger = logging.getLogger(__name__)
 

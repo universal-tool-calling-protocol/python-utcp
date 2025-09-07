@@ -7,12 +7,18 @@ import asyncio
 import json
 import socket
 import struct
+import sys
 from typing import Dict, Any, List, Optional, Callable, Union
 
 from utcp.client.client_transport_interface import ClientTransportInterface
 from utcp.shared.provider import Provider, TCPProvider
 from utcp.shared.tool import Tool
 import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
 
 logger = logging.getLogger(__name__)
 

@@ -1,3 +1,4 @@
+import sys
 from typing import Dict, Any, List, Optional, Callable, AsyncIterator, AsyncGenerator
 import aiohttp
 import json
@@ -18,6 +19,11 @@ from utcp_http.sse_call_template import SseCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 import traceback
 import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
 
 logger = logging.getLogger(__name__)
 

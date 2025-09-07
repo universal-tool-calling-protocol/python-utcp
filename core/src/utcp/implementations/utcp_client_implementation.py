@@ -110,7 +110,7 @@ class UtcpClientImplementation(UtcpClient):
             raise ValueError(f"No registered communication protocol of type {manual_call_template.call_template_type} found, available types: {CommunicationProtocol.communication_protocols.keys()}")
         
         result = await CommunicationProtocol.communication_protocols[manual_call_template.call_template_type].register_manual(self, manual_call_template)
-        
+
         if result.success:
             for tool in result.manual.tools:
                 if not tool.name.startswith(manual_call_template.name + "."):

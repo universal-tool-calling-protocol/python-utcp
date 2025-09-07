@@ -5,7 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 try:
     __version__ = version("utcp")
 except PackageNotFoundError:
