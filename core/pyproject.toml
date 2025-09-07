@@ -34,10 +34,6 @@ dev = [
     "coverage",
     "twine",
 ]
-embedding = [
-    "sentence-transformers>=2.2.0",
-    "torch>=1.9.0",
-]
 
 [project.urls]
 Homepage = "https://utcp.io"
