@@ -26,7 +26,7 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
         - Each matching tag contributes tag_weight points
         - Each matching description word contributes description_weight points
         - Tools with higher scores are ranked first
-        - Tools with zero score are excluded from results
+        - Tools with zero score are included in results (ranked last)
     """
     tool_search_strategy_type: Literal["tag_and_description_word_match"] = "tag_and_description_word_match"
     description_weight: float = 1
