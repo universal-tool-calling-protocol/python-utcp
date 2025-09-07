@@ -271,7 +271,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
             Command string with placeholders replaced by actual values
         """
         # Pattern to match UTCP_ARG_argname_UTCP_END
-        pattern = r'UTCP_ARG_([^_]+(?:_[^_]+)*)_UTCP_END'
+        pattern = r'UTCP_ARG_(.+?)_UTCP_END'
         
         def replace_placeholder(match):
             arg_name = match.group(1)
