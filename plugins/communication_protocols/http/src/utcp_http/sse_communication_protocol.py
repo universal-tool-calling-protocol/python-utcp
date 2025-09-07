@@ -20,13 +20,12 @@ from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 import traceback
 import logging
 
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"
+)
 
-if not logger.hasHandlers():  # Only add default handler if user didn't configure logging
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
 
 class SseCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
