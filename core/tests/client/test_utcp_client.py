@@ -147,7 +147,7 @@ async def sample_tools():
     
     cli_call_template = CliCallTemplate(
         name="test_cli_provider",
-        command_name="echo",
+        commands=[{"command": "echo UTCP_ARG_command_UTCP_END"}],
         call_template_type="cli"
     )
     
@@ -496,7 +496,7 @@ class TestUtcpClientManualCallTemplateLoading:
                 {
                     "name": "cli_template",
                     "call_template_type": "cli",
-                    "command_name": "echo"
+                    "commands": [{"command": "echo UTCP_ARG_message_UTCP_END"}]
                 }
             ]
         }
