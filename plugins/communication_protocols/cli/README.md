@@ -179,8 +179,6 @@ Some commands work across platforms:
 
 - Commands execute in isolated subprocesses with controlled environment
 - Environment variables provide secure credential passing
-- Working directory restrictions limit file system access  
-- UTCP_ARG placeholders prevent command injection
 - Previous command outputs should be used carefully to avoid injection
 - Commands should use platform-appropriate syntax
 

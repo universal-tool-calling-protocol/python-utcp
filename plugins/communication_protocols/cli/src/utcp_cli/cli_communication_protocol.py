@@ -174,18 +174,14 @@ class CliCommunicationProtocol(CommunicationProtocol):
         )
 
         try:
-            # For discovery, use the first command only
-            first_command = manual_call_template.commands[0]
-            
+            # Execute commands using the same approach as call_tool but with no arguments
             env = self._prepare_environment(manual_call_template)
-            # Parse command string into proper arguments
-            # Use posix=False on Windows, posix=True on Unix-like systems
-            command = shlex.split(first_command.command, posix=(os.name != 'nt'))
+            shell_script = self._build_combined_shell_script(manual_call_template.commands, {})
+            
+            self._log_info(f"Executing shell script for tool discovery from provider '{manual_call_template.name}'")
 
-            self._log_info(f"Executing command for tool discovery: {' '.join(command)}")
-
-            stdout, stderr, return_code = await self._execute_command(
-                command,
+            stdout, stderr, return_code = await self._execute_shell_script(
+                shell_script,
                 env,
                 timeout=30.0,
                 working_dir=manual_call_template.working_dir,
@@ -196,14 +192,14 @@ class CliCommunicationProtocol(CommunicationProtocol):
 
             if not output.strip():
                 self._log_info(
-                    f"No output from command '{manual_call_template.command_name}'"
+                    f"No output from commands for CLI provider '{manual_call_template.name}'"
                 )
                 return RegisterManualResult(
                     success=False,
                     manual_call_template=manual_call_template,
                     manual=UtcpManual(manual_version="0.0.0", tools=[]),
                     errors=[
-                        f"No output from discovery command for CLI provider '{manual_call_template.name}'"
+                        f"No output from discovery commands for CLI provider '{manual_call_template.name}'"
                     ],
                 )
 
@@ -415,8 +411,14 @@ class CliCommunicationProtocol(CommunicationProtocol):
         Returns:
             Final output from script (already filtered by append_to_final_output)
         """
-        # Use stdout if successful, stderr if failed
-        output = stdout if return_code == 0 else stderr
+        # Platform-specific output handling
+        if os.name == 'nt':
+            # Windows (PowerShell): Use stdout on success, stderr on failure
+            output = stdout if return_code == 0 else stderr
+        else:
+            # Unix (Bash): Our script captures everything and echoes to stdout
+            # So we always use stdout first, fallback to stderr if stdout is empty
+            output = stdout if stdout.strip() else stderr
         
         if not output.strip():
             self._log_info(f"CLI tool '{tool_name}' produced no output")
