@@ -63,7 +63,7 @@ class CliCallTemplate(CallTemplate):
         ```
 
     Security Considerations:
-        - Commands are executed in a subprocess with limited privileges
+        - Commands are executed in a subprocess with the same OS privileges as the running process
         - Environment variables can be used to pass sensitive data securely
         - Working directory can be restricted to safe locations
         - Input validation should be implemented for user-provided arguments
