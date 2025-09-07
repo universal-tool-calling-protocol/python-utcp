@@ -52,7 +52,7 @@ Next, define a UTCP manual that describes your tool. The `tool_call_template` mu
 ```json
 {
   "manual_version": "1.0.0",
-  "utcp_version": "1.0.1",
+  "utcp_version": "1.0.2",
   "tools": [
     {
       "name": "get_mock_user",
