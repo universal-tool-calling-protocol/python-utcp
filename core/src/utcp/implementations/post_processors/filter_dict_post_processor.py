@@ -10,6 +10,22 @@ if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
 
 class FilterDictPostProcessor(ToolPostProcessor):
+    """REQUIRED
+    Post-processor that filters dictionary keys from tool results.
+
+    Provides flexible filtering capabilities to include or exclude specific keys
+    from dictionary results, with support for nested dictionaries and lists.
+    Can be configured to apply filtering only to specific tools or manuals.
+
+    Attributes:
+        tool_post_processor_type: Always "filter_dict" for this processor.
+        exclude_keys: List of keys to remove from dictionary results.
+        only_include_keys: List of keys to keep in dictionary results (all others removed).
+        exclude_tools: List of tool names to skip processing for.
+        only_include_tools: List of tool names to process (all others skipped).
+        exclude_manuals: List of manual names to skip processing for.
+        only_include_manuals: List of manual names to process (all others skipped).
+    """
     tool_post_processor_type: Literal["filter_dict"] = "filter_dict"
     exclude_keys: Optional[List[str]] = None
     only_include_keys: Optional[List[str]] = None
@@ -89,6 +105,8 @@ class FilterDictPostProcessor(ToolPostProcessor):
         return result
 
 class FilterDictPostProcessorConfigSerializer(Serializer[FilterDictPostProcessor]):
+    """REQUIRED
+    Serializer for FilterDictPostProcessor configuration."""
     def to_dict(self, obj: FilterDictPostProcessor) -> dict:
         return obj.model_dump()
     
