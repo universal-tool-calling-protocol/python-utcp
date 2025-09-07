@@ -2,17 +2,15 @@
 
 [![PyPI Downloads](https://static.pepy.tech/badge/utcp-text)](https://pepy.tech/projects/utcp-text)
 
-Text-based resource plugin for UTCP, supporting both local files and remote URLs for tool definitions and OpenAPI specifications.
+A simple, file-based resource plugin for UTCP. This plugin allows you to define tools that return the content of a specified local file.
 
 ## Features
 
-- **Local File Support**: Read UTCP manuals from JSON/YAML files
-- **Remote URL Support**: Fetch OpenAPI specs and tool definitions from URLs
-- **OpenAPI Integration**: Automatic conversion of OpenAPI specs to UTCP tools
-- **Multiple Formats**: Supports JSON, YAML, and OpenAPI specifications
-- **Static Configuration**: Perfect for offline or air-gapped environments
-- **Version Control**: Tool definitions can be versioned with your code
-- **No Authentication**: Simple text-based resources without auth requirements
+- **Local File Content**: Define tools that read and return the content of local files.
+- **UTCP Manual Discovery**: Load tool definitions from local UTCP manual files in JSON or YAML format.
+- **Static & Simple**: Ideal for returning mock data, configuration, or any static text content from a file.
+- **Version Control**: Tool definitions and their corresponding content files can be versioned with your code.
+- **No Authentication**: Designed for simple, local file access without authentication.
 
 ## Installation
 
@@ -20,339 +18,109 @@ Text-based resource plugin for UTCP, supporting both local files and remote URLs
 pip install utcp-text
 ```
 
+## How It Works
+
+The Text plugin operates in two main ways:
+
+1.  **Tool Discovery (`register_manual`)**: It can read a standard UTCP manual file (e.g., `my-tools.json`) to learn about available tools. This is how the `UtcpClient` discovers what tools can be called.
+2.  **Tool Execution (`call_tool`)**: When you call a tool, the plugin looks at the `tool_call_template` associated with that tool. It expects a `text` template, and it will read and return the entire content of the `file_path` specified in that template.
+
+**Important**: The `call_tool` function **does not** use the arguments you pass to it. It simply returns the full content of the file defined in the tool's template.
+
 ## Quick Start
 
-### Local File
-```python
-from utcp.utcp_client import UtcpClient
+Here is a complete example demonstrating how to define and use a tool that returns the content of a file.
 
-# Load tools from local file
-client = await UtcpClient.create(config={
-    "manual_call_templates": [{
-        "name": "local_tools",
-        "call_template_type": "text",
-        "file_path": "./tools/my_manual.json"
-    }]
-})
-```
+### 1. Create a Content File
 
-### Remote OpenAPI Spec
-```python
-# Load tools from remote OpenAPI specification
-client = await UtcpClient.create(config={
-    "manual_call_templates": [{
-        "name": "petstore_api",
-        "call_template_type": "text",
-        "file_path": "https://petstore3.swagger.io/api/v3/openapi.json"
-    }]
-})
+First, create a file with some content that you want your tool to return.
 
-result = await client.call_tool("petstore_api.getPetById", {"petId": "1"})
-```
-
-## Configuration Examples
-
-### Local Files
+`./mock_data/user.json`:
 ```json
 {
-  "name": "file_tools",
-  "call_template_type": "text",
-  "file_path": "./manuals/tools.json"
+  "id": 123,
+  "name": "John Doe",
+  "email": "john.doe@example.com"
 }
 ```
 
-### Remote OpenAPI Specifications
-```json
-{
-  "name": "github_api",
-  "call_template_type": "text",
-  "file_path": "https://api.github.com/openapi.json"
-}
-```
+### 2. Create a UTCP Manual
 
-```json
-{
-  "name": "stripe_api",
-  "call_template_type": "text",
-  "file_path": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json"
-}
-```
+Next, define a UTCP manual that describes your tool. The `tool_call_template` must be of type `text` and point to the content file you just created.
 
-### Remote UTCP Manuals
-```json
-{
-  "name": "shared_tools",
-  "call_template_type": "text",
-  "file_path": "https://example.com/shared-tools.yaml"
-}
-```
-
-### Multiple Sources (Local + Remote)
-```json
-{
-  "manual_call_templates": [
-    {
-      "name": "local_tools",
-      "call_template_type": "text",
-      "file_path": "./tools/core.json"
-    },
-    {
-      "name": "petstore",
-      "call_template_type": "text",
-      "file_path": "https://petstore3.swagger.io/api/v3/openapi.json"
-    },
-    {
-      "name": "jsonplaceholder",
-      "call_template_type": "text",
-      "file_path": "https://jsonplaceholder.typicode.com/openapi.json"
-    }
-  ]
-}
-```
-
-## Remote OpenAPI Examples
-
-### Popular Public APIs
-```python
-# JSONPlaceholder API
-client = await UtcpClient.create(config={
-    "manual_call_templates": [{
-        "name": "jsonplaceholder",
-        "call_template_type": "text",
-        "file_path": "https://jsonplaceholder.typicode.com/openapi.json"
-    }]
-})
-
-# Get all posts
-posts = await client.call_tool("jsonplaceholder.getPosts", {})
-
-# Get specific user
-user = await client.call_tool("jsonplaceholder.getUser", {"id": "1"})
-```
-
-### OpenAPI with Base URL Override
-```python
-# Use OpenAPI spec but override the base URL
-from utcp_text.text_communication_protocol import TextCommunicationProtocol
-
-# The text plugin will automatically detect OpenAPI format
-# and convert it to UTCP tools with the original base URL
-client = await UtcpClient.create(config={
-    "manual_call_templates": [{
-        "name": "api_staging",
-        "call_template_type": "text",
-        "file_path": "https://api.example.com/openapi.json"
-        # Tools will use the base URL from the OpenAPI spec
-    }]
-})
-```
-
-## File Format Support
-
-### Local UTCP Manual (JSON)
+`./manuals/local_tools.json`:
 ```json
 {
   "manual_version": "1.0.0",
   "utcp_version": "1.0.1",
   "tools": [
     {
-      "name": "calculate",
-      "description": "Perform mathematical calculations",
+      "name": "get_mock_user",
+      "description": "Returns a mock user profile from a local file.",
       "tool_call_template": {
-        "call_template_type": "cli",
-        "command_name": "bc -l"
+        "call_template_type": "text",
+        "file_path": "./mock_data/user.json"
       }
     }
   ]
 }
 ```
 
-### Local UTCP Manual (YAML)
-```yaml
-manual_version: "1.0.0"
-utcp_version: "1.0.1"
-tools:
-  - name: "file_info"
-    description: "Get file information"
-    tool_call_template:
-      call_template_type: "cli"
-      command_name: "stat ${path}"
-```
+### 3. Use the Tool in Python
 
-### Remote OpenAPI Specification
-The text plugin automatically detects and converts OpenAPI 2.0 and 3.0 specifications:
+Finally, use the `UtcpClient` to load the manual and call the tool.
 
 ```python
-# These URLs will be automatically converted from OpenAPI to UTCP
-openapi_sources = [
-    "https://petstore3.swagger.io/api/v3/openapi.json",
-    "https://api.github.com/openapi.json",
-    "https://httpbin.org/spec.json",
-    "https://jsonplaceholder.typicode.com/openapi.json"
-]
+import asyncio
+from utcp.utcp_client import UtcpClient
+
+async def main():
+    # Create a client, providing the path to the manual.
+    # The text plugin is used automatically for the "text" call_template_type.
+    client = await UtcpClient.create(config={
+        "manual_call_templates": [{
+            "name": "local_file_tools",
+            "call_template_type": "text",
+            "file_path": "./manuals/local_tools.json"
+        }]
+    })
+
+    # List the tools to confirm it was loaded
+    tools = await client.list_tools()
+    print("Available tools:", [tool.name for tool in tools])
+
+    # Call the tool. The result will be the content of './mock_data/user.json'
+    result = await client.call_tool("local_file_tools.get_mock_user", {})
+    
+    print("\nTool Result:")
+    print(result)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Expected Output:
+
+```
+Available tools: ['local_file_tools.get_mock_user']
+
+Tool Result:
+{
+  "id": 123,
+  "name": "John Doe",
+  "email": "john.doe@example.com"
+}
 ```
 
 ## Use Cases
 
-### Development with Public APIs
-```python
-# Quickly integrate with public APIs using their OpenAPI specs
-client = await UtcpClient.create(config={
-    "manual_call_templates": [
-        {
-            "name": "httpbin",
-            "call_template_type": "text",
-            "file_path": "https://httpbin.org/spec.json"
-        },
-        {
-            "name": "petstore",
-            "call_template_type": "text", 
-            "file_path": "https://petstore3.swagger.io/api/v3/openapi.json"
-        }
-    ]
-})
-```
-
-### Offline Development
-```json
-{
-  "name": "offline_tools",
-  "call_template_type": "text",
-  "file_path": "./cached-apis/github-openapi.json"
-}
-```
-
-### Configuration Management
-```json
-{
-  "name": "shared_config",
-  "call_template_type": "text",
-  "file_path": "https://config.company.com/utcp-tools.yaml"
-}
-```
-
-### API Documentation Integration
-```python
-# Load API definitions directly from documentation sites
-client = await UtcpClient.create(config={
-    "manual_call_templates": [{
-        "name": "company_api",
-        "call_template_type": "text",
-        "file_path": "https://docs.company.com/api/openapi.yaml"
-    }]
-})
-```
-
-## Error Handling
-
-### Local Files
-```python
-try:
-    client = await UtcpClient.create(config={
-        "manual_call_templates": [{
-            "name": "local_tools",
-            "call_template_type": "text",
-            "file_path": "./nonexistent.json"
-        }]
-    })
-except FileNotFoundError:
-    print("Local tool definition file not found")
-```
-
-### Remote URLs
-```python
-import aiohttp
-
-try:
-    client = await UtcpClient.create(config={
-        "manual_call_templates": [{
-            "name": "remote_api",
-            "call_template_type": "text",
-            "file_path": "https://api.example.com/openapi.json"
-        }]
-    })
-except aiohttp.ClientError:
-    print("Failed to fetch remote OpenAPI specification")
-```
-
-## Performance Considerations
-
-### Caching Remote Resources
-- Remote URLs are fetched each time the client is created
-- Consider caching OpenAPI specs locally for production use
-- Use local files for frequently accessed specifications
-
-### Network Dependencies
-- Remote URLs require internet connectivity
-- Consider fallback to cached local copies
-- Implement retry logic for network failures
-
-## Best Practices
-
-### Remote OpenAPI Usage
-- Verify OpenAPI spec URLs are stable and versioned
-- Cache frequently used specs locally
-- Monitor for API specification changes
-- Use specific version URLs when available
-
-### Local File Management
-- Store tool definitions in version control
-- Use relative paths for portability
-- Organize files by functionality or environment
-
-### Hybrid Approach
-```python
-# Combine local tools with remote APIs
-client = await UtcpClient.create(config={
-    "manual_call_templates": [
-        # Local custom tools
-        {
-            "name": "custom_tools",
-            "call_template_type": "text",
-            "file_path": "./tools/custom.json"
-        },
-        # Remote public API
-        {
-            "name": "github_api",
-            "call_template_type": "text",
-            "file_path": "https://api.github.com/openapi.json"
-        }
-    ]
-})
-```
-
-## Testing
-
-```python
-import pytest
-from utcp.utcp_client import UtcpClient
-
-@pytest.mark.asyncio
-async def test_remote_openapi():
-    client = await UtcpClient.create(config={
-        "manual_call_templates": [{
-            "name": "httpbin",
-            "call_template_type": "text",
-            "file_path": "https://httpbin.org/spec.json"
-        }]
-    })
-    
-    tools = await client.list_tools()
-    assert len(tools) > 0
-    
-    # Test a simple GET endpoint
-    result = await client.call_tool("httpbin.get", {})
-    assert result is not None
-```
+- **Mocking**: Return mock data for tests or local development without needing a live server.
+- **Configuration**: Load static configuration files as tool outputs.
+- **Templates**: Retrieve text templates (e.g., for emails or reports).
 
 ## Related Documentation
 
 - [Main UTCP Documentation](../../../README.md)
 - [Core Package Documentation](../../../core/README.md)
-- [HTTP Plugin](../http/README.md) - For authenticated APIs
-- [CLI Plugin](../cli/README.md)
-- [MCP Plugin](../mcp/README.md)
-
-## Examples
-
-For complete examples, see the [UTCP examples repository](https://github.com/universal-tool-calling-protocol/utcp-examples).
+- [HTTP Plugin](../http/README.md) - For calling real web APIs.
+- [CLI Plugin](../cli/README.md) - For executing command-line tools.

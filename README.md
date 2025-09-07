@@ -25,10 +25,10 @@ This repository contains the complete UTCP Python implementation:
 
 - **[`core/`](core/)** - Core `utcp` package with foundational components ([README](core/README.md))
 - **[`plugins/communication_protocols/`](plugins/communication_protocols/)** - Protocol-specific plugins:
-  - [`http/`](plugins/communication_protocols/http/) - HTTP/REST, SSE, streaming ([README](plugins/communication_protocols/http/README.md))
+  - [`http/`](plugins/communication_protocols/http/) - HTTP/REST, SSE, streaming, OpenAPI ([README](plugins/communication_protocols/http/README.md))
   - [`cli/`](plugins/communication_protocols/cli/) - Command-line tools ([README](plugins/communication_protocols/cli/README.md))
   - [`mcp/`](plugins/communication_protocols/mcp/) - Model Context Protocol ([README](plugins/communication_protocols/mcp/README.md))
-  - [`text/`](plugins/communication_protocols/text/) - File-based tools, OpenAPI ([README](plugins/communication_protocols/text/README.md))
+  - [`text/`](plugins/communication_protocols/text/) - File-based tools ([README](plugins/communication_protocols/text/README.md))
   - [`socket/`](plugins/communication_protocols/socket/) - TCP/UDP (🚧 In Progress)
   - [`gql/`](plugins/communication_protocols/gql/) - GraphQL (🚧 In Progress)
 

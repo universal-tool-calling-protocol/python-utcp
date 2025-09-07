@@ -5,13 +5,13 @@ and 3.0) into UTCP tool definitions. It handles schema resolution, authenticatio
 mapping, and proper tool creation from REST API specifications.
 
 Key Features:
-    - OpenAPI 2.0 and 3.0 specification support
-    - Automatic JSON reference ($ref) resolution
-    - Authentication scheme mapping (API key, Basic, OAuth2)
-    - Input/output schema extraction from OpenAPI schemas
-    - URL path parameter handling
-    - Request body and header field mapping
-    - Provider name generation from specification metadata
+    - OpenAPI 2.0 and 3.0 specification support.
+    - Automatic JSON reference ($ref) resolution.
+    - Authentication scheme mapping (API key, Basic, OAuth2).
+    - Input/output schema extraction from OpenAPI schemas.
+    - URL path parameter handling.
+    - Request body and header field mapping.
+    - Call template name generation from specification metadata.
 
 The converter creates UTCP tools that can be used to interact with REST APIs
 defined by OpenAPI specifications, providing a bridge between OpenAPI and UTCP.
@@ -38,47 +38,41 @@ class OpenApiConverter:
     a UTCP tool with appropriate input/output schemas.
 
     Features:
-        - Complete OpenAPI specification parsing
-        - Recursive JSON reference ($ref) resolution
-        - Authentication scheme conversion (API key, Basic, OAuth2)
-        - Input parameter and request body handling
-        - Response schema extraction
-        - URL template and path parameter support
-        - Provider name normalization
-        - Placeholder variable generation for configuration
+        - Complete OpenAPI specification parsing.
+        - Recursive JSON reference ($ref) resolution.
+        - Authentication scheme conversion (API key, Basic, OAuth2).
+        - Input parameter and request body handling.
+        - Response schema extraction.
+        - URL template and path parameter support.
+        - Call template name normalization.
+        - Placeholder variable generation for configuration.
 
     Usage Examples:
         Basic OpenAPI conversion:
         ```python
         from utcp_http.openapi_converter import OpenApiConverter
 
-        converter = OpenApiConverter()
-        manual = await converter.convert_openapi_to_manual(
-            "https://api.example.com/openapi.json"
-        )
+        # Assuming you have a method to fetch and parse the spec
+        openapi_spec = fetch_and_parse_spec("https://api.example.com/openapi.json")
 
-        # Use the generated manual
-        client = await UtcpClient.create()
-        await client.register_manual(manual)
+        converter = OpenApiConverter(openapi_spec)
+        manual = converter.convert()
+
+        # Use the generated manual with a UTCP client
+        # client = await UtcpClient.create()
+        # await client.register_manual(manual)
         ```
 
         Converting local OpenAPI file:
         ```python
+        import yaml
+
         converter = OpenApiConverter()
         with open("api_spec.yaml", "r") as f:
-            spec_content = f.read()
+            spec_content = yaml.safe_load(f)
         
-        manual = converter.convert_openapi_spec_to_manual(spec_content)
-        ```
-
-        Custom provider name and base URL:
-        ```python
-        converter = OpenApiConverter()
-        manual = await converter.convert_openapi_to_manual(
-            "https://api.example.com/openapi.json",
-            provider_name="my_api",
-            base_url_override="https://custom.api.com"
-        )
+        converter = OpenApiConverter(spec_content)
+        manual = converter.convert()
         ```
 
     Architecture:
@@ -94,14 +88,14 @@ class OpenApiConverter:
     """
 
     def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, call_template_name: Optional[str] = None):
-        """Initialize the OpenAPI converter.
+        """Initializes the OpenAPI converter.
 
         Args:
             openapi_spec: Parsed OpenAPI specification as a dictionary.
             spec_url: Optional URL where the specification was retrieved from.
                 Used for base URL determination if servers are not specified.
-            call_template_name: Optional custom name for the call_template if 
-            the specification title is not provided.
+            call_template_name: Optional custom name for the call_template if
+                the specification title is not provided.
         """
         self.spec = openapi_spec
         self.spec_url = spec_url
@@ -133,7 +127,15 @@ class OpenApiConverter:
 
     def convert(self) -> UtcpManual:
         """REQUIRED
-        Parses the OpenAPI specification and returns a UtcpManual."""
+        Converts the loaded OpenAPI specification into a UtcpManual.
+
+        This is the main entry point for the conversion process. It iterates through
+        the paths and operations in the specification, creating a UTCP tool for each
+        one.
+
+        Returns:
+            A UtcpManual object containing all the tools generated from the spec.
+        """
         self.placeholder_counter = 0
         tools = []
         servers = self.spec.get("servers")
