@@ -7,7 +7,7 @@ UTCP automatically converts OpenAPI 2.0/3.0 specifications into UTCP tools, enab
 Use the `OpenApiConverter` class for maximum control over the conversion process.
 
 ```python
-from utcp_http.openapi_converter import OpenApiConverter
+from utcp_http.openapi_converter import OpenApiConverter  # utcp-http plugin
 import json
 
 # From local JSON file
@@ -21,9 +21,10 @@ print(f"Generated {len(manual.tools)} tools")
 ```
 
 ```python
-# From YAML file
+from utcp_http.openapi_converter import OpenApiConverter  # utcp-http plugin
 import yaml
 
+# From YAML file (can also be JSON)
 with open("api_spec.yaml", "r") as f:
     openapi_spec = yaml.safe_load(f)
 
@@ -37,7 +38,7 @@ Fetch and convert OpenAPI specifications from remote URLs.
 
 ```python
 import aiohttp
-from utcp_http.openapi_converter import OpenApiConverter
+from utcp_http.openapi_converter import OpenApiConverter  # utcp-http plugin
 
 async def load_remote_spec(url):
     async with aiohttp.ClientSession() as session:
@@ -57,7 +58,7 @@ manual = await load_remote_spec("https://api.example.com/openapi.json")
 Include OpenAPI specs directly in your UTCP client configuration.
 
 ```python
-from utcp.utcp_client import UtcpClient
+from utcp.utcp_client import UtcpClient  # core utcp package
 
 config = {
     "manual_call_templates": [
@@ -98,8 +99,8 @@ Process multiple OpenAPI specifications programmatically.
 
 ```python
 import aiohttp
-from utcp_http.openapi_converter import OpenApiConverter
-from utcp.data.utcp_manual import UtcpManual
+from utcp_http.openapi_converter import OpenApiConverter  # utcp-http plugin
+from utcp.data.utcp_manual import UtcpManual  # core utcp package
 
 async def process_multiple_specs(spec_urls):
     all_tools = []
