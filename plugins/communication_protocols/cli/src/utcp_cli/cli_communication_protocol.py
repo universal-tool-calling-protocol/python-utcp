@@ -609,7 +609,7 @@ class CliCommunicationProtocol(CommunicationProtocol):
             # Build combined shell script with output capture
             shell_script = self._build_combined_shell_script(tool_call_template.commands, tool_args)
             
-            self._log_info(f"Executing combined shell script:\n{shell_script}")
+            self._log_info("Executing combined shell script")
             
             # Execute the combined script in a single subprocess
             stdout, stderr, return_code = await self._execute_shell_script(
