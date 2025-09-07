@@ -439,7 +439,16 @@ Note the name change from `http_stream` to `streamable_http`.
 {
   "name": "my_cli_tool",
   "call_template_type": "cli", // Required
-  "command_name": "my-command --utcp", // Required
+  "commands": [ // Required - array of commands to execute in sequence
+    {
+      "command": "cd UTCP_ARG_target_dir_UTCP_END",
+      "append_to_final_output": false // Optional, default is false if not last command
+    },
+    {
+      "command": "my-command --input UTCP_ARG_input_file_UTCP_END"
+      // append_to_final_output defaults to true for last command
+    }
+  ],
   "env_vars": { // Optional
     "MY_VAR": "my_value"
   },
@@ -447,6 +456,12 @@ Note the name change from `http_stream` to `streamable_http`.
   "auth": null // Optional (always null for CLI)
 }
 ```
+
+**Notes:**
+- Commands execute in a single subprocess (PowerShell on Windows, Bash on Unix)
+- Use `UTCP_ARG_argname_UTCP_END` placeholders for arguments
+- Reference previous command output with `$CMD_0_OUTPUT`, `$CMD_1_OUTPUT`, etc.
+- Only the last command's output is returned by default
 
 ### Text Call Template
 

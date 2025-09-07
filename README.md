@@ -437,16 +437,34 @@ Note the name change from `http_stream` to `streamable_http`.
 
 ```json
 {
-  "name": "my_cli_tool",
+  "name": "multi_step_cli_tool",
   "call_template_type": "cli", // Required
-  "command_name": "my-command --utcp", // Required
+  "commands": [ // Required - sequential command execution
+    {
+      "command": "git clone UTCP_ARG_repo_url_UTCP_END temp_repo",
+      "append_to_final_output": false
+    },
+    {
+      "command": "cd temp_repo && find . -name '*.py' | wc -l"
+      // Last command output returned by default
+    }
+  ],
   "env_vars": { // Optional
-    "MY_VAR": "my_value"
+    "GIT_AUTHOR_NAME": "UTCP Bot",
+    "API_KEY": "${MY_API_KEY}"
   },
-  "working_dir": "/path/to/working/directory", // Optional
+  "working_dir": "/tmp", // Optional
   "auth": null // Optional (always null for CLI)
 }
 ```
+
+**CLI Protocol Features:**
+- **Multi-command execution**: Commands run sequentially in single subprocess
+- **Cross-platform**: PowerShell on Windows, Bash on Unix/Linux/macOS  
+- **State preservation**: Directory changes (`cd`) persist between commands
+- **Argument placeholders**: `UTCP_ARG_argname_UTCP_END` format
+- **Output referencing**: Access previous outputs with `$CMD_0_OUTPUT`, `$CMD_1_OUTPUT`
+- **Flexible output control**: Choose which command outputs to include in final result
 
 ### Text Call Template
 
