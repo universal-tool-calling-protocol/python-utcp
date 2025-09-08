@@ -7,7 +7,8 @@ from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
 class CommandStep(BaseModel):
-    """Configuration for a single command step in a CLI execution flow.
+    """REQUIRED
+    Configuration for a single command step in a CLI execution flow.
     
     Attributes:
         command: The command string to execute. Can contain UTCP_ARG_argname_UTCP_END

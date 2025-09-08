@@ -538,4 +538,61 @@ The build process now involves building each package (`core` and `plugins`) sepa
 4.  Run the build: `python -m build`.
 5.  The distributable files (`.whl` and `.tar.gz`) will be in the `dist/` directory.
 
+## OpenAPI Ingestion - Zero Infrastructure Tool Integration
+
+🚀 **Transform any existing REST API into UTCP tools without server modifications!**
+
+UTCP's OpenAPI ingestion feature automatically converts OpenAPI 2.0/3.0 specifications into UTCP tools, enabling AI agents to interact with existing APIs directly - no wrapper servers, no API changes, no additional infrastructure required.
+
+### Quick Start with OpenAPI
+
+```python
+from utcp_http.openapi_converter import OpenApiConverter
+import aiohttp
+
+# Convert any OpenAPI spec to UTCP tools
+async def convert_api():
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://api.github.com/openapi.json") as response:
+            openapi_spec = await response.json()
+    
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+    
+    print(f"Generated {len(manual.tools)} tools from GitHub API!")
+    return manual
+
+# Or use UTCP Client configuration for automatic detection
+from utcp.utcp_client import UtcpClient
+
+client = await UtcpClient.create(config={
+    "manual_call_templates": [{
+        "name": "github",
+        "call_template_type": "http", 
+        "url": "https://api.github.com/openapi.json"
+    }]
+})
+```
+
+### Key Benefits
+
+- ✅ **Zero Infrastructure**: No servers to deploy or maintain
+- ✅ **Direct API Calls**: Native performance, no proxy overhead  
+- ✅ **Automatic Conversion**: OpenAPI schemas → UTCP tools
+- ✅ **Authentication Preserved**: API keys, OAuth2, Basic auth supported
+- ✅ **Multi-format Support**: JSON, YAML, OpenAPI 2.0/3.0
+- ✅ **Batch Processing**: Convert multiple APIs simultaneously
+
+### Multiple Ingestion Methods
+
+1. **Direct Converter**: `OpenApiConverter` class for full control
+2. **Remote URLs**: Fetch and convert specs from any URL
+3. **Client Configuration**: Include specs directly in UTCP config
+4. **Batch Processing**: Process multiple specs programmatically
+5. **File-based**: Convert local JSON/YAML specifications
+
+📖 **[Complete OpenAPI Ingestion Guide](docs/openapi-ingestion.md)** - Detailed examples and advanced usage
+
+---
+
 ## [Contributors](https://www.utcp.io/about)
