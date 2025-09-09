@@ -28,7 +28,6 @@ embedding = [
     "torch>=1.9.0",
 ]
 
-authors = [ { name = "UTCP Contributors" } ]
 
 [project.urls]
 Homepage = "https://utcp.io"

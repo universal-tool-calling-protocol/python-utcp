@@ -10,7 +10,7 @@ import logging
 from typing import List, Tuple, Optional, Literal, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from utcp.interfaces.tool_search_strategy import ToolSearchStrategy
 from utcp.data.tool import Tool
@@ -43,12 +43,15 @@ class InMemEmbeddingsSearchStrategy(ToolSearchStrategy):
     max_workers: int = Field(default=4, description="Maximum number of worker threads for embedding generation")
     cache_embeddings: bool = Field(default=True, description="Whether to cache tool embeddings for performance")
     
+    # Private attributes
+    _embedding_model: Optional[Any] = PrivateAttr(default=None)
+    _tool_embeddings_cache: Dict[str, np.ndarray] = PrivateAttr(default_factory=dict)
+    _executor: Optional[ThreadPoolExecutor] = PrivateAttr(default=None)
+    _model_loaded: bool = PrivateAttr(default=False)
+    
     def __init__(self, **data):
         super().__init__(**data)
-        self._embedding_model = None
-        self._tool_embeddings_cache: Dict[str, np.ndarray] = {}
         self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
-        self._model_loaded = False
         
     async def _ensure_model_loaded(self):
         """Ensure the embedding model is loaded."""
@@ -60,7 +63,7 @@ class InMemEmbeddingsSearchStrategy(ToolSearchStrategy):
             from sentence_transformers import SentenceTransformer
             
             # Load the model in a thread to avoid blocking
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self._embedding_model = await loop.run_in_executor(
                 self._executor, 
                 SentenceTransformer, 
@@ -108,8 +111,7 @@ class InMemEmbeddingsSearchStrategy(ToolSearchStrategy):
         
         # Simple character frequency-based embedding
         for i, char in enumerate(text_lower):
-            if i < 384:
-                embedding[i % 384] += ord(char) / 1000.0
+            embedding[i % 384] += ord(char) / 1000.0
                 
         # Normalize
         norm = np.linalg.norm(embedding)

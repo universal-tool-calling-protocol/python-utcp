@@ -11,9 +11,9 @@ pip install utcp-embedding-search
 Optionally, for high-quality embeddings:
 
 ```bash
-pip install "utcp-embedding-search[embedding]"
+pip install "utcp-in-mem-embeddings[embedding]"
 ```
 
 ## How it works
 
-When installed, this package exposes an entry point under `utcp.plugins` so the UTCP core can auto-discover and register the `embedding_search` strategy.
+When installed, this package exposes an entry point under `utcp.plugins` so the UTCP core can auto-discover and register the `in_mem_embeddings` strategy.

@@ -11,7 +11,7 @@ pip install utcp-in-mem-embeddings
 Optionally, for high-quality embeddings:
 
 ```bash
-pip install utcp-in-mem-embeddings[embedding]
+pip install "utcp-in-mem-embeddings[embedding]"
 ```
 
 Or install the required dependencies directly:

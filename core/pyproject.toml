@@ -15,7 +15,6 @@ dependencies = [
     "pydantic>=2.0",
     "python-dotenv>=1.0",
     "tomli>=2.0",
-    "numpy>=1.21.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -33,10 +32,6 @@ dev = [
     "pytest-cov",
     "coverage",
     "twine",
-]
-embedding = [
-    "sentence-transformers>=2.2.0",
-    "torch>=1.9.0",
 ]
 
 [project.urls]

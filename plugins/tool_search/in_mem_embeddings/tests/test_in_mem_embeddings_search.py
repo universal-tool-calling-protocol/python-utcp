@@ -12,7 +12,7 @@ plugin_src = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(plugin_src))
 
 # Add core to path
-core_src = Path(__file__).parent.parent.parent.parent / "core" / "src"
+core_src = Path(__file__).parent.parent.parent.parent.parent / "core" / "src"
 sys.path.insert(0, str(core_src))
 
 from utcp_in_mem_embeddings.in_mem_embeddings_search import InMemEmbeddingsSearchStrategy

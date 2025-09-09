@@ -6,8 +6,8 @@ import asyncio
 from pathlib import Path
 
 # Add paths
-plugin_src = Path(__file__).parent / "src"
-core_src = Path(__file__).parent.parent.parent.parent / "core" / "src"
+plugin_src = (Path(__file__).parent / "src").resolve()
+core_src = (Path(__file__).parent.parent.parent.parent / "core" / "src").resolve()
 sys.path.insert(0, str(plugin_src))
 sys.path.insert(0, str(core_src))
 
@@ -60,7 +60,6 @@ async def test_integration():
                 tags=["cooking", "test"],
                 tool_call_template=CallTemplate(
                     name="test.tool1",
-                    description="Test tool",
                     call_template_type="default"
                 )
             )
@@ -72,13 +71,16 @@ async def test_integration():
         # Create a manual and add it to the repository
         from utcp.data.utcp_manual import UtcpManual
         manual = UtcpManual(tools=tools)
-        manual_call_template = CallTemplate(name="test_manual", description="Test manual", call_template_type="default")
+        manual_call_template = CallTemplate(name="test_manual", call_template_type="default")
         await repo.save_manual(manual_call_template, manual)
        
 
         # Test search
         results = await strategy.search_tools(repo, "cooking", limit=1)
         print(f"   ✅ Search completed, found {len(results)} results")
+        
+        # Validate search results
+        assert len(results) > 0, "Search should return at least one result for 'cooking' query"
         
         print("\n🎉 Integration test passed! Plugin works with core system.")
         return True
