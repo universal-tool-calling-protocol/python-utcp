@@ -197,7 +197,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                             utcp_manual = UtcpManualSerializer().validate_dict(response_data)
                         else:
                             logger.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
-                            converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, call_template_name=manual_call_template.name)
+                            converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, call_template_name=manual_call_template.name, inherited_auth=manual_call_template.auth)
                             utcp_manual = converter.convert()
                         
                         return RegisterManualResult(

@@ -87,7 +87,7 @@ class OpenApiConverter:
         call_template_name: Normalized name for the call_template derived from the spec.
     """
 
-    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, call_template_name: Optional[str] = None):
+    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, call_template_name: Optional[str] = None, inherited_auth: Optional[Auth] = None):
         """Initializes the OpenAPI converter.
 
         Args:
@@ -96,9 +96,12 @@ class OpenApiConverter:
                 Used for base URL determination if servers are not specified.
             call_template_name: Optional custom name for the call_template if
                 the specification title is not provided.
+            inherited_auth: Optional auth configuration inherited from the manual call template.
+                Used instead of generating placeholders when x-utcp-auth is present.
         """
         self.spec = openapi_spec
         self.spec_url = spec_url
+        self.inherited_auth = inherited_auth
         # Single counter for all placeholder variables
         self.placeholder_counter = 0
         if call_template_name is None:
@@ -161,6 +164,31 @@ class OpenApiConverter:
     def _extract_auth(self, operation: Dict[str, Any]) -> Optional[Auth]:
         """
         Extracts authentication information from OpenAPI operation and global security schemes."""
+        
+        # First check for x-utcp-auth extension
+        if "x-utcp-auth" in operation:
+            utcp_auth = operation.get("x-utcp-auth") if isinstance(operation.get("x-utcp-auth"), dict) else {}
+            auth_type = utcp_auth.get("auth_type")
+            
+            if auth_type == "api_key":
+                # Use inherited auth if available and compatible, otherwise create placeholder
+                inherited_var_name = self.inherited_auth.var_name.lower() if self.inherited_auth and self.inherited_auth.var_name else ""
+                utcp_var_name = utcp_auth.get("var_name", "Authorization").lower()
+                if (self.inherited_auth and 
+                    isinstance(self.inherited_auth, ApiKeyAuth) and
+                    inherited_var_name == utcp_var_name and
+                    self.inherited_auth.location == utcp_auth.get("location", "header")):
+                    return self.inherited_auth
+                else:
+                    api_key_placeholder = self._get_placeholder("API_KEY")
+                    self._increment_placeholder_counter()
+                    return ApiKeyAuth(
+                        api_key=api_key_placeholder,
+                        var_name=utcp_auth.get("var_name", "Authorization"),
+                        location=utcp_auth.get("location", "header")
+                    )
+        
+        # Then fall back to standard OpenAPI security schemes
         # First check for operation-level security requirements
         security_requirements = operation.get("security", [])
         
@@ -168,9 +196,9 @@ class OpenApiConverter:
         if not security_requirements:
             security_requirements = self.spec.get("security", [])
         
-        # If no security requirements, return None
+        # If no security requirements, return inherited auth if available
         if not security_requirements:
-            return None
+            return self.inherited_auth
         
         # Get security schemes - support both OpenAPI 2.0 and 3.0
         security_schemes = self._get_security_schemes()
