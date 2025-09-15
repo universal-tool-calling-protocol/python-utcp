@@ -372,3 +372,30 @@ async def test_text_call_template_with_auth_tools():
     
     assert template.auth_tools == auth_tools
     assert template.auth is None  # auth should still be None for file access
+
+
+@pytest.mark.asyncio
+async def test_text_call_template_auth_tools_serialization():
+    """Test that auth_tools field properly serializes and validates from dict."""
+    # Test creation from dict
+    template_dict = {
+        "name": "test-template",
+        "call_template_type": "text",
+        "file_path": "test.json",
+        "auth_tools": {
+            "auth_type": "api_key",
+            "api_key": "test-key",
+            "var_name": "Authorization",
+            "location": "header"
+        }
+    }
+    
+    template = TextCallTemplate(**template_dict)
+    assert template.auth_tools is not None
+    assert template.auth_tools.api_key == "test-key"
+    assert template.auth_tools.var_name == "Authorization"
+    
+    # Test serialization to dict
+    serialized = template.model_dump()
+    assert serialized["auth_tools"]["auth_type"] == "api_key"
+    assert serialized["auth_tools"]["api_key"] == "test-key"

@@ -1,10 +1,10 @@
 from utcp.data.call_template import CallTemplate, CallTemplateSerializer
-from utcp.data.auth import Auth
+from utcp.data.auth import Auth, AuthSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
-from typing import Optional, Dict, List, Literal
-from pydantic import Field
+from typing import Optional, Dict, List, Literal, Any
+from pydantic import Field, field_serializer, field_validator
 
 class HttpCallTemplate(CallTemplate):
     """REQUIRED
@@ -107,6 +107,44 @@ class HttpCallTemplate(CallTemplate):
     headers: Optional[Dict[str, str]] = None
     body_field: Optional[str] = Field(default="body", description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers.")
+
+    @field_serializer('auth')
+    def serialize_auth(self, auth: Optional[Auth]) -> Optional[dict]:
+        """Serialize auth to dictionary."""
+        if auth is None:
+            return None
+        return AuthSerializer().to_dict(auth)
+
+    @field_validator('auth', mode='before')
+    @classmethod
+    def validate_auth(cls, v: Any) -> Optional[Auth]:
+        """Validate and deserialize auth from dictionary."""
+        if v is None:
+            return None
+        if isinstance(v, Auth):
+            return v
+        if isinstance(v, dict):
+            return AuthSerializer().validate_dict(v)
+        raise ValueError(f"auth must be None, Auth instance, or dict, got {type(v)}")
+
+    @field_serializer('auth_tools')
+    def serialize_auth_tools(self, auth_tools: Optional[Auth]) -> Optional[dict]:
+        """Serialize auth_tools to dictionary."""
+        if auth_tools is None:
+            return None
+        return AuthSerializer().to_dict(auth_tools)
+
+    @field_validator('auth_tools', mode='before')
+    @classmethod
+    def validate_auth_tools(cls, v: Any) -> Optional[Auth]:
+        """Validate and deserialize auth_tools from dictionary."""
+        if v is None:
+            return None
+        if isinstance(v, Auth):
+            return v
+        if isinstance(v, dict):
+            return AuthSerializer().validate_dict(v)
+        raise ValueError(f"auth_tools must be None, Auth instance, or dict, got {type(v)}")
 
 
 class HttpCallTemplateSerializer(Serializer[HttpCallTemplate]):

@@ -1,8 +1,8 @@
-from typing import Literal, Optional
-from pydantic import Field
+from typing import Literal, Optional, Any
+from pydantic import Field, field_serializer, field_validator
 
 from utcp.data.call_template import CallTemplate
-from utcp.data.auth import Auth
+from utcp.data.auth import Auth, AuthSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
@@ -25,6 +25,25 @@ class TextCallTemplate(CallTemplate):
     file_path: str = Field(..., description="The path to the file containing the UTCP manual or tool definitions.")
     auth: None = None
     auth_tools: Optional[Auth] = Field(None, description="Authentication to apply to generated tools from OpenAPI specs.")
+
+    @field_serializer('auth_tools')
+    def serialize_auth_tools(self, auth_tools: Optional[Auth]) -> Optional[dict]:
+        """Serialize auth_tools to dictionary."""
+        if auth_tools is None:
+            return None
+        return AuthSerializer().to_dict(auth_tools)
+
+    @field_validator('auth_tools', mode='before')
+    @classmethod
+    def validate_auth_tools(cls, v: Any) -> Optional[Auth]:
+        """Validate and deserialize auth_tools from dictionary."""
+        if v is None:
+            return None
+        if isinstance(v, Auth):
+            return v
+        if isinstance(v, dict):
+            return AuthSerializer().validate_dict(v)
+        raise ValueError(f"auth_tools must be None, Auth instance, or dict, got {type(v)}")
 
 
 class TextCallTemplateSerializer(Serializer[TextCallTemplate]):
