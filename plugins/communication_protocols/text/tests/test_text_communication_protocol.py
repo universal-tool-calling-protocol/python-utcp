@@ -12,6 +12,7 @@ from utcp_text.text_communication_protocol import TextCommunicationProtocol
 from utcp_text.text_call_template import TextCallTemplate
 from utcp.data.call_template import CallTemplate
 from utcp.data.register_manual_response import RegisterManualResult
+from utcp.data.auth_implementations.api_key_auth import ApiKeyAuth
 from utcp.utcp_client import UtcpClient
 
 @pytest_asyncio.fixture
@@ -356,3 +357,18 @@ async def test_call_tool_streaming(text_protocol: TextCommunicationProtocol, sam
         assert chunks == [content]
     finally:
         Path(temp_file).unlink()
+
+
+@pytest.mark.asyncio
+async def test_text_call_template_with_auth_tools():
+    """Test that TextCallTemplate can be created with auth_tools."""
+    auth_tools = ApiKeyAuth(api_key="test-key", var_name="Authorization", location="header")
+    
+    template = TextCallTemplate(
+        name="test-template",
+        file_path="test.json",
+        auth_tools=auth_tools
+    )
+    
+    assert template.auth_tools == auth_tools
+    assert template.auth is None  # auth should still be None for file access

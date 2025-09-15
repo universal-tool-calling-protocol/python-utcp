@@ -479,7 +479,13 @@ Note the name change from `http_stream` to `streamable_http`.
   "name": "my_text_manual",
   "call_template_type": "text", // Required
   "file_path": "./manuals/my_manual.json", // Required
-  "auth": null // Optional (always null for Text)
+  "auth": null, // Optional (always null for Text)
+  "auth_tools": { // Optional, authentication for generated tools from OpenAPI specs
+    "auth_type": "api_key",
+    "api_key": "Bearer ${API_TOKEN}",
+    "var_name": "Authorization",
+    "location": "header"
+  }
 }
 ```
 

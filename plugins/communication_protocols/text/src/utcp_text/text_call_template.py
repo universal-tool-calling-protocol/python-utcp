@@ -1,7 +1,8 @@
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import Field
 
 from utcp.data.call_template import CallTemplate
+from utcp.data.auth import Auth
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
@@ -16,12 +17,14 @@ class TextCallTemplate(CallTemplate):
     Attributes:
         call_template_type: Always "text" for text file call templates.
         file_path: Path to the file containing the UTCP manual or tool definitions.
-        auth: Always None - text call templates don't support authentication.
+        auth: Always None - text call templates don't support authentication for file access.
+        auth_tools: Optional authentication to apply to generated tools from OpenAPI specs.
     """
 
     call_template_type: Literal["text"] = "text"
     file_path: str = Field(..., description="The path to the file containing the UTCP manual or tool definitions.")
     auth: None = None
+    auth_tools: Optional[Auth] = Field(None, description="Authentication to apply to generated tools from OpenAPI specs.")
 
 
 class TextCallTemplateSerializer(Serializer[TextCallTemplate]):

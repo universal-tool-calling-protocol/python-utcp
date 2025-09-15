@@ -70,7 +70,12 @@ class TextCommunicationProtocol(CommunicationProtocol):
             utcp_manual: UtcpManual
             if isinstance(data, dict) and ("openapi" in data or "swagger" in data or "paths" in data):
                 self._log_info("Detected OpenAPI specification. Converting to UTCP manual.")
-                converter = OpenApiConverter(data, spec_url=file_path.as_uri(), call_template_name=manual_call_template.name)
+                converter = OpenApiConverter(
+                    data, 
+                    spec_url=file_path.as_uri(), 
+                    call_template_name=manual_call_template.name,
+                    auth_tools=manual_call_template.auth_tools
+                )
                 utcp_manual = converter.convert()
             else:
                 # Try to validate as UTCP manual directly
