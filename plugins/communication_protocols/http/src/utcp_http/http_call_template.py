@@ -40,6 +40,12 @@ class HttpCallTemplate(CallTemplate):
             "var_name": "Authorization",
             "location": "header"
           },
+          "auth_tools": {
+            "auth_type": "api_key",
+            "api_key": "Bearer ${TOOL_API_KEY}",
+            "var_name": "Authorization",
+            "location": "header"
+          },
           "headers": {
             "X-Custom-Header": "value"
           },
@@ -85,7 +91,8 @@ class HttpCallTemplate(CallTemplate):
         url: The base URL for the HTTP endpoint. Supports path parameters like
             "https://api.example.com/users/{user_id}/posts/{post_id}".
         content_type: The Content-Type header for requests.
-        auth: Optional authentication configuration.
+        auth: Optional authentication configuration for accessing the OpenAPI spec URL.
+        auth_tools: Optional authentication configuration for generated tools. Applied only to endpoints requiring auth per OpenAPI spec.
         headers: Optional static headers to include in all requests.
         body_field: Name of the tool argument to map to the HTTP request body.
         header_fields: List of tool argument names to map to HTTP request headers.
@@ -96,6 +103,7 @@ class HttpCallTemplate(CallTemplate):
     url: str
     content_type: str = Field(default="application/json")
     auth: Optional[Auth] = None
+    auth_tools: Optional[Auth] = Field(default=None, description="Authentication configuration for generated tools (applied only to endpoints requiring auth per OpenAPI spec)")
     headers: Optional[Dict[str, str]] = None
     body_field: Optional[str] = Field(default="body", description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers.")

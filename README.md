@@ -376,9 +376,15 @@ Configuration examples for each protocol. Remember to replace `provider_type` wi
   "url": "https://api.example.com/users/{user_id}", // Required
   "http_method": "POST", // Required, default: "GET"
   "content_type": "application/json", // Optional, default: "application/json"
-  "auth": { // Optional, example using ApiKeyAuth for a Bearer token. The client must prepend "Bearer " to the token.
+  "auth": { // Optional, authentication for accessing the OpenAPI spec URL (example using ApiKeyAuth for Bearer token)
     "auth_type": "api_key",
     "api_key": "Bearer $API_KEY", // Required
+    "var_name": "Authorization", // Optional, default: "X-Api-Key"
+    "location": "header" // Optional, default: "header"
+  },
+  "auth_tools": { // Optional, authentication for generated tools (applied only to endpoints requiring auth per OpenAPI spec)
+    "auth_type": "api_key",
+    "api_key": "Bearer $TOOL_API_KEY", // Required
     "var_name": "Authorization", // Optional, default: "X-Api-Key"
     "location": "header" // Optional, default: "header"
   },
@@ -569,7 +575,13 @@ client = await UtcpClient.create(config={
     "manual_call_templates": [{
         "name": "github",
         "call_template_type": "http", 
-        "url": "https://api.github.com/openapi.json"
+        "url": "https://api.github.com/openapi.json",
+        "auth_tools": {  # Authentication for generated tools requiring auth
+            "auth_type": "api_key",
+            "api_key": "Bearer ${GITHUB_TOKEN}",
+            "var_name": "Authorization",
+            "location": "header"
+        }
     }]
 })
 ```
@@ -579,6 +591,7 @@ client = await UtcpClient.create(config={
 - ✅ **Zero Infrastructure**: No servers to deploy or maintain
 - ✅ **Direct API Calls**: Native performance, no proxy overhead  
 - ✅ **Automatic Conversion**: OpenAPI schemas → UTCP tools
+- ✅ **Selective Authentication**: Only protected endpoints get auth, public endpoints remain accessible
 - ✅ **Authentication Preserved**: API keys, OAuth2, Basic auth supported
 - ✅ **Multi-format Support**: JSON, YAML, OpenAPI 2.0/3.0
 - ✅ **Batch Processing**: Convert multiple APIs simultaneously

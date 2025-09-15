@@ -694,3 +694,35 @@ async def test_call_tool_openlibrary_style_url(http_transport):
     expected_remaining = {"format": "json"}
     http_transport._build_url_with_path_params(call_template.url, arguments)
     assert arguments == expected_remaining
+
+
+def test_auth_tools_integration():
+    """Test that auth_tools field is properly integrated in HttpCallTemplate."""
+    from utcp.data.auth_implementations.api_key_auth import ApiKeyAuth
+    from utcp_http.http_call_template import HttpCallTemplateSerializer
+    
+    # Create auth_tools configuration
+    auth_tools = ApiKeyAuth(
+        api_key="Bearer test-token",
+        var_name="Authorization",
+        location="header"
+    )
+    
+    # Create HttpCallTemplate with auth_tools
+    call_template = HttpCallTemplate(
+        name="test-auth-tools",
+        url="https://api.example.com/spec.json",
+        auth_tools=auth_tools
+    )
+    
+    # Verify auth_tools is stored correctly
+    assert call_template.auth_tools is not None
+    assert call_template.auth_tools.api_key == "Bearer test-token"
+    assert call_template.auth_tools.var_name == "Authorization"
+    assert call_template.auth_tools.location == "header"
+    
+    # Verify it can be serialized (auth_type is included for security)
+    serializer = HttpCallTemplateSerializer()
+    serialized = serializer.to_dict(call_template)
+    assert "auth_tools" in serialized
+    assert serialized["auth_tools"]["auth_type"] == "api_key"
