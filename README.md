@@ -376,13 +376,13 @@ Configuration examples for each protocol. Remember to replace `provider_type` wi
   "url": "https://api.example.com/users/{user_id}", // Required
   "http_method": "POST", // Required, default: "GET"
   "content_type": "application/json", // Optional, default: "application/json"
-  "auth": { // Optional, authentication for accessing the OpenAPI spec URL (example using ApiKeyAuth for Bearer token)
+  "auth": { // Optional, authentication for the HTTP request (example using ApiKeyAuth for Bearer token)
     "auth_type": "api_key",
     "api_key": "Bearer $API_KEY", // Required
     "var_name": "Authorization", // Optional, default: "X-Api-Key"
     "location": "header" // Optional, default: "header"
   },
-  "auth_tools": { // Optional, authentication for generated tools (applied only to endpoints requiring auth per OpenAPI spec)
+  "auth_tools": { // Optional, authentication for converted tools, if this call template points to an openapi spec that should be automatically converted to a utcp manual (applied only to endpoints requiring auth per OpenAPI spec)
     "auth_type": "api_key",
     "api_key": "Bearer $TOOL_API_KEY", // Required
     "var_name": "Authorization", // Optional, default: "X-Api-Key"
