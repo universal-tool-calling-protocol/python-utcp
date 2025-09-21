@@ -1,5 +1,4 @@
 """Tests for the InMemEmbeddingsSearchStrategy implementation."""
-"""just test"""
 import pytest
 import numpy as np
 import sys
