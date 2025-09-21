@@ -8,9 +8,11 @@ A simple, file-based resource plugin for UTCP. This plugin allows you to define 
 
 - **Local File Content**: Define tools that read and return the content of local files.
 - **UTCP Manual Discovery**: Load tool definitions from local UTCP manual files in JSON or YAML format.
+- **OpenAPI Support**: Automatically converts local OpenAPI specs to UTCP tools with optional authentication.
 - **Static & Simple**: Ideal for returning mock data, configuration, or any static text content from a file.
 - **Version Control**: Tool definitions and their corresponding content files can be versioned with your code.
-- **No Authentication**: Designed for simple, local file access without authentication.
+- **No File Authentication**: Designed for simple, local file access without authentication for file reading.
+- **Tool Authentication**: Supports authentication for generated tools from OpenAPI specs via `auth_tools`.
 
 ## Installation
 

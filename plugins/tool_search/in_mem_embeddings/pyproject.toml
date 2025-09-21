@@ -3,20 +3,18 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "utcp-http"
-version = "1.0.5"
+name = "utcp-in-mem-embeddings"
+version = "1.0.0"
 authors = [
   { name = "UTCP Contributors" },
 ]
-description = "UTCP communication protocol plugin for HTTP, SSE, and streamable HTTP, plus an OpenAPI converter."
+description = "UTCP plugin providing in-memory embedding-based semantic tool search."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
-    "authlib>=1.0",
-    "aiohttp>=3.8",
-    "pyyaml>=6.0",
-    "utcp>=1.0"
+    "utcp>=1.0",
+    "numpy>=2.3",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -27,17 +25,15 @@ classifiers = [
 license = "MPL-2.0"
 
 [project.optional-dependencies]
-dev = [
-    "build",
-    "pytest",
-    "pytest-asyncio",
-    "pytest-aiohttp",
-    "pytest-cov",
-    "coverage",
-    "fastapi",
-    "uvicorn",
-    "twine",
+embedding = [
+    "sentence-transformers>=2.2.0",
+    "torch>=1.9.0",
 ]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
 
 [project.urls]
 Homepage = "https://utcp.io"
@@ -45,4 +41,4 @@ Source = "https://github.com/universal-tool-calling-protocol/python-utcp"
 Issues = "https://github.com/universal-tool-calling-protocol/python-utcp/issues"
 
 [project.entry-points."utcp.plugins"]
-http = "utcp_http:register"
+in_mem_embeddings = "utcp_in_mem_embeddings:register"

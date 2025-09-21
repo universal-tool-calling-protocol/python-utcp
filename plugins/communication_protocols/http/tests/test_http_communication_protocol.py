@@ -142,11 +142,6 @@ async def app():
     
     return app
 
-@pytest_asyncio.fixture
-async def aiohttp_client(aiohttp_client, app):
-    """Create a test client for our app."""
-    return await aiohttp_client(app)
-
 
 @pytest_asyncio.fixture
 async def http_transport():
@@ -155,48 +150,52 @@ async def http_transport():
 
 
 @pytest_asyncio.fixture
-async def http_call_template(aiohttp_client):
+async def http_call_template(aiohttp_client, app):
     """Create a basic HTTP call template for testing."""
+    client = await aiohttp_client(app)
     return HttpCallTemplate(
         name="test_call_template",
-        url=f"http://localhost:{aiohttp_client.port}/tools",
+        url=f"http://localhost:{client.port}/tools",
         http_method="GET"
     )
 
 
 @pytest_asyncio.fixture
-async def api_key_call_template(aiohttp_client):
+async def api_key_call_template(aiohttp_client, app):
     """Create an HTTP call template with API key auth."""
+    client = await aiohttp_client(app)
     return HttpCallTemplate(
         name="api-key-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET",
         auth=ApiKeyAuth(api_key="test-api-key", var_name="X-API-Key", location="header")
     )
 
 
 @pytest_asyncio.fixture
-async def basic_auth_call_template(aiohttp_client):
+async def basic_auth_call_template(aiohttp_client, app):
     """Create an HTTP call template with Basic auth."""
+    client = await aiohttp_client(app)
     return HttpCallTemplate(
         name="basic-auth-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET",
         auth=BasicAuth(username="user", password="pass")
     )
 
 
 @pytest_asyncio.fixture
-async def oauth2_call_template(aiohttp_client):
+async def oauth2_call_template(aiohttp_client, app):
     """Create an HTTP call template with OAuth2 auth."""
+    client = await aiohttp_client(app)
     return HttpCallTemplate(
         name="oauth2-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET",
         auth=OAuth2Auth(
             client_id="client-id",
             client_secret="client-secret",
-            token_url=f"http://localhost:{aiohttp_client.port}/token",
+            token_url=f"http://localhost:{client.port}/token",
             scope="read write"
         )
     )
@@ -232,12 +231,13 @@ async def test_register_manual(http_transport: HttpCommunicationProtocol, http_c
 
 # Test error handling when registering a manual
 @pytest.mark.asyncio
-async def test_register_manual_http_error(http_transport, aiohttp_client):
+async def test_register_manual_http_error(http_transport, aiohttp_client, app):
     """Test error handling when registering a manual."""
     # Create a call template that points to our error endpoint
+    client = await aiohttp_client(app)
     error_call_template = HttpCallTemplate(
         name="error-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/error",
+        url=f"http://localhost:{client.port}/error",
         http_method="GET"
     )
     
@@ -263,12 +263,13 @@ async def test_deregister_manual(http_transport, http_call_template):
 
 # Test call_tool_basic
 @pytest.mark.asyncio
-async def test_call_tool_basic(http_transport, http_call_template, aiohttp_client):
+async def test_call_tool_basic(http_transport, http_call_template, aiohttp_client, app):
     """Test calling a tool with basic configuration."""
     # Update call template URL to point to our /tool endpoint
+    client = await aiohttp_client(app)
     tool_call_template = HttpCallTemplate(
         name=http_call_template.name,
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET"
     )
     
@@ -314,17 +315,18 @@ async def test_call_tool_with_oauth2(http_transport, oauth2_call_template):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_with_oauth2_header_auth(http_transport, aiohttp_client):
+async def test_call_tool_with_oauth2_header_auth(http_transport, aiohttp_client, app):
     """Test calling a tool with OAuth2 authentication (credentials in header)."""
     # This call template points to an endpoint that expects Basic Auth for the token
+    client = await aiohttp_client(app)
     oauth2_header_call_template = HttpCallTemplate(
         name="oauth2-header-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET",
         auth=OAuth2Auth(
             client_id="client-id",
             client_secret="client-secret",
-            token_url=f"http://localhost:{aiohttp_client.port}/token_header_auth",
+            token_url=f"http://localhost:{client.port}/token_header_auth",
             scope="read write"
         )
     )
@@ -339,12 +341,13 @@ async def test_call_tool_with_oauth2_header_auth(http_transport, aiohttp_client)
 
 # Test call_tool_with_body_field
 @pytest.mark.asyncio
-async def test_call_tool_with_body_field(http_transport, aiohttp_client):
+async def test_call_tool_with_body_field(http_transport, aiohttp_client, app):
     """Test calling a tool with a body field."""
     # Create call template with body field
+    client = await aiohttp_client(app)
     call_template = HttpCallTemplate(
         name="body-field-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="POST",
         body_field="data"
     )
@@ -363,12 +366,13 @@ async def test_call_tool_with_body_field(http_transport, aiohttp_client):
 
 # Test call_tool_with_path_params
 @pytest.mark.asyncio
-async def test_call_tool_with_path_params(http_transport, aiohttp_client):
+async def test_call_tool_with_path_params(http_transport, aiohttp_client, app):
     """Test calling a tool with path parameters."""
     # Create call template with path params in URL
+    client = await aiohttp_client(app)
     call_template = HttpCallTemplate(
         name="path-params-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool/{{param1}}",
+        url=f"http://localhost:{client.port}/tool/{{param1}}",
         http_method="GET"
     )
     
@@ -386,12 +390,13 @@ async def test_call_tool_with_path_params(http_transport, aiohttp_client):
 
 # Test call_tool_with_custom_headers
 @pytest.mark.asyncio
-async def test_call_tool_with_custom_headers(http_transport, aiohttp_client):
+async def test_call_tool_with_custom_headers(http_transport, aiohttp_client, app):
     """Test calling a tool with custom headers."""
     # Create call template with custom headers
+    client = await aiohttp_client(app)
     call_template = HttpCallTemplate(
         name="custom-headers-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET",
         additional_headers={"X-Custom-Header": "custom-value"}
     )
@@ -527,11 +532,12 @@ async def test_call_tool_with_path_parameters(http_transport):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_streaming_basic(http_transport, http_call_template, aiohttp_client):
+async def test_call_tool_streaming_basic(http_transport, http_call_template, aiohttp_client, app):
     """Streaming basic call should yield one result identical to call_tool."""
+    client = await aiohttp_client(app)
     tool_call_template = HttpCallTemplate(
         name=http_call_template.name,
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET",
     )
     stream = http_transport.call_tool_streaming(None, "test_tool", {"param1": "value1"}, tool_call_template)
@@ -564,16 +570,17 @@ async def test_call_tool_streaming_with_oauth2(http_transport, oauth2_call_templ
 
 
 @pytest.mark.asyncio
-async def test_call_tool_streaming_with_oauth2_header_auth(http_transport, aiohttp_client):
+async def test_call_tool_streaming_with_oauth2_header_auth(http_transport, aiohttp_client, app):
     """Streaming with OAuth2 (credentials in header) yields one aggregated result."""
+    client = await aiohttp_client(app)
     oauth2_header_call_template = HttpCallTemplate(
         name="oauth2-header-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET",
         auth=OAuth2Auth(
             client_id="client-id",
             client_secret="client-secret",
-            token_url=f"http://localhost:{aiohttp_client.port}/token_header_auth",
+            token_url=f"http://localhost:{client.port}/token_header_auth",
             scope="read write",
         ),
     )
@@ -583,11 +590,12 @@ async def test_call_tool_streaming_with_oauth2_header_auth(http_transport, aioht
 
 
 @pytest.mark.asyncio
-async def test_call_tool_streaming_with_body_field(http_transport, aiohttp_client):
+async def test_call_tool_streaming_with_body_field(http_transport, aiohttp_client, app):
     """Streaming POST with body_field yields one aggregated result."""
+    client = await aiohttp_client(app)
     call_template = HttpCallTemplate(
         name="body-field-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="POST",
         body_field="data",
     )
@@ -602,11 +610,12 @@ async def test_call_tool_streaming_with_body_field(http_transport, aiohttp_clien
 
 
 @pytest.mark.asyncio
-async def test_call_tool_streaming_with_path_params(http_transport, aiohttp_client):
+async def test_call_tool_streaming_with_path_params(http_transport, aiohttp_client, app):
     """Streaming with URL path params yields one aggregated result."""
+    client = await aiohttp_client(app)
     call_template = HttpCallTemplate(
         name="path-params-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool/{{param1}}",
+        url=f"http://localhost:{client.port}/tool/{{param1}}",
         http_method="GET",
     )
     stream = http_transport.call_tool_streaming(
@@ -620,11 +629,12 @@ async def test_call_tool_streaming_with_path_params(http_transport, aiohttp_clie
 
 
 @pytest.mark.asyncio
-async def test_call_tool_streaming_with_custom_headers(http_transport, aiohttp_client):
+async def test_call_tool_streaming_with_custom_headers(http_transport, aiohttp_client, app):
     """Streaming with additional headers yields one aggregated result."""
+    client = await aiohttp_client(app)
     call_template = HttpCallTemplate(
         name="custom-headers-call-template",
-        url=f"http://localhost:{aiohttp_client.port}/tool",
+        url=f"http://localhost:{client.port}/tool",
         http_method="GET",
         additional_headers={"X-Custom-Header": "custom-value"},
     )
@@ -694,3 +704,35 @@ async def test_call_tool_openlibrary_style_url(http_transport):
     expected_remaining = {"format": "json"}
     http_transport._build_url_with_path_params(call_template.url, arguments)
     assert arguments == expected_remaining
+
+
+def test_auth_tools_integration():
+    """Test that auth_tools field is properly integrated in HttpCallTemplate."""
+    from utcp.data.auth_implementations.api_key_auth import ApiKeyAuth
+    from utcp_http.http_call_template import HttpCallTemplateSerializer
+    
+    # Create auth_tools configuration
+    auth_tools = ApiKeyAuth(
+        api_key="Bearer test-token",
+        var_name="Authorization",
+        location="header"
+    )
+    
+    # Create HttpCallTemplate with auth_tools
+    call_template = HttpCallTemplate(
+        name="test-auth-tools",
+        url="https://api.example.com/spec.json",
+        auth_tools=auth_tools
+    )
+    
+    # Verify auth_tools is stored correctly
+    assert call_template.auth_tools is not None
+    assert call_template.auth_tools.api_key == "Bearer test-token"
+    assert call_template.auth_tools.var_name == "Authorization"
+    assert call_template.auth_tools.location == "header"
+    
+    # Verify it can be serialized (auth_type is included for security)
+    serializer = HttpCallTemplateSerializer()
+    serialized = serializer.to_dict(call_template)
+    assert "auth_tools" in serialized
+    assert serialized["auth_tools"]["auth_type"] == "api_key"
