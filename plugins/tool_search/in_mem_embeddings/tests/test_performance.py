@@ -5,6 +5,7 @@ import sys
 import asyncio
 import time
 from pathlib import Path
+import pytest
 
 # Add paths
 plugin_src = Path(__file__).parent / "src"
@@ -12,6 +13,7 @@ core_src = Path(__file__).parent.parent.parent.parent / "core" / "src"
 sys.path.insert(0, str(plugin_src))
 sys.path.insert(0, str(core_src))
 
+@pytest.mark.asyncio
 async def test_performance():
     """Test plugin performance with multiple tools and searches."""
     print("⚡ Testing Performance...")
@@ -38,7 +40,7 @@ async def test_performance():
                 description=f"Test tool {i} for various purposes like cooking, coding, data analysis",
                 inputs=JsonSchema(),
                 outputs=JsonSchema(),
-                tags=["test", f"category{i%5}"],
+                tags=["test", f"category{i % 5}"],
                 tool_call_template=CallTemplate(
                     name=f"test_tool{i}",
                     description=f"Test tool {i}",
@@ -51,6 +53,7 @@ async def test_performance():
         class MockRepo:
             def __init__(self, tools):
                 self.tools = tools
+
             async def get_tools(self):
                 return self.tools
         
@@ -88,13 +91,12 @@ async def test_performance():
         assert avg_time < 0.5, f"Average search too slow: {avg_time}s"
         
         print("\n🎉 Performance test passed!")
-        return True
         
     except Exception as e:
         print(f"❌ Performance test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"Performance test failed: {e}"
 
 if __name__ == "__main__":
     success = asyncio.run(test_performance())

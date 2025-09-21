@@ -12,7 +12,9 @@ description = "UTCP plugin providing in-memory embedding-based semantic tool sea
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "pydantic>=2.0",
     "utcp>=1.0",
+    "numpy>=2.3",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -26,6 +28,10 @@ license = "MPL-2.0"
 embedding = [
     "sentence-transformers>=2.2.0",
     "torch>=1.9.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
 ]
 
 

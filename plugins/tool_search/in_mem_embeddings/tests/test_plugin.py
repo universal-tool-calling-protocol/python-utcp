@@ -5,6 +5,7 @@ import sys
 import os
 import asyncio
 from pathlib import Path
+import pytest
 
 # Add the plugin source to Python path
 plugin_src = Path(__file__).parent / "src"
@@ -14,6 +15,7 @@ sys.path.insert(0, str(plugin_src))
 core_src = Path(__file__).parent.parent.parent.parent / "core" / "src"
 sys.path.insert(0, str(core_src))
 
+@pytest.mark.asyncio
 async def test_plugin():
     """Test the plugin functionality."""
     print("🧪 Testing In-Memory Embeddings Plugin...")
@@ -78,6 +80,7 @@ async def test_plugin():
         class MockRepo:
             def __init__(self, tools):
                 self.tools = tools
+
             async def get_tools(self):
                 return self.tools
         
@@ -96,9 +99,7 @@ async def test_plugin():
         print(f"❌ Test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
-    
-    return True
+        assert False, f"Plugin test failed: {e}"
 
 if __name__ == "__main__":
     success = asyncio.run(test_plugin())
