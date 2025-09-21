@@ -87,7 +87,7 @@ class OpenApiConverter:
         call_template_name: Normalized name for the call_template derived from the spec.
     """
 
-    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, call_template_name: Optional[str] = None):
+    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, call_template_name: Optional[str] = None, auth_tools: Optional[Auth] = None):
         """Initializes the OpenAPI converter.
 
         Args:
@@ -96,9 +96,12 @@ class OpenApiConverter:
                 Used for base URL determination if servers are not specified.
             call_template_name: Optional custom name for the call_template if
                 the specification title is not provided.
+            auth_tools: Optional auth configuration for generated tools.
+                Applied only to endpoints that require authentication per OpenAPI spec.
         """
         self.spec = openapi_spec
         self.spec_url = spec_url
+        self.auth_tools = auth_tools
         # Single counter for all placeholder variables
         self.placeholder_counter = 0
         if call_template_name is None:
@@ -160,7 +163,10 @@ class OpenApiConverter:
 
     def _extract_auth(self, operation: Dict[str, Any]) -> Optional[Auth]:
         """
-        Extracts authentication information from OpenAPI operation and global security schemes."""
+        Extracts authentication information from OpenAPI operation and global security schemes.
+        Uses auth_tools configuration when compatible with OpenAPI auth requirements.
+        Supports both OpenAPI 2.0 and 3.0 security schemes.
+        """
         # First check for operation-level security requirements
         security_requirements = operation.get("security", [])
         
@@ -168,11 +174,11 @@ class OpenApiConverter:
         if not security_requirements:
             security_requirements = self.spec.get("security", [])
         
-        # If no security requirements, return None
+        # If no security requirements, return None (endpoint is public)
         if not security_requirements:
             return None
         
-        # Get security schemes - support both OpenAPI 2.0 and 3.0
+        # Generate auth from OpenAPI security schemes - support both OpenAPI 2.0 and 3.0
         security_schemes = self._get_security_schemes()
         
         # Process the first security requirement (most common case)
@@ -181,9 +187,47 @@ class OpenApiConverter:
             for scheme_name, scopes in security_req.items():
                 if scheme_name in security_schemes:
                     scheme = security_schemes[scheme_name]
-                    return self._create_auth_from_scheme(scheme, scheme_name)
+                    openapi_auth = self._create_auth_from_scheme(scheme, scheme_name)
+                    
+                    # If compatible with auth_tools, use actual values from manual call template
+                    if self._is_auth_compatible(openapi_auth, self.auth_tools):
+                        return self.auth_tools
+                    else:
+                        return openapi_auth  # Use placeholder from OpenAPI scheme
         
         return None
+
+    def _is_auth_compatible(self, openapi_auth: Optional[Auth], auth_tools: Optional[Auth]) -> bool:
+        """
+        Checks if auth_tools configuration is compatible with OpenAPI auth requirements.
+        
+        Args:
+            openapi_auth: Auth generated from OpenAPI security scheme
+            auth_tools: Auth configuration from manual call template
+            
+        Returns:
+            True if compatible and auth_tools should be used, False otherwise
+        """
+        if not openapi_auth or not auth_tools:
+            return False
+            
+        # Must be same auth type
+        if type(openapi_auth) != type(auth_tools):
+            return False
+            
+        # For API Key auth, check header name and location compatibility
+        if hasattr(openapi_auth, 'var_name') and hasattr(auth_tools, 'var_name'):
+            openapi_var = openapi_auth.var_name.lower() if openapi_auth.var_name else ""
+            tools_var = auth_tools.var_name.lower() if auth_tools.var_name else ""
+            
+            if openapi_var != tools_var:
+                return False
+                
+            if hasattr(openapi_auth, 'location') and hasattr(auth_tools, 'location'):
+                if openapi_auth.location != auth_tools.location:
+                    return False
+        
+        return True
     
     def _get_security_schemes(self) -> Dict[str, Any]:
         """
