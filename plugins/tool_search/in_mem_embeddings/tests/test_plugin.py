@@ -100,7 +100,3 @@ async def test_plugin():
         import traceback
         traceback.print_exc()
         assert False, f"Plugin test failed: {e}"
-
-if __name__ == "__main__":
-    success = asyncio.run(test_plugin())
-    sys.exit(0 if success else 1)

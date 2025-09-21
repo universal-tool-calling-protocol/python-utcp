@@ -97,7 +97,3 @@ async def test_performance():
         import traceback
         traceback.print_exc()
         assert False, f"Performance test failed: {e}"
-
-if __name__ == "__main__":
-    success = asyncio.run(test_performance())
-    sys.exit(0 if success else 1)

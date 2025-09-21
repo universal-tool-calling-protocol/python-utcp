@@ -108,25 +108,6 @@ class HttpCallTemplate(CallTemplate):
     body_field: Optional[str] = Field(default="body", description="The name of the single input field to be sent as the request body.")
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers.")
 
-    @field_serializer('auth')
-    def serialize_auth(self, auth: Optional[Auth]) -> Optional[dict]:
-        """Serialize auth to dictionary."""
-        if auth is None:
-            return None
-        return AuthSerializer().to_dict(auth)
-
-    @field_validator('auth', mode='before')
-    @classmethod
-    def validate_auth(cls, v: Any) -> Optional[Auth]:
-        """Validate and deserialize auth from dictionary."""
-        if v is None:
-            return None
-        if isinstance(v, Auth):
-            return v
-        if isinstance(v, dict):
-            return AuthSerializer().validate_dict(v)
-        raise ValueError(f"auth must be None, Auth instance, or dict, got {type(v)}")
-
     @field_serializer('auth_tools')
     def serialize_auth_tools(self, auth_tools: Optional[Auth]) -> Optional[dict]:
         """Serialize auth_tools to dictionary."""
