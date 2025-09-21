@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 # Add paths
-plugin_src = Path(__file__).parent / "src"
+plugin_src = Path(__file__).parent.parent / "src"
 core_src = Path(__file__).parent.parent.parent.parent.parent / "core" / "src"
 sys.path.insert(0, str(plugin_src))
 sys.path.insert(0, str(core_src))
