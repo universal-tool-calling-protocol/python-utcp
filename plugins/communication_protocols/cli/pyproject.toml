@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "utcp-cli"
+version = "1.1.0"
+authors = [
+  { name = "UTCP Contributors" },
+]
+description = "UTCP communication protocol plugin for wrapping local command-line tools."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "utcp>=1.0"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MPL-2.0"
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "coverage",
+    "twine",
+]
+
+[project.urls]
+Homepage = "https://utcp.io"
+Source = "https://github.com/universal-tool-calling-protocol/python-utcp"
+Issues = "https://github.com/universal-tool-calling-protocol/python-utcp/issues"
+
+[project.entry-points."utcp.plugins"]
+cli = "utcp_cli:register"
