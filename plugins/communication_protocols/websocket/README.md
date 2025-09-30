@@ -1,325 +1,618 @@
-# UTCP WebSocket Plugin
+# Universal Tool Calling Protocol (UTCP)
 
-WebSocket communication protocol plugin for UTCP, enabling real-time bidirectional communication with tool providers.
+[![Follow Org](https://img.shields.io/github/followers/universal-tool-calling-protocol?label=Follow%20Org&logo=github)](https://github.com/universal-tool-calling-protocol)
+[![PyPI Downloads](https://static.pepy.tech/badge/utcp)](https://pepy.tech/projects/utcp)
+[![License](https://img.shields.io/github/license/universal-tool-calling-protocol/python-utcp)](https://github.com/universal-tool-calling-protocol/python-utcp/blob/main/LICENSE)
+[![CDTM S23](https://img.shields.io/badge/CDTM-S23-0b84f3)](https://cdtm.com/)
 
-## Features
+## Introduction
 
-- ✅ **Real-time Communication**: Bidirectional WebSocket connections for live data exchange
-- ✅ **Multiple Authentication**: API Key, Basic Auth, and OAuth2 support
-- ✅ **Flexible Message Formats**: JSON and text-based templates
-- ✅ **Connection Management**: Keep-alive, reconnection, and connection pooling
-- ✅ **Streaming Support**: Both single-response and streaming tool execution
-- ✅ **Security Enforced**: WSS required (or ws://localhost for development)
-- ✅ **Tool Discovery**: Automatic tool discovery via WebSocket handshake
+The Universal Tool Calling Protocol (UTCP) is a secure, scalable standard for defining and interacting with tools across a wide variety of communication protocols. UTCP 1.0.0 introduces a modular core with a plugin-based architecture, making it more extensible, testable, and easier to package.
 
-## Installation
+In contrast to other protocols, UTCP places a strong emphasis on:
 
-```bash
-pip install utcp-websocket
-```
+*   **Scalability**: UTCP is designed to handle a large number of tools and providers without compromising performance.
+*   **Extensibility**: A pluggable architecture allows developers to easily add new communication protocols, tool storage mechanisms, and search strategies without modifying the core library.
+*   **Interoperability**: With a growing ecosystem of protocol plugins (including HTTP, SSE, CLI, and more), UTCP can integrate with almost any existing service or infrastructure.
+*   **Ease of Use**: The protocol is built on simple, well-defined Pydantic models, making it easy for developers to implement and use.
 
-For development:
 
-```bash
-pip install -e plugins/communication_protocols/websocket
-```
+![MCP vs. UTCP](https://github.com/user-attachments/assets/3cadfc19-8eea-4467-b606-66e580b89444)
+
+## Repository Structure
+
+This repository contains the complete UTCP Python implementation:
+
+- **[`core/`](core/)** - Core `utcp` package with foundational components ([README](core/README.md))
+- **[`plugins/communication_protocols/`](plugins/communication_protocols/)** - Protocol-specific plugins:
+  - [`http/`](plugins/communication_protocols/http/) - HTTP/REST, SSE, streaming, OpenAPI ([README](plugins/communication_protocols/http/README.md))
+  - [`cli/`](plugins/communication_protocols/cli/) - Command-line tools ([README](plugins/communication_protocols/cli/README.md))
+  - [`mcp/`](plugins/communication_protocols/mcp/) - Model Context Protocol ([README](plugins/communication_protocols/mcp/README.md))
+  - [`text/`](plugins/communication_protocols/text/) - File-based tools ([README](plugins/communication_protocols/text/README.md))
+  - [`socket/`](plugins/communication_protocols/socket/) - TCP/UDP (🚧 In Progress)
+  - [`gql/`](plugins/communication_protocols/gql/) - GraphQL (🚧 In Progress)
+
+## Architecture Overview
+
+UTCP uses a modular architecture with a core library and protocol plugins:
+
+### Core Package (`utcp`)
+
+The [`core/`](core/) directory contains the foundational components:
+- **Data Models**: Pydantic models for `Tool`, `CallTemplate`, `UtcpManual`, and `Auth`
+- **Client Interface**: Main `UtcpClient` for tool interaction
+- **Plugin System**: Extensible interfaces for protocols, repositories, and search
+- **Default Implementations**: Built-in tool storage and search strategies
 
 ## Quick Start
 
-### Basic Configuration
+### Installation
+
+Install the core library and any required protocol plugins:
+
+```bash
+# Install core + HTTP plugin (most common)
+pip install utcp utcp-http
+
+# Install additional plugins as needed
+pip install utcp-cli utcp-mcp utcp-text
+```
+
+### Basic Usage
 
 ```python
 from utcp.utcp_client import UtcpClient
 
+# Create client with HTTP API
 client = await UtcpClient.create(config={
     "manual_call_templates": [{
-        "name": "realtime_service",
-        "call_template_type": "websocket",
-        "url": "wss://api.example.com/ws"
+        "name": "my_api",
+        "call_template_type": "http",
+        "url": "https://api.example.com/utcp"
     }]
 })
 
 # Call a tool
-result = await client.call_tool("realtime_service.get_data", {"id": "123"})
+result = await client.call_tool("my_api.get_data", {"id": "123"})
 ```
 
-### With Authentication
+## Protocol Plugins
+
+UTCP supports multiple communication protocols through dedicated plugins:
+
+| Plugin | Description | Status | Documentation |
+|--------|-------------|--------|---------------|
+| [`utcp-http`](plugins/communication_protocols/http/) | HTTP/REST APIs, SSE, streaming | ✅ Stable | [HTTP Plugin README](plugins/communication_protocols/http/README.md) |
+| [`utcp-cli`](plugins/communication_protocols/cli/) | Command-line tools | ✅ Stable | [CLI Plugin README](plugins/communication_protocols/cli/README.md) |
+| [`utcp-mcp`](plugins/communication_protocols/mcp/) | Model Context Protocol | ✅ Stable | [MCP Plugin README](plugins/communication_protocols/mcp/README.md) |
+| [`utcp-text`](plugins/communication_protocols/text/) | Local file-based tools | ✅ Stable | [Text Plugin README](plugins/communication_protocols/text/README.md) |
+| [`utcp-websocket`](plugins/communication_protocols/websocket/) | WebSocket real-time bidirectional communication | ✅ Stable | [WebSocket Plugin README](plugins/communication_protocols/websocket/README.md) |
+| [`utcp-socket`](plugins/communication_protocols/socket/) | TCP/UDP protocols | 🚧 In Progress | [Socket Plugin README](plugins/communication_protocols/socket/README.md) |
+| [`utcp-gql`](plugins/communication_protocols/gql/) | GraphQL APIs | 🚧 In Progress | [GraphQL Plugin README](plugins/communication_protocols/gql/README.md) |
+
+For development, you can install the packages in editable mode from the cloned repository:
+
+```bash
+# Clone the repository
+git clone https://github.com/universal-tool-calling-protocol/python-utcp.git
+cd python-utcp
+
+# Install the core package in editable mode with dev dependencies
+pip install -e "core[dev]"
+
+# Install a specific protocol plugin in editable mode
+pip install -e plugins/communication_protocols/http
+```
+
+## Migration Guide from 0.x to 1.0.0
+
+Version 1.0.0 introduces several breaking changes. Follow these steps to migrate your project.
+
+1.  **Update Dependencies**: Install the new `utcp` core package and the specific protocol plugins you use (e.g., `utcp-http`, `utcp-cli`).
+2.  **Configuration**:
+    *   **Configuration Object**: `UtcpClient` is initialized with a `UtcpClientConfig` object, dict or a path to a JSON file containing the configuration.
+    *   **Manual Call Templates**: The `providers_file_path` option is removed. Instead of a file path, you now provide a list of `manual_call_templates` directly within the `UtcpClientConfig`.
+    *   **Terminology**: The term `provider` has been replaced with `call_template`, and `provider_type` is now `call_template_type`.
+    *   **Streamable HTTP**: The `call_template_type` `http_stream` has been renamed to `streamable_http`.
+3.  **Update Imports**: Change your imports to reflect the new modular structure. For example, `from utcp.client.transport_interfaces.http_transport import HttpProvider` becomes `from utcp_http.http_call_template import HttpCallTemplate`.
+4.  **Tool Search**: If you were using the default search, the new strategy is `TagAndDescriptionWordMatchStrategy`. This is the new default and requires no changes unless you were implementing a custom strategy.
+5.  **Tool Naming**: Tool names are now namespaced as `manual_name.tool_name`. The client handles this automatically.
+6.  **Variable Substitution Namespacing**: Variables that are substituted in different `call_templates`, are first namespaced with the name of the manual with the `_` duplicated. So a key in a tool call template called `API_KEY` from the manual `manual_1` would be converted to `manual__1_API_KEY`.
+
+## Usage Examples
+
+### 1. Using the UTCP Client
+
+**`config.json`** (Optional)
+
+You can define a comprehensive client configuration in a JSON file. All of these fields are optional.
+
+```json
+{
+  "variables": {
+    "openlibrary_URL": "https://openlibrary.org/static/openapi.json"
+  },
+  "load_variables_from": [
+    {
+      "variable_loader_type": "dotenv",
+      "env_file_path": ".env"
+    }
+  ],
+  "tool_repository": {
+    "tool_repository_type": "in_memory"
+  },
+  "tool_search_strategy": {
+    "tool_search_strategy_type": "tag_and_description_word_match"
+  },
+  "manual_call_templates": [
+    {
+        "name": "openlibrary",
+        "call_template_type": "http",
+        "http_method": "GET",
+        "url": "${URL}",
+        "content_type": "application/json"
+    },
+  ],
+  "post_processing": [
+    {
+        "tool_post_processor_type": "filter_dict",
+        "only_include_keys": ["name", "key"],
+        "only_include_tools": ["openlibrary.read_search_authors_json_search_authors_json_get"]
+    }
+  ]
+}
+```
+
+**`client.py`**
 
 ```python
+import asyncio
+from utcp.utcp_client import UtcpClient
+from utcp.data.utcp_client_config import UtcpClientConfig
+
+async def main():
+    # The UtcpClient can be created with a config file path, a dict, or a UtcpClientConfig object.
+
+    # Option 1: Initialize from a config file path
+    # client_from_file = await UtcpClient.create(config="./config.json")
+
+    # Option 2: Initialize from a dictionary
+    client_from_dict = await UtcpClient.create(config={
+        "variables": {
+            "openlibrary_URL": "https://openlibrary.org/static/openapi.json"
+        },
+        "load_variables_from": [
+            {
+                "variable_loader_type": "dotenv",
+                "env_file_path": ".env"
+            }
+        ],
+        "tool_repository": {
+            "tool_repository_type": "in_memory"
+        },
+        "tool_search_strategy": {
+            "tool_search_strategy_type": "tag_and_description_word_match"
+        },
+        "manual_call_templates": [
+            {
+                "name": "openlibrary",
+                "call_template_type": "http",
+                "http_method": "GET",
+                "url": "${URL}",
+                "content_type": "application/json"
+            }
+        ],
+        "post_processing": [
+            {
+                "tool_post_processor_type": "filter_dict",
+                "only_include_keys": ["name", "key"],
+                "only_include_tools": ["openlibrary.read_search_authors_json_search_authors_json_get"]
+            }
+        ]
+    })
+
+    # Option 3: Initialize with a full-featured UtcpClientConfig object
+    from utcp_http.http_call_template import HttpCallTemplate
+    from utcp.data.variable_loader import VariableLoaderSerializer
+    from utcp.interfaces.tool_post_processor import ToolPostProcessorConfigSerializer
+
+    config_obj = UtcpClientConfig(
+        variables={"openlibrary_URL": "https://openlibrary.org/static/openapi.json"},
+        load_variables_from=[
+            VariableLoaderSerializer().validate_dict({
+                "variable_loader_type": "dotenv", "env_file_path": ".env"
+            })
+        ],
+        manual_call_templates=[
+            HttpCallTemplate(
+                name="openlibrary",
+                call_template_type="http",
+                http_method="GET",
+                url="${URL}",
+                content_type="application/json"
+            )
+        ],
+        post_processing=[
+            ToolPostProcessorConfigSerializer().validate_dict({
+                "tool_post_processor_type": "filter_dict",
+                "only_include_keys": ["name", "key"],
+                "only_include_tools": ["openlibrary.read_search_authors_json_search_authors_json_get"]
+            })
+        ]
+    )
+    client = await UtcpClient.create(config=config_obj)
+
+    # Call a tool. The name is namespaced: `manual_name.tool_name`
+    result = await client.call_tool(
+        tool_name="openlibrary.read_search_authors_json_search_authors_json_get",
+        tool_args={"q": "J. K. Rowling"}
+    )
+
+    print(result)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### 2. Providing a UTCP Manual
+
+A `UTCPManual` describes the tools you offer. The key change is replacing `tool_provider` with `tool_call_template`.
+
+**`server.py`**
+
+UTCP decorator version:
+
+```python
+from fastapi import FastAPI
+from utcp_http.http_call_template import HttpCallTemplate
+from utcp.data.utcp_manual import UtcpManual
+from utcp.python_specific_tooling.tool_decorator import utcp_tool
+
+app = FastAPI()
+
+# The discovery endpoint returns the tool manual
+@app.get("/utcp")
+def utcp_discovery():
+    return UtcpManual.create_from_decorators(manual_version="1.0.0")
+
+# The actual tool endpoint
+@utcp_tool(tool_call_template=HttpCallTemplate(
+    name="get_weather",
+    url=f"https://example.com/api/weather",
+    http_method="GET"
+), tags=["weather"])
+@app.get("/api/weather")
+def get_weather(location: str):
+    return {"temperature": 22.5, "conditions": "Sunny"}
+```
+
+
+No UTCP dependencies server version:
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+# The discovery endpoint returns the tool manual
+@app.get("/utcp")
+def utcp_discovery():
+    return {
+        "manual_version": "1.0.0",
+        "utcp_version": "1.0.2",
+        "tools": [
+            {
+                "name": "get_weather",
+                "description": "Get current weather for a location",
+                "tags": ["weather"],
+                "inputs": {
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"}
+                    }
+                },
+                "outputs": {
+                    "type": "object",
+                    "properties": {
+                        "temperature": {"type": "number"},
+                        "conditions": {"type": "string"}
+                    }
+                },
+                "tool_call_template": {
+                    "call_template_type": "http",
+                    "url": "https://example.com/api/weather",
+                    "http_method": "GET"
+                }
+            }
+        ]
+    }
+
+# The actual tool endpoint
+@app.get("/api/weather")
+def get_weather(location: str):
+    return {"temperature": 22.5, "conditions": "Sunny"}
+```
+
+### 3. Full examples
+
+You can find full examples in the [examples repository](https://github.com/universal-tool-calling-protocol/utcp-examples).
+
+## Protocol Specification
+
+### `UtcpManual` and `Tool` Models
+
+The `tool_provider` object inside a `Tool` has been replaced by `tool_call_template`.
+
+```json
+{
+  "manual_version": "string",
+  "utcp_version": "string",
+  "tools": [
+    {
+      "name": "string",
+      "description": "string",
+      "inputs": { ... },
+      "outputs": { ... },
+      "tags": ["string"],
+      "tool_call_template": {
+        "call_template_type": "http",
+        "url": "https://...",
+        "http_method": "GET"
+      }
+    }
+  ]
+}
+```
+
+## Call Template Configuration Examples
+
+Configuration examples for each protocol. Remember to replace `provider_type` with `call_template_type`.
+
+### HTTP Call Template
+
+```json
+{
+  "name": "my_rest_api",
+  "call_template_type": "http", // Required
+  "url": "https://api.example.com/users/{user_id}", // Required
+  "http_method": "POST", // Required, default: "GET"
+  "content_type": "application/json", // Optional, default: "application/json"
+  "auth": { // Optional, authentication for the HTTP request (example using ApiKeyAuth for Bearer token)
+    "auth_type": "api_key",
+    "api_key": "Bearer $API_KEY", // Required
+    "var_name": "Authorization", // Optional, default: "X-Api-Key"
+    "location": "header" // Optional, default: "header"
+  },
+  "auth_tools": { // Optional, authentication for converted tools, if this call template points to an openapi spec that should be automatically converted to a utcp manual (applied only to endpoints requiring auth per OpenAPI spec)
+    "auth_type": "api_key",
+    "api_key": "Bearer $TOOL_API_KEY", // Required
+    "var_name": "Authorization", // Optional, default: "X-Api-Key"
+    "location": "header" // Optional, default: "header"
+  },
+  "headers": { // Optional
+    "X-Custom-Header": "value"
+  },
+  "body_field": "body", // Optional, default: "body"
+  "header_fields": ["user_id"] // Optional
+}
+```
+
+### SSE (Server-Sent Events) Call Template
+
+```json
+{
+  "name": "my_sse_stream",
+  "call_template_type": "sse", // Required
+  "url": "https://api.example.com/events", // Required
+  "event_type": "message", // Optional
+  "reconnect": true, // Optional, default: true
+  "retry_timeout": 30000, // Optional, default: 30000 (ms)
+  "auth": { // Optional, example using BasicAuth
+    "auth_type": "basic",
+    "username": "${USERNAME}", // Required
+    "password": "${PASSWORD}" // Required
+  },
+  "headers": { // Optional
+    "X-Client-ID": "12345"
+  },
+  "body_field": null, // Optional
+  "header_fields": [] // Optional
+}
+```
+
+### Streamable HTTP Call Template
+
+Note the name change from `http_stream` to `streamable_http`.
+
+```json
+{
+  "name": "streaming_data_source",
+  "call_template_type": "streamable_http", // Required
+  "url": "https://api.example.com/stream", // Required
+  "http_method": "POST", // Optional, default: "GET"
+  "content_type": "application/octet-stream", // Optional, default: "application/octet-stream"
+  "chunk_size": 4096, // Optional, default: 4096
+  "timeout": 60000, // Optional, default: 60000 (ms)
+  "auth": null, // Optional
+  "headers": {}, // Optional
+  "body_field": "data", // Optional
+  "header_fields": [] // Optional
+}
+```
+
+### CLI Call Template
+
+```json
+{
+  "name": "multi_step_cli_tool",
+  "call_template_type": "cli", // Required
+  "commands": [ // Required - sequential command execution
+    {
+      "command": "git clone UTCP_ARG_repo_url_UTCP_END temp_repo",
+      "append_to_final_output": false
+    },
+    {
+      "command": "cd temp_repo && find . -name '*.py' | wc -l"
+      // Last command output returned by default
+    }
+  ],
+  "env_vars": { // Optional
+    "GIT_AUTHOR_NAME": "UTCP Bot",
+    "API_KEY": "${MY_API_KEY}"
+  },
+  "working_dir": "/tmp", // Optional
+  "auth": null // Optional (always null for CLI)
+}
+```
+
+**CLI Protocol Features:**
+- **Multi-command execution**: Commands run sequentially in single subprocess
+- **Cross-platform**: PowerShell on Windows, Bash on Unix/Linux/macOS  
+- **State preservation**: Directory changes (`cd`) persist between commands
+- **Argument placeholders**: `UTCP_ARG_argname_UTCP_END` format
+- **Output referencing**: Access previous outputs with `$CMD_0_OUTPUT`, `$CMD_1_OUTPUT`
+- **Flexible output control**: Choose which command outputs to include in final result
+
+### Text Call Template
+
+```json
+{
+  "name": "my_text_manual",
+  "call_template_type": "text", // Required
+  "file_path": "./manuals/my_manual.json", // Required
+  "auth": null, // Optional (always null for Text)
+  "auth_tools": { // Optional, authentication for generated tools from OpenAPI specs
+    "auth_type": "api_key",
+    "api_key": "Bearer ${API_TOKEN}",
+    "var_name": "Authorization",
+    "location": "header"
+  }
+}
+```
+
+### MCP (Model Context Protocol) Call Template
+
+```json
+{
+  "name": "my_mcp_server",
+  "call_template_type": "mcp", // Required
+  "config": { // Required
+    "mcpServers": {
+      "server_name": {
+        "transport": "stdio",
+        "command": ["python", "-m", "my_mcp_server"]
+      }
+    }
+  },
+  "auth": { // Optional, example using OAuth2
+    "auth_type": "oauth2",
+    "token_url": "https://auth.example.com/token", // Required
+    "client_id": "${CLIENT_ID}", // Required
+    "client_secret": "${CLIENT_SECRET}", // Required
+    "scope": "read:tools" // Optional
+  }
+}
+```
+
+## Testing
+
+The testing structure has been updated to reflect the new core/plugin split.
+
+### Running Tests
+
+To run all tests for the core library and all plugins:
+```bash
+# Ensure you have installed all dev dependencies
+python -m pytest
+```
+
+To run tests for a specific package (e.g., the core library):
+```bash
+python -m pytest core/tests/
+```
+
+To run tests for a specific plugin (e.g., HTTP):
+```bash
+python -m pytest plugins/communication_protocols/http/tests/ -v
+```
+
+To run tests with coverage:
+```bash
+python -m pytest --cov=utcp --cov-report=xml
+```
+
+## Build
+
+The build process now involves building each package (`core` and `plugins`) separately if needed, though they are published to PyPI independently.
+
+1.  Create and activate a virtual environment.
+2.  Install build dependencies: `pip install build`.
+3.  Navigate to the package directory (e.g., `cd core`).
+4.  Run the build: `python -m build`.
+5.  The distributable files (`.whl` and `.tar.gz`) will be in the `dist/` directory.
+
+## OpenAPI Ingestion - Zero Infrastructure Tool Integration
+
+🚀 **Transform any existing REST API into UTCP tools without server modifications!**
+
+UTCP's OpenAPI ingestion feature automatically converts OpenAPI 2.0/3.0 specifications into UTCP tools, enabling AI agents to interact with existing APIs directly - no wrapper servers, no API changes, no additional infrastructure required.
+
+### Quick Start with OpenAPI
+
+```python
+from utcp_http.openapi_converter import OpenApiConverter
+import aiohttp
+
+# Convert any OpenAPI spec to UTCP tools
+async def convert_api():
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://api.github.com/openapi.json") as response:
+            openapi_spec = await response.json()
+    
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+    
+    print(f"Generated {len(manual.tools)} tools from GitHub API!")
+    return manual
+
+# Or use UTCP Client configuration for automatic detection
+from utcp.utcp_client import UtcpClient
+
 client = await UtcpClient.create(config={
     "manual_call_templates": [{
-        "name": "secure_ws",
-        "call_template_type": "websocket",
-        "url": "wss://api.example.com/ws",
-        "auth": {
+        "name": "github",
+        "call_template_type": "http", 
+        "url": "https://api.github.com/openapi.json",
+        "auth_tools": {  # Authentication for generated tools requiring auth
             "auth_type": "api_key",
-            "api_key": "${WS_API_KEY}",
+            "api_key": "Bearer ${GITHUB_TOKEN}",
             "var_name": "Authorization",
             "location": "header"
-        },
-        "keep_alive": True,
-        "protocol": "utcp-v1"
+        }
     }]
 })
 ```
 
-## Configuration Options
+### Key Benefits
 
-### WebSocketCallTemplate Fields
+- ✅ **Zero Infrastructure**: No servers to deploy or maintain
+- ✅ **Direct API Calls**: Native performance, no proxy overhead  
+- ✅ **Automatic Conversion**: OpenAPI schemas → UTCP tools
+- ✅ **Selective Authentication**: Only protected endpoints get auth, public endpoints remain accessible
+- ✅ **Authentication Preserved**: API keys, OAuth2, Basic auth supported
+- ✅ **Multi-format Support**: JSON, YAML, OpenAPI 2.0/3.0
+- ✅ **Batch Processing**: Convert multiple APIs simultaneously
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `call_template_type` | string | Yes | `"websocket"` | Must be "websocket" |
-| `url` | string | Yes | - | WebSocket URL (wss:// or ws://localhost) |
-| `protocol` | string | No | `null` | WebSocket subprotocol |
-| `keep_alive` | boolean | No | `true` | Enable persistent connection with heartbeat |
-| `request_data_format` | string | No | `"json"` | Format for messages ("json" or "text") |
-| `request_data_template` | string | No | `null` | Template for text format |
-| `timeout` | integer | No | `30` | Timeout in seconds |
-| `headers` | object | No | `null` | Static headers for handshake |
-| `header_fields` | array | No | `null` | Tool arguments to map to headers |
-| `auth` | object | No | `null` | Authentication configuration |
+### Multiple Ingestion Methods
 
-## Message Formats
+1. **Direct Converter**: `OpenApiConverter` class for full control
+2. **Remote URLs**: Fetch and convert specs from any URL
+3. **Client Configuration**: Include specs directly in UTCP config
+4. **Batch Processing**: Process multiple specs programmatically
+5. **File-based**: Convert local JSON/YAML specifications
 
-### JSON Format (Default)
+📖 **[Complete OpenAPI Ingestion Guide](docs/openapi-ingestion.md)** - Detailed examples and advanced usage
 
-Tool call message:
-```json
-{
-  "type": "call_tool",
-  "request_id": "unique_id",
-  "tool_name": "tool_name",
-  "arguments": {"arg1": "value1"}
-}
-```
+---
 
-Expected response:
-```json
-{
-  "type": "tool_response",
-  "request_id": "unique_id",
-  "result": {"data": "value"}
-}
-```
-
-### Text Format with Template
-
-Configuration:
-```python
-{
-    "call_template_type": "websocket",
-    "url": "wss://api.example.com/ws",
-    "request_data_format": "text",
-    "request_data_template": "CMD:UTCP_ARG_command_UTCP_ARG;DATA:UTCP_ARG_data_UTCP_ARG"
-}
-```
-
-This sends: `CMD:my_command;DATA:my_data`
-
-## Authentication
-
-### API Key Authentication
-
-```python
-{
-    "auth": {
-        "auth_type": "api_key",
-        "api_key": "${API_KEY}",
-        "var_name": "Authorization",
-        "location": "header"
-    }
-}
-```
-
-### Basic Authentication
-
-```python
-{
-    "auth": {
-        "auth_type": "basic",
-        "username": "${USERNAME}",
-        "password": "${PASSWORD}"
-    }
-}
-```
-
-### OAuth2 Authentication
-
-```python
-{
-    "auth": {
-        "auth_type": "oauth2",
-        "client_id": "${CLIENT_ID}",
-        "client_secret": "${CLIENT_SECRET}",
-        "token_url": "https://auth.example.com/token",
-        "scope": "read write"
-    }
-}
-```
-
-## Tool Discovery Protocol
-
-The WebSocket plugin uses the UTCP discovery protocol:
-
-1. **Client sends discovery request:**
-```json
-{"type": "utcp"}
-```
-
-2. **Server responds with UtcpManual:**
-```json
-{
-    "manual_version": "1.0.0",
-    "utcp_version": "1.0.1",
-    "tools": [
-        {
-            "name": "get_data",
-            "description": "Get data by ID",
-            "inputs": {...},
-            "outputs": {...},
-            "tool_call_template": {
-                "call_template_type": "websocket",
-                "url": "wss://api.example.com/ws"
-            }
-        }
-    ]
-}
-```
-
-## Examples
-
-### Real-time Data Subscription
-
-```python
-{
-    "name": "stock_updates",
-    "call_template_type": "websocket",
-    "url": "wss://api.stocks.com/ws",
-    "auth": {
-        "auth_type": "api_key",
-        "api_key": "${STOCK_API_KEY}",
-        "var_name": "X-API-Key",
-        "location": "header"
-    },
-    "keep_alive": True,
-    "timeout": 60
-}
-```
-
-### IoT Device Control
-
-```python
-{
-    "name": "iot_devices",
-    "call_template_type": "websocket",
-    "url": "wss://iot.example.com/ws",
-    "request_data_format": "text",
-    "request_data_template": "DEVICE:UTCP_ARG_device_id_UTCP_ARG CMD:UTCP_ARG_command_UTCP_ARG",
-    "timeout": 10
-}
-```
-
-### Chat Bot Integration
-
-```python
-{
-    "name": "chatbot",
-    "call_template_type": "websocket",
-    "url": "wss://chat.example.com/ws",
-    "protocol": "chat-v1",
-    "keep_alive": True,
-    "auth": {
-        "auth_type": "api_key",
-        "api_key": "Bearer ${CHAT_TOKEN}",
-        "var_name": "Authorization",
-        "location": "header"
-    }
-}
-```
-
-## Streaming Responses
-
-The WebSocket plugin supports streaming tool execution:
-
-```python
-async for chunk in client.call_tool_streaming("service.stream_data", {"query": "test"}):
-    print(chunk)
-```
-
-Server sends multiple responses:
-```json
-{"type": "tool_response", "request_id": "...", "result": {"chunk": 1}}
-{"type": "tool_response", "request_id": "...", "result": {"chunk": 2}}
-{"type": "stream_end", "request_id": "..."}
-```
-
-## Security
-
-- **WSS Required**: Production URLs must use `wss://` for encrypted communication
-- **Localhost Exception**: `ws://localhost` and `ws://127.0.0.1` allowed for development
-- **Authentication**: Full support for API Key, Basic Auth, and OAuth2
-- **Token Caching**: OAuth2 tokens are cached and automatically refreshed
-
-## Error Handling
-
-Tool errors are communicated via error responses:
-
-```json
-{
-    "type": "tool_error",
-    "request_id": "unique_id",
-    "error": "Error message"
-}
-```
-
-Python exception handling:
-```python
-try:
-    result = await client.call_tool("service.tool", {"arg": "value"})
-except RuntimeError as e:
-    print(f"Tool call failed: {e}")
-except asyncio.TimeoutError:
-    print("Tool call timed out")
-```
-
-## Best Practices
-
-1. **Use WSS in Production**: Always use `wss://` for secure connections
-2. **Set Appropriate Timeouts**: Configure timeouts based on expected response times
-3. **Enable Keep-Alive**: Use `keep_alive: true` for persistent connections
-4. **Handle Errors Gracefully**: Implement proper error handling for network issues
-5. **Monitor Connections**: Track connection health and implement reconnection logic
-6. **Use Subprotocols**: Specify WebSocket subprotocols when needed for compatibility
-
-## Comparison with Other Protocols
-
-| Feature | WebSocket | HTTP | SSE |
-|---------|-----------|------|-----|
-| Bidirectional | ✅ | ❌ | ❌ |
-| Real-time | ✅ | ❌ | ✅ |
-| Persistent | ✅ | ❌ | ✅ |
-| Overhead | Low | High | Medium |
-| Complexity | Medium | Low | Low |
-
-## Testing
-
-Run tests for the WebSocket plugin:
-
-```bash
-pytest plugins/communication_protocols/websocket/tests/ -v
-```
-
-With coverage:
-
-```bash
-pytest plugins/communication_protocols/websocket/tests/ --cov=utcp_websocket --cov-report=term-missing
-```
-
-## Contributing
-
-Contributions are welcome! Please see the [main repository](https://github.com/universal-tool-calling-protocol/python-utcp) for contribution guidelines.
-
-## License
-
-Mozilla Public License 2.0 (MPL-2.0)
+## [Contributors](https://www.utcp.io/about)
