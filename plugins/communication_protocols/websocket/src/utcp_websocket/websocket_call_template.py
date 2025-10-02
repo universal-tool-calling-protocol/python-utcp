@@ -3,7 +3,7 @@ from utcp.data.auth import Auth, AuthSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
-from typing import Optional, Dict, List, Literal
+from typing import Optional, Dict, List, Literal, Union, Any
 from pydantic import Field, field_serializer, field_validator
 
 class WebSocketCallTemplate(CallTemplate):
@@ -55,11 +55,10 @@ class WebSocketCallTemplate(CallTemplate):
     Attributes:
         call_template_type: Always "websocket" for WebSocket providers.
         url: WebSocket URL (must be wss:// or ws://localhost).
+        message: Message template with ${arg_name} placeholders for flexible formatting.
         protocol: Optional WebSocket subprotocol to use.
         keep_alive: Whether to maintain persistent connection with heartbeat.
-        request_data_format: Format for request messages ("json" or "text").
-        request_data_template: Template string for text format with UTCP_ARG_argname_UTCP_ARG placeholders.
-        message_format: Legacy custom message format template (for backward compatibility).
+        response_format: Expected response format ("json", "text", or "raw"). If None, returns raw response.
         timeout: Timeout in seconds for WebSocket operations.
         headers: Optional static headers to include in WebSocket handshake.
         header_fields: List of tool argument names to map to WebSocket handshake headers.
@@ -67,19 +66,15 @@ class WebSocketCallTemplate(CallTemplate):
     """
     call_template_type: Literal["websocket"] = Field(default="websocket")
     url: str = Field(..., description="WebSocket URL (wss:// or ws://localhost)")
+    message: Optional[Union[str, Dict[str, Any]]] = Field(
+        default=None,
+        description="Message template. Can be a string or dict with ${arg_name} placeholders"
+    )
     protocol: Optional[str] = Field(default=None, description="WebSocket subprotocol")
     keep_alive: bool = Field(default=True, description="Enable persistent connection with heartbeat")
-    request_data_format: Literal["json", "text"] = Field(
-        default="json",
-        description="Format for request messages"
-    )
-    request_data_template: Optional[str] = Field(
+    response_format: Optional[Literal["json", "text", "raw"]] = Field(
         default=None,
-        description="Template string for text format with UTCP_ARG_argname_UTCP_ARG placeholders"
-    )
-    message_format: Optional[str] = Field(
-        default=None,
-        description="Legacy custom message format template (deprecated, use request_data_template)"
+        description="Expected response format. If None, returns raw response"
     )
     timeout: int = Field(default=30, description="Timeout in seconds for WebSocket operations")
     headers: Optional[Dict[str, str]] = Field(default=None, description="Static headers for WebSocket handshake")
@@ -127,16 +122,14 @@ class WebSocketCallTemplateSerializer(Serializer[WebSocketCallTemplate]):
             "url": obj.url,
         }
 
+        if obj.message is not None:
+            result["message"] = obj.message
         if obj.protocol is not None:
             result["protocol"] = obj.protocol
         if obj.keep_alive is not True:
             result["keep_alive"] = obj.keep_alive
-        if obj.request_data_format != "json":
-            result["request_data_format"] = obj.request_data_format
-        if obj.request_data_template is not None:
-            result["request_data_template"] = obj.request_data_template
-        if obj.message_format is not None:
-            result["message_format"] = obj.message_format
+        if obj.response_format is not None:
+            result["response_format"] = obj.response_format
         if obj.timeout != 30:
             result["timeout"] = obj.timeout
         if obj.headers:

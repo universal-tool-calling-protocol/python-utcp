@@ -15,7 +15,8 @@ def test_websocket_call_template_basic():
     assert template.url == "wss://api.example.com/ws"
     assert template.call_template_type == "websocket"
     assert template.keep_alive is True
-    assert template.request_data_format == "json"
+    assert template.message is None  # No message template by default (maximum flexibility)
+    assert template.response_format is None  # No format enforcement by default
     assert template.timeout == 30
 
 
@@ -55,16 +56,24 @@ def test_websocket_call_template_with_auth():
     assert template.auth.api_key == "test-key"
 
 
-def test_websocket_call_template_text_format():
-    """Test WebSocket call template with text format."""
+def test_websocket_call_template_with_message_dict():
+    """Test WebSocket call template with dict message template."""
     template = WebSocketCallTemplate(
-        name="text_ws",
+        name="dict_ws",
         url="wss://api.example.com/ws",
-        request_data_format="text",
-        request_data_template="CMD:UTCP_ARG_command_UTCP_ARG"
+        message={"action": "${action}", "data": "${data}", "id": "123"}
     )
-    assert template.request_data_format == "text"
-    assert template.request_data_template == "CMD:UTCP_ARG_command_UTCP_ARG"
+    assert template.message == {"action": "${action}", "data": "${data}", "id": "123"}
+
+
+def test_websocket_call_template_with_message_string():
+    """Test WebSocket call template with string message template."""
+    template = WebSocketCallTemplate(
+        name="string_ws",
+        url="wss://api.example.com/ws",
+        message="CMD:${command};VALUE:${value}"
+    )
+    assert template.message == "CMD:${command};VALUE:${value}"
 
 
 def test_websocket_call_template_serialization():
@@ -73,7 +82,9 @@ def test_websocket_call_template_serialization():
         name="test_ws",
         url="wss://api.example.com/ws",
         protocol="utcp-v1",
-        timeout=60
+        timeout=60,
+        message={"type": "${type}"},
+        response_format="json"
     )
 
     serializer = WebSocketCallTemplateSerializer()
@@ -84,12 +95,15 @@ def test_websocket_call_template_serialization():
     assert data["url"] == "wss://api.example.com/ws"
     assert data["protocol"] == "utcp-v1"
     assert data["timeout"] == 60
+    assert data["message"] == {"type": "${type}"}
+    assert data["response_format"] == "json"
 
     # Deserialize
     restored = serializer.validate_dict(data)
     assert restored.name == template.name
     assert restored.url == template.url
     assert restored.protocol == template.protocol
+    assert restored.message == template.message
 
 
 def test_websocket_call_template_with_headers():
@@ -104,11 +118,18 @@ def test_websocket_call_template_with_headers():
     assert template.header_fields == ["user_id"]
 
 
-def test_websocket_call_template_legacy_message_format():
-    """Test WebSocket call template with legacy message_format."""
+def test_websocket_call_template_response_format():
+    """Test WebSocket call template with response format specification."""
     template = WebSocketCallTemplate(
-        name="legacy_ws",
+        name="format_ws",
         url="wss://api.example.com/ws",
-        message_format="{tool_name}:{arguments}"
+        response_format="json"
     )
-    assert template.message_format == "{tool_name}:{arguments}"
+    assert template.response_format == "json"
+
+    template2 = WebSocketCallTemplate(
+        name="text_ws",
+        url="wss://api.example.com/ws",
+        response_format="text"
+    )
+    assert template2.response_format == "text"

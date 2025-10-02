@@ -71,6 +71,34 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         self._sessions: Dict[str, ClientSession] = {}
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 
+    def _substitute_placeholders(self, template: Any, arguments: Dict[str, Any]) -> Any:
+        """Recursively substitute ${arg_name} placeholders in template.
+
+        Args:
+            template: Template (string, dict, or list) with ${arg_name} placeholders
+            arguments: Arguments to substitute
+
+        Returns:
+            Template with placeholders replaced
+        """
+        if isinstance(template, str):
+            # Replace ${arg_name} placeholders
+            result = template
+            for arg_name, arg_value in arguments.items():
+                placeholder = f"${{{arg_name}}}"
+                if placeholder in result:
+                    if isinstance(arg_value, str):
+                        result = result.replace(placeholder, arg_value)
+                    else:
+                        result = result.replace(placeholder, json.dumps(arg_value))
+            return result
+        elif isinstance(template, dict):
+            return {k: self._substitute_placeholders(v, arguments) for k, v in template.items()}
+        elif isinstance(template, list):
+            return [self._substitute_placeholders(item, arguments) for item in template]
+        else:
+            return template
+
     def _format_tool_call_message(
         self,
         tool_name: str,
@@ -79,6 +107,10 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         request_id: str
     ) -> str:
         """Format a tool call message based on call template configuration.
+
+        Provides maximum flexibility to support ANY WebSocket endpoint format:
+        - If message template is provided, uses it with ${arg_name} substitution
+        - Otherwise, sends arguments directly as JSON (no enforced structure)
 
         Args:
             tool_name: Name of the tool to call
@@ -89,53 +121,19 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         Returns:
             Formatted message string
         """
-        # Handle legacy message_format for backward compatibility
-        if call_template.message_format:
-            try:
-                formatted_message = call_template.message_format.format(
-                    tool_name=tool_name,
-                    arguments=json.dumps(arguments),
-                    request_id=request_id
-                )
-                return formatted_message
-            except (KeyError, json.JSONDecodeError) as e:
-                logger.error(f"Error formatting custom message: {e}")
-                # Fall through to standard format
-
-        # Handle request_data_format (following UDP/TCP pattern)
-        if call_template.request_data_format == "json":
-            return json.dumps({
-                "type": "call_tool",
-                "request_id": request_id,
-                "tool_name": tool_name,
-                "arguments": arguments
-            })
-        elif call_template.request_data_format == "text":
-            # Use template-based formatting
-            if call_template.request_data_template:
-                message = call_template.request_data_template
-                # Replace placeholders with argument values
-                for arg_name, arg_value in arguments.items():
-                    placeholder = f"UTCP_ARG_{arg_name}_UTCP_ARG"
-                    if isinstance(arg_value, str):
-                        message = message.replace(placeholder, arg_value)
-                    else:
-                        message = message.replace(placeholder, json.dumps(arg_value))
-                # Replace tool name and request ID if placeholders exist
-                message = message.replace("UTCP_ARG_tool_name_UTCP_ARG", tool_name)
-                message = message.replace("UTCP_ARG_request_id_UTCP_ARG", request_id)
-                return message
+        # Priority 1: Use message template if provided (most flexible - supports any format)
+        if call_template.message is not None:
+            substituted = self._substitute_placeholders(call_template.message, arguments)
+            # If it's a dict, convert to JSON string
+            if isinstance(substituted, dict):
+                return json.dumps(substituted)
             else:
-                # Fallback to simple format
-                return f"{tool_name} {' '.join([str(v) for v in arguments.values()])}"
-        else:
-            # Default to JSON format
-            return json.dumps({
-                "type": "call_tool",
-                "request_id": request_id,
-                "tool_name": tool_name,
-                "arguments": arguments
-            })
+                return str(substituted)
+
+        # Priority 2: Default to just sending arguments as JSON (maximum flexibility)
+        # This allows ANY WebSocket endpoint to work without modification
+        # No enforced structure - just the raw arguments
+        return json.dumps(arguments)
 
     async def _handle_oauth2(self, auth: OAuth2Auth) -> str:
         """Handle OAuth2 authentication and token management."""
@@ -311,8 +309,10 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         """REQUIRED
         Execute a tool call through WebSocket.
 
-        Sends: {"type": "call_tool", "request_id": "...", "tool_name": "...", "arguments": {...}}
-        Expects: {"type": "tool_response", "request_id": "...", "result": {...}}
+        Provides maximum flexibility to support ANY WebSocket response format:
+        - If response_format is specified, parses accordingly
+        - Otherwise, returns the raw response (string or bytes)
+        - No enforced response structure - works with any WebSocket endpoint
 
         Args:
             caller: The UTCP client that is calling this method.
@@ -321,7 +321,7 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
             tool_call_template: Call template of the tool to call.
 
         Returns:
-            The tool's response.
+            The tool's response (format depends on response_format setting).
         """
         if not isinstance(tool_call_template, WebSocketCallTemplate):
             raise ValueError("WebSocketCommunicationProtocol can only be used with WebSocketCallTemplate")
@@ -344,27 +344,28 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
                 async with asyncio.timeout(timeout):
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
-                            try:
-                                response = json.loads(msg.data)
-                                # Check for response matching request_id or allow without for backward compatibility
-                                if (response.get("request_id") == request_id or not response.get("request_id")):
-                                    if response.get("type") == "tool_response":
-                                        return response.get("result")
-                                    elif response.get("type") == "tool_error":
-                                        error_msg = response.get("error", "Unknown error")
-                                        logger.error(f"Tool error for {tool_name}: {error_msg}")
-                                        raise RuntimeError(f"Tool {tool_name} failed: {error_msg}")
-                                    else:
-                                        # For non-UTCP responses, return the entire response
-                                        return msg.data
-
-                            except json.JSONDecodeError:
-                                # Return raw response for non-JSON responses
+                            # Handle response based on response_format
+                            if tool_call_template.response_format == "json":
+                                try:
+                                    return json.loads(msg.data)
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Expected JSON response but got: {msg.data[:100]}")
+                                    return msg.data
+                            elif tool_call_template.response_format == "text":
                                 return msg.data
+                            elif tool_call_template.response_format == "raw":
+                                return msg.data
+                            else:
+                                # No format specified - return raw response (maximum flexibility)
+                                return msg.data
+
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            # Return binary data as-is
+                            return msg.data
 
                         elif msg.type == aiohttp.WSMsgType.ERROR:
                             logger.error(f"WebSocket error during tool call: {ws.exception()}")
-                            break
+                            raise RuntimeError(f"WebSocket error: {ws.exception()}")
 
             except asyncio.TimeoutError:
                 logger.error(f"Tool call timeout for {tool_name}")
