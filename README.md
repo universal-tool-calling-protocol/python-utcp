@@ -86,6 +86,7 @@ UTCP supports multiple communication protocols through dedicated plugins:
 | [`utcp-cli`](plugins/communication_protocols/cli/) | Command-line tools | ✅ Stable | [CLI Plugin README](plugins/communication_protocols/cli/README.md) |
 | [`utcp-mcp`](plugins/communication_protocols/mcp/) | Model Context Protocol | ✅ Stable | [MCP Plugin README](plugins/communication_protocols/mcp/README.md) |
 | [`utcp-text`](plugins/communication_protocols/text/) | Local file-based tools | ✅ Stable | [Text Plugin README](plugins/communication_protocols/text/README.md) |
+| [`utcp-websocket`](plugins/communication_protocols/websocket/) | WebSocket real-time bidirectional communication | ✅ Stable | [WebSocket Plugin README](plugins/communication_protocols/websocket/README.md) |
 | [`utcp-socket`](plugins/communication_protocols/socket/) | TCP/UDP protocols | 🚧 In Progress | [Socket Plugin README](plugins/communication_protocols/socket/README.md) |
 | [`utcp-gql`](plugins/communication_protocols/gql/) | GraphQL APIs | 🚧 In Progress | [GraphQL Plugin README](plugins/communication_protocols/gql/README.md) |
 
