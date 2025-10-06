@@ -138,7 +138,7 @@ class UTCPWebSocketServer:
         # Log any authentication headers
         auth_header = request.headers.get('Authorization')
         if auth_header:
-            self.logger.info(f"Authentication: {auth_header[:20]}...")
+            self.logger.info("Authentication header provided")
         
         api_key = request.headers.get('X-API-Key')
         if api_key:
