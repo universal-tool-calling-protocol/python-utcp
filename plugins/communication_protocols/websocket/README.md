@@ -366,7 +366,7 @@ async for chunk in client.call_tool_streaming("ws.stream", {"query": "data"}):
 - **WSS Required**: Production URLs must use `wss://` for encrypted communication
 - **Localhost Exception**: `ws://localhost` and `ws://127.0.0.1` allowed for development
 - **Authentication**: Full support for API Key, Basic Auth, and OAuth2
-- **Token Caching**: OAuth2 tokens are cached and automatically refreshed
+- **Token Caching**: OAuth2 tokens are cached for reuse; refresh must be handled by the service or manual re-auth.
 
 ## Best Practices
 
