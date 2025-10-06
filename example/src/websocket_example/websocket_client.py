@@ -161,7 +161,7 @@ Examples:
                 
                 elif command.startswith('search '):
                     query = command[7:]
-                    tools = client.search_tools(query)
+                    tools = await client.search_tools(query)
                     print(f"Found {len(tools)} tools:")
                     for tool in tools:
                         print(f"  {tool.name}: {tool.description}")
