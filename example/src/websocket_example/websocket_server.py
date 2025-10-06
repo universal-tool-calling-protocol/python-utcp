@@ -142,7 +142,7 @@ class UTCPWebSocketServer:
         
         api_key = request.headers.get('X-API-Key')
         if api_key:
-            self.logger.info(f"API Key: {api_key[:10]}...")
+            self.logger.info("API Key header provided")
         
         try:
             async for msg in ws:
