@@ -88,7 +88,7 @@ async def demonstrate_websocket_tools():
         
         # Test tool search
         print("\n🔎 Testing tool search...")
-        math_tools = client.search_tools("math calculation")
+        math_tools = await client.search_tools("math calculation")
         print(f"Found {len(math_tools)} tools for 'math calculation':")
         for tool in math_tools:
             print(f"  • {tool.name} (score: {getattr(tool, 'score', 'N/A')})")
