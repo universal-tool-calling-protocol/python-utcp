@@ -192,7 +192,7 @@ class WebSocketClientTransport(ClientTransportInterface):
             await session.close()
             if provider_key in self._sessions:
                 del self._sessions[provider_key]
-            self._log(f"Failed to connect to WebSocket {provider.url}: {e}", error=True)
+            self._log_error(f"Failed to connect to WebSocket {provider.url}: {e}")
             raise
 
     async def _cleanup_connection(self, provider_key: str):
