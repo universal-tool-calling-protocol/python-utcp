@@ -289,7 +289,8 @@ await client.call_tool("iot.control", {
     "response_format": "json"
 }
 
-# Sends: {"jsonrpc": "2.0", "method": "getUser", "params": {"id": 123}, "id": 1}
+# Sends: {"jsonrpc": "2.0", "method": "getUser", "params": "{\"id\": 123}", "id": 1}
+# Note: params is stringified since it's a non-string value in the template
 result = await client.call_tool("jsonrpc.call", {
     "method": "getUser",
     "params": {"id": 123}

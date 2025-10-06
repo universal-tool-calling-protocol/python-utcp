@@ -31,9 +31,9 @@ pytest
 # Run tests with coverage
 pytest --cov=src/utcp
 
-# Run specific test files
-pytest tests/client/test_openapi_converter.py
-pytest tests/client/transport_interfaces/test_http_transport.py
+# Run specific plugin tests
+pytest plugins/communication_protocols/http/tests/
+pytest plugins/communication_protocols/websocket/tests/
 ```
 
 ### Development Dependencies

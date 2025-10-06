@@ -132,7 +132,12 @@ class UTCPWebSocketServer:
         ws = WebSocketResponse()
         await ws.prepare(request)
         
-        client_info = f"{request.remote}:{request.transport.get_extra_info('peername')[1] if request.transport else 'unknown'}"
+        # Get client info safely
+        peername = request.transport.get_extra_info('peername') if request.transport else None
+        if peername and len(peername) > 1:
+            client_info = f"{request.remote}:{peername[1]}"
+        else:
+            client_info = str(request.remote) if request.remote else 'unknown'
         self.logger.info(f"WebSocket connection from {client_info}")
         
         # Log any authentication headers
