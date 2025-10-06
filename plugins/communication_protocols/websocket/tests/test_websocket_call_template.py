@@ -61,9 +61,9 @@ def test_websocket_call_template_with_message_dict():
     template = WebSocketCallTemplate(
         name="dict_ws",
         url="wss://api.example.com/ws",
-        message={"action": "${action}", "data": "${data}", "id": "123"}
+        message={"action": "UTCP_ARG_action_UTCP_ARG", "data": "UTCP_ARG_data_UTCP_ARG", "id": "123"}
     )
-    assert template.message == {"action": "${action}", "data": "${data}", "id": "123"}
+    assert template.message == {"action": "UTCP_ARG_action_UTCP_ARG", "data": "UTCP_ARG_data_UTCP_ARG", "id": "123"}
 
 
 def test_websocket_call_template_with_message_string():
@@ -71,9 +71,9 @@ def test_websocket_call_template_with_message_string():
     template = WebSocketCallTemplate(
         name="string_ws",
         url="wss://api.example.com/ws",
-        message="CMD:${command};VALUE:${value}"
+        message="CMD:UTCP_ARG_command_UTCP_ARG;VALUE:UTCP_ARG_value_UTCP_ARG"
     )
-    assert template.message == "CMD:${command};VALUE:${value}"
+    assert template.message == "CMD:UTCP_ARG_command_UTCP_ARG;VALUE:UTCP_ARG_value_UTCP_ARG"
 
 
 def test_websocket_call_template_serialization():
@@ -83,7 +83,7 @@ def test_websocket_call_template_serialization():
         url="wss://api.example.com/ws",
         protocol="utcp-v1",
         timeout=60,
-        message={"type": "${type}"},
+        message={"type": "UTCP_ARG_type_UTCP_ARG"},
         response_format="json"
     )
 
@@ -95,7 +95,7 @@ def test_websocket_call_template_serialization():
     assert data["url"] == "wss://api.example.com/ws"
     assert data["protocol"] == "utcp-v1"
     assert data["timeout"] == 60
-    assert data["message"] == {"type": "${type}"}
+    assert data["message"] == {"type": "UTCP_ARG_type_UTCP_ARG"}
     assert data["response_format"] == "json"
 
     # Deserialize

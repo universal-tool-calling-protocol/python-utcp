@@ -72,20 +72,20 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 
     def _substitute_placeholders(self, template: Any, arguments: Dict[str, Any]) -> Any:
-        """Recursively substitute ${arg_name} placeholders in template.
+        """Recursively substitute UTCP_ARG_arg_name_UTCP_ARG placeholders in template.
 
         Args:
-            template: Template (string, dict, or list) with ${arg_name} placeholders
+            template: Template (string, dict, or list) with UTCP_ARG_arg_name_UTCP_ARG placeholders
             arguments: Arguments to substitute
 
         Returns:
             Template with placeholders replaced
         """
         if isinstance(template, str):
-            # Replace ${arg_name} placeholders
+            # Replace UTCP_ARG_arg_name_UTCP_ARG placeholders
             result = template
             for arg_name, arg_value in arguments.items():
-                placeholder = f"${{{arg_name}}}"
+                placeholder = f"UTCP_ARG_{arg_name}_UTCP_ARG"
                 if placeholder in result:
                     if isinstance(arg_value, str):
                         result = result.replace(placeholder, arg_value)
@@ -109,7 +109,7 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         """Format a tool call message based on call template configuration.
 
         Provides maximum flexibility to support ANY WebSocket endpoint format:
-        - If message template is provided, uses it with ${arg_name} substitution
+        - If message template is provided, uses it with UTCP_ARG_arg_name_UTCP_ARG substitution
         - Otherwise, sends arguments directly as JSON (no enforced structure)
 
         Args:

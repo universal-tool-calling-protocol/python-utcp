@@ -55,7 +55,7 @@ class WebSocketCallTemplate(CallTemplate):
     Attributes:
         call_template_type: Always "websocket" for WebSocket providers.
         url: WebSocket URL (must be wss:// or ws://localhost).
-        message: Message template with ${arg_name} placeholders for flexible formatting.
+        message: Message template with UTCP_ARG_arg_name_UTCP_ARG placeholders for flexible formatting.
         protocol: Optional WebSocket subprotocol to use.
         keep_alive: Whether to maintain persistent connection with heartbeat.
         response_format: Expected response format ("json", "text", or "raw"). If None, returns raw response.
@@ -68,7 +68,7 @@ class WebSocketCallTemplate(CallTemplate):
     url: str = Field(..., description="WebSocket URL (wss:// or ws://localhost)")
     message: Optional[Union[str, Dict[str, Any]]] = Field(
         default=None,
-        description="Message template. Can be a string or dict with ${arg_name} placeholders"
+        description="Message template. Can be a string or dict with UTCP_ARG_arg_name_UTCP_ARG placeholders"
     )
     protocol: Optional[str] = Field(default=None, description="WebSocket subprotocol")
     keep_alive: bool = Field(default=True, description="Enable persistent connection with heartbeat")

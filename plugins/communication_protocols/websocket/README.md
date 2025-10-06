@@ -7,7 +7,7 @@ WebSocket communication protocol plugin for UTCP, enabling real-time bidirection
 **The WebSocket plugin is designed to work with ANY existing WebSocket endpoint without modification.**
 
 Unlike other implementations that enforce specific message structures, this plugin:
-- ✅ **No enforced request format**: Use `message` templates with `${arg_name}` placeholders
+- ✅ **No enforced request format**: Use `message` templates with `UTCP_ARG_arg_name_UTCP_ARG` placeholders
 - ✅ **No enforced response format**: Returns raw responses by default
 - ✅ **Works with existing endpoints**: No need to modify your WebSocket servers
 - ✅ **Flexible templating**: Support dict or string message templates
@@ -17,7 +17,7 @@ This addresses the UTCP principle: "Talk to as many WebSocket endpoints as possi
 ## Features
 
 - ✅ **Maximum Flexibility**: Works with ANY WebSocket endpoint without modification
-- ✅ **Flexible Message Templates**: Dict or string templates with `${arg_name}` placeholders
+- ✅ **Flexible Message Templates**: Dict or string templates with `UTCP_ARG_arg_name_UTCP_ARG` placeholders
 - ✅ **No Enforced Structure**: Send/receive messages in any format
 - ✅ **Real-time Communication**: Bidirectional WebSocket connections
 - ✅ **Multiple Authentication**: API Key, Basic Auth, and OAuth2 support
@@ -69,10 +69,10 @@ result = await client.call_tool("my_websocket.get_data", {
     "url": "wss://api.example.com/ws",
     "message": {
         "type": "request",
-        "action": "${action}",
+        "action": "UTCP_ARG_action_UTCP_ARG",
         "params": {
-            "user_id": "${user_id}",
-            "query": "${query}"
+            "user_id": "UTCP_ARG_user_id_UTCP_ARG",
+            "query": "UTCP_ARG_query_UTCP_ARG"
         }
     }
 }
@@ -97,7 +97,7 @@ Calling with `{"action": "search", "user_id": "123", "query": "test"}` sends:
     "name": "text_ws",
     "call_template_type": "websocket",
     "url": "wss://iot.example.com/ws",
-    "message": "CMD:${command};DEVICE:${device_id};VALUE:${value}"
+    "message": "CMD:UTCP_ARG_command_UTCP_ARG;DEVICE:UTCP_ARG_device_id_UTCP_ARG;VALUE:UTCP_ARG_value_UTCP_ARG"
 }
 ```
 
@@ -114,7 +114,7 @@ CMD:SET_TEMP;DEVICE:dev123;VALUE:25
 |-------|------|----------|---------|-------------|
 | `call_template_type` | string | Yes | `"websocket"` | Must be "websocket" |
 | `url` | string | Yes | - | WebSocket URL (wss:// or ws://localhost) |
-| `message` | string\|dict | No | `null` | Message template with ${arg_name} placeholders |
+| `message` | string\|dict | No | `null` | Message template with UTCP_ARG_arg_name_UTCP_ARG placeholders |
 | `response_format` | string | No | `null` | Expected response format ("json", "text", "raw") |
 | `protocol` | string | No | `null` | WebSocket subprotocol |
 | `keep_alive` | boolean | No | `true` | Enable persistent connection with heartbeat |
@@ -150,8 +150,8 @@ Use dict templates for structured messages:
 {
     "message": {
         "jsonrpc": "2.0",
-        "method": "${method}",
-        "params": "${params}",
+        "method": "UTCP_ARG_method_UTCP_ARG",
+        "params": "UTCP_ARG_params_UTCP_ARG",
         "id": 1
     }
 }
@@ -163,7 +163,7 @@ Use string templates for text-based protocols:
 
 ```python
 {
-    "message": "GET ${resource} HTTP/1.1\r\nHost: ${host}\r\n\r\n"
+    "message": "GET UTCP_ARG_resource_UTCP_ARG HTTP/1.1\r\nHost: UTCP_ARG_host_UTCP_ARG\r\n\r\n"
 }
 ```
 
@@ -176,9 +176,9 @@ Templates work recursively in dicts and lists:
     "message": {
         "type": "command",
         "data": {
-            "commands": ["${cmd1}", "${cmd2}"],
+            "commands": ["UTCP_ARG_cmd1_UTCP_ARG", "UTCP_ARG_cmd2_UTCP_ARG"],
             "metadata": {
-                "user": "${user}",
+                "user": "UTCP_ARG_user_UTCP_ARG",
                 "timestamp": "2025-01-01"
             }
         }
@@ -262,7 +262,7 @@ await client.call_tool("stocks.subscribe", {
     "name": "iot",
     "call_template_type": "websocket",
     "url": "wss://iot.example.com/devices",
-    "message": "DEVICE:${device_id} CMD:${command} VAL:${value}"
+    "message": "DEVICE:UTCP_ARG_device_id_UTCP_ARG CMD:UTCP_ARG_command_UTCP_ARG VAL:UTCP_ARG_value_UTCP_ARG"
 }
 
 # Sends: "DEVICE:light_01 CMD:SET_BRIGHTNESS VAL:75"
@@ -282,8 +282,8 @@ await client.call_tool("iot.control", {
     "url": "wss://rpc.example.com/ws",
     "message": {
         "jsonrpc": "2.0",
-        "method": "${method}",
-        "params": "${params}",
+        "method": "UTCP_ARG_method_UTCP_ARG",
+        "params": "UTCP_ARG_params_UTCP_ARG",
         "id": 1
     },
     "response_format": "json"
@@ -305,9 +305,9 @@ result = await client.call_tool("jsonrpc.call", {
     "url": "wss://chat.example.com/ws",
     "message": {
         "type": "message",
-        "channel": "${channel}",
-        "user": "${user}",
-        "text": "${text}",
+        "channel": "UTCP_ARG_channel_UTCP_ARG",
+        "user": "UTCP_ARG_user_UTCP_ARG",
+        "text": "UTCP_ARG_text_UTCP_ARG",
         "timestamp": "{{now}}"
     }
 }
