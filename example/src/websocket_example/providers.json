@@ -1,0 +1,11 @@
+[
+  {
+    "name": "websocket_tools",
+    "provider_type": "websocket",
+    "url": "ws://localhost:8765/ws",
+    "keep_alive": true,
+    "headers": {
+      "User-Agent": "UTCP-WebSocket-Client/1.0"
+    }
+  }
+]
