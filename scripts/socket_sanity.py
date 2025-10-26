@@ -99,7 +99,7 @@ def start_udp_server(host: str, port: int):
     return t
 
 # -------------------------------
-# Mock TCP Server (delimiter-based)\n
+# Mock TCP Server (delimiter-based)
 # -------------------------------
 
 def start_tcp_server(host: str, port: int, delimiter: str = "\n"):
@@ -209,7 +209,7 @@ async def run_sanity():
     # Start servers
     start_udp_server(udp_host, udp_port)
     start_tcp_server(tcp_host, tcp_port, delimiter="\n")
-    time.sleep(0.2)  # small delay to ensure servers are listening
+    await asyncio.sleep(0.2)  # small delay to ensure servers are listening
 
     # Transports
     udp_transport = UDPTransport()

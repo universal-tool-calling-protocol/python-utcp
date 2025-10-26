@@ -351,7 +351,7 @@ class TCPTransport(CommunicationProtocol):
                     self._log_info(f"Discovered {len(tools)} tools from TCP provider '{manual_call_template.name}'")
                 else:
                     self._log_info(f"No tools found in TCP provider '{manual_call_template.name}' response")
-                manual = UtcpManual(tools=tools)
+                manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=tools)
                 return RegisterManualResult(
                     manual_call_template=manual_call_template,
                     manual=manual,
@@ -362,7 +362,7 @@ class TCPTransport(CommunicationProtocol):
                 self._log_error(f"Invalid JSON response from TCP provider '{manual_call_template.name}': {e}")
                 return RegisterManualResult(
                     manual_call_template=manual_call_template,
-                    manual=UtcpManual(tools=[]),
+                    manual=UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[]),
                     success=False,
                     errors=[str(e)]
                 )
@@ -370,7 +370,7 @@ class TCPTransport(CommunicationProtocol):
             self._log_error(f"Error registering TCP provider '{manual_call_template.name}': {e}")
             return RegisterManualResult(
                 manual_call_template=manual_call_template,
-                manual=UtcpManual(tools=[]),
+                manual=UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[]),
                 success=False,
                 errors=[str(e)]
             )
