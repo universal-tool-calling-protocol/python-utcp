@@ -37,3 +37,6 @@ dev = [
 Homepage = "https://utcp.io"
 Source = "https://github.com/universal-tool-calling-protocol/python-utcp"
 Issues = "https://github.com/universal-tool-calling-protocol/python-utcp/issues"
+
+[project.entry-points."utcp.plugins"]
+socket = "utcp_socket:register"

@@ -9,14 +9,17 @@ import socket
 import traceback
 from typing import Dict, Any, List, Optional, Callable, Union
 
-from utcp.client.client_transport_interface import ClientTransportInterface
-from utcp.shared.provider import Provider, UDPProvider
-from utcp.shared.tool import Tool
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp_socket.udp_call_template import UDPProvider, UDPProviderSerializer
+from utcp.data.tool import Tool
+from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.data.utcp_manual import UtcpManual
 import logging
 
 logger = logging.getLogger(__name__)
 
-class UDPTransport(ClientTransportInterface):
+class UDPTransport(CommunicationProtocol):
     """Transport implementation for UDP-based tool providers.
     
     This transport communicates with tools over UDP sockets. It supports:
@@ -80,6 +83,38 @@ class UDPTransport(ClientTransportInterface):
         else:
             # Default to JSON format
             return json.dumps(tool_args)
+
+    def _ensure_tool_call_template(self, tool_data: Dict[str, Any], manual_call_template: UDPProvider) -> Dict[str, Any]:
+        """Normalize tool definition to include a valid 'tool_call_template'.
+        
+        - If 'tool_call_template' exists, validate it.
+        - Else if legacy 'tool_provider' exists, convert using UDPProviderSerializer.
+        - Else default to the provided manual_call_template.
+        """
+        normalized = dict(tool_data)
+        try:
+            if "tool_call_template" in normalized and normalized["tool_call_template"] is not None:
+                # Validate via generic CallTemplate serializer (type-dispatched)
+                try:
+                    ctpl = CallTemplateSerializer().validate_dict(normalized["tool_call_template"])  # type: ignore
+                    normalized["tool_call_template"] = ctpl
+                except Exception:
+                    # Fallback to manual template if validation fails
+                    normalized["tool_call_template"] = manual_call_template
+            elif "tool_provider" in normalized and normalized["tool_provider"] is not None:
+                # Convert legacy provider -> call template
+                try:
+                    ctpl = UDPProviderSerializer().validate_dict(normalized["tool_provider"])  # type: ignore
+                    normalized.pop("tool_provider", None)
+                    normalized["tool_call_template"] = ctpl
+                except Exception:
+                    normalized.pop("tool_provider", None)
+                    normalized["tool_call_template"] = manual_call_template
+            else:
+                normalized["tool_call_template"] = manual_call_template
+        except Exception:
+            normalized["tool_call_template"] = manual_call_template
+        return normalized
     
     async def _send_udp_message(
         self,
@@ -202,125 +237,89 @@ class UDPTransport(ClientTransportInterface):
             self._log_error(f"Error sending UDP message (no response): {traceback.format_exc()}")
             raise
     
-    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
-        """Register a UDP provider and discover its tools.
-        
-        Sends a discovery message to the UDP provider and parses the response.
-        
-        Args:
-            manual_provider: The UDPProvider to register
-            
-        Returns:
-            List of tools discovered from the UDP provider
-            
-        Raises:
-            ValueError: If provider is not a UDPProvider
-        """
-        if not isinstance(manual_provider, UDPProvider):
+    async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
+        """Register a UDP manual and discover its tools."""
+        if not isinstance(manual_call_template, UDPProvider):
             raise ValueError("UDPTransport can only be used with UDPProvider")
         
-        self._log_info(f"Registering UDP provider '{manual_provider.name}' at {manual_provider.host}:{manual_provider.port}")
+        self._log_info(f"Registering UDP provider '{manual_call_template.name}' at {manual_call_template.host}:{manual_call_template.port}")
         
         try:
-            # Send discovery message
-            discovery_message = json.dumps({
-                "type": "utcp"
-            })
-            
+            discovery_message = json.dumps({"type": "utcp"})
             response = await self._send_udp_message(
-                manual_provider.host,
-                manual_provider.port,
+                manual_call_template.host,
+                manual_call_template.port,
                 discovery_message,
-                manual_provider.timeout / 1000.0,  # Convert ms to seconds
-                manual_provider.number_of_response_datagrams,
-                manual_provider.response_byte_format
+                manual_call_template.timeout / 1000.0,
+                manual_call_template.number_of_response_datagrams,
+                manual_call_template.response_byte_format
             )
-            
-            # Parse response
             try:
-                # Handle bytes response by trying to decode as UTF-8 for JSON parsing
-                if isinstance(response, bytes):
-                    response_str = response.decode('utf-8')
-                else:
-                    response_str = response
-                    
+                response_str = response.decode('utf-8') if isinstance(response, bytes) else response
                 response_data = json.loads(response_str)
-                
-                # Check if response contains tools
+                tools: List[Tool] = []
                 if isinstance(response_data, dict) and 'tools' in response_data:
                     tools_data = response_data['tools']
-                    
-                    # Parse tools
-                    tools = []
                     for tool_data in tools_data:
                         try:
-                            tool = Tool(**tool_data)
+                            normalized = self._ensure_tool_call_template(tool_data, manual_call_template)
+                            tool = Tool(**normalized)
                             tools.append(tool)
-                        except Exception as e:
-                            self._log_error(f"Invalid tool definition in UDP provider '{manual_provider.name}': {traceback.format_exc()}")
+                        except Exception:
+                            self._log_error(f"Invalid tool definition in UDP provider '{manual_call_template.name}': {traceback.format_exc()}")
                             continue
-                    
-                    self._log_info(f"Discovered {len(tools)} tools from UDP provider '{manual_provider.name}'")
-                    return tools
+                    self._log_info(f"Discovered {len(tools)} tools from UDP provider '{manual_call_template.name}'")
                 else:
-                    self._log_info(f"No tools found in UDP provider '{manual_provider.name}' response")
-                    return []
-                    
+                    self._log_info(f"No tools found in UDP provider '{manual_call_template.name}' response")
+                manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=tools)
+                return RegisterManualResult(
+                    manual_call_template=manual_call_template,
+                    manual=manual,
+                    success=True,
+                    errors=[]
+                )
             except json.JSONDecodeError as e:
-                self._log_error(f"Invalid JSON response from UDP provider '{manual_provider.name}': {traceback.format_exc()}")
-                return []
-                
+                self._log_error(f"Invalid JSON response from UDP provider '{manual_call_template.name}': {traceback.format_exc()}")
+                manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[])
+                return RegisterManualResult(
+                    manual_call_template=manual_call_template,
+                    manual=manual,
+                    success=False,
+                    errors=[str(e)]
+                )
         except Exception as e:
-            self._log_error(f"Error registering UDP provider '{manual_provider.name}': {traceback.format_exc()}")
-            return []
+            self._log_error(f"Error registering UDP provider '{manual_call_template.name}': {traceback.format_exc()}")
+            manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[])
+            return RegisterManualResult(
+                manual_call_template=manual_call_template,
+                manual=manual,
+                success=False,
+                errors=[str(e)]
+            )
     
-    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
-        """Deregister a UDP provider.
-        
-        This is a no-op for UDP providers since they are stateless.
-        
-        Args:
-            manual_provider: The provider to deregister
-        """
-        if not isinstance(manual_provider, UDPProvider):
+    async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
+        if not isinstance(manual_call_template, UDPProvider):
             raise ValueError("UDPTransport can only be used with UDPProvider")
-            
-        self._log_info(f"Deregistering UDP provider '{manual_provider.name}' (no-op)")
+        self._log_info(f"Deregistering UDP provider '{manual_call_template.name}' (no-op)")
     
-    async def call_tool(self, tool_name: str, tool_args: Dict[str, Any], tool_provider: Provider) -> Any:
-        """Call a UDP tool.
-        
-        Sends a tool call message to the UDP provider and returns the response.
-        
-        Args:
-            tool_name: Name of the tool to call
-            arguments: Arguments for the tool call
-            tool_provider: The UDPProvider containing the tool
-            
-        Returns:
-            The response from the UDP tool
-            
-        Raises:
-            ValueError: If provider is not a UDPProvider
-        """
-        if not isinstance(tool_provider, UDPProvider):
+    async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        if not isinstance(tool_call_template, UDPProvider):
             raise ValueError("UDPTransport can only be used with UDPProvider")
-        
-        self._log_info(f"Calling UDP tool '{tool_name}' on provider '{tool_provider.name}'")
-        
+        self._log_info(f"Calling UDP tool '{tool_name}' on provider '{tool_call_template.name}'")
         try:
-            tool_call_message = self._format_tool_call_message(tool_args, tool_provider)
-            
+            tool_call_message = self._format_tool_call_message(tool_args, tool_call_template)
             response = await self._send_udp_message(
-                tool_provider.host,
-                tool_provider.port,
+                tool_call_template.host,
+                tool_call_template.port,
                 tool_call_message,
-                tool_provider.timeout / 1000.0,  # Convert ms to seconds
-                tool_provider.number_of_response_datagrams,
-                tool_provider.response_byte_format
+                tool_call_template.timeout / 1000.0,
+                tool_call_template.number_of_response_datagrams,
+                tool_call_template.response_byte_format
             )
             return response
-                
         except Exception as e:
             self._log_error(f"Error calling UDP tool '{tool_name}': {traceback.format_exc()}")
             raise
+
+    async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate):
+        yield await self.call_tool(caller, tool_name, tool_args, tool_call_template)
