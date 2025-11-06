@@ -1,7 +1,10 @@
-from utcp.data.call_template import CallTemplate
-from utcp.data.auth import Auth
+from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.data.auth import Auth, AuthSerializer
+from utcp.interfaces.serializer import Serializer
+from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 from typing import Dict, List, Optional, Literal
-from pydantic import Field
+from pydantic import Field, field_serializer, field_validator
 
 class GraphQLProvider(CallTemplate):
     """Provider configuration for GraphQL-based tools.
@@ -27,3 +30,31 @@ class GraphQLProvider(CallTemplate):
     auth: Optional[Auth] = None
     headers: Optional[Dict[str, str]] = None
     header_fields: Optional[List[str]] = Field(default=None, description="List of input fields to be sent as request headers for the initial connection.")
+
+    @field_serializer("auth")
+    def serialize_auth(self, auth: Optional[Auth]):
+        if auth is None:
+            return None
+        return AuthSerializer().to_dict(auth)
+
+    @field_validator("auth", mode="before")
+    @classmethod
+    def validate_auth(cls, v: Optional[Auth | dict]):
+        if v is None:
+            return None
+        if isinstance(v, Auth):
+            return v
+        return AuthSerializer().validate_dict(v)
+
+
+class GraphQLProviderSerializer(Serializer[GraphQLProvider]):
+    def to_dict(self, obj: GraphQLProvider) -> dict:
+        return obj.model_dump()
+
+    def validate_dict(self, data: dict) -> GraphQLProvider:
+        try:
+            return GraphQLProvider.model_validate(data)
+        except Exception as e:
+            raise UtcpSerializerValidationError(
+                f"Invalid GraphQLProvider: {e}\n{traceback.format_exc()}"
+            )
