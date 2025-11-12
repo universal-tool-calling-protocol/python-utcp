@@ -1,24 +1,24 @@
 
-UTCP GraphQL Communication Protocol Plugin
+# UTCP GraphQL Communication Protocol Plugin
 
 This plugin integrates GraphQL as a UTCP 1.0 communication protocol and call template. It supports discovery via schema introspection, authenticated calls, and header handling.
 
-Getting Started
+## Getting Started
 
-Installation
+### Installation
 
 ```bash
 pip install gql
 ```
 
-Registration
+### Registration
 
 ```python
 import utcp_gql
 utcp_gql.register()
 ```
 
-How To Use
+## How To Use
 
 - Ensure the plugin is imported and registered: `import utcp_gql; utcp_gql.register()`.
 - Add a manual in your client config:
@@ -37,7 +37,7 @@ How To Use
   await client.call_tool("my_graph.someQuery", {"id": "123", "x-session-id": "abc"})
   ```
 
-Notes
+## Notes
 
 - Tool names are prefixed by the manual name (e.g., `my_graph.someQuery`).
 - Headers merge static `headers` plus whitelisted dynamic fields from `header_fields`.

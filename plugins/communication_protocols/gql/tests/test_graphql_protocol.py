@@ -1,4 +1,3 @@
-import asyncio
 import os
 import sys
 import types
@@ -12,10 +11,10 @@ if PLUGIN_SRC not in sys.path:
     sys.path.append(PLUGIN_SRC)
 
 import utcp_gql
-from utcp_gql.gql_call_template import GraphQLProvider
-from utcp_gql import gql_communication_protocol as gql_module
+# Simplify imports: use the main module and assign local aliases
+GraphQLProvider = utcp_gql.gql_call_template.GraphQLProvider
+gql_module = utcp_gql.gql_communication_protocol
 
-from utcp.data.tool import Tool
 from utcp.data.utcp_manual import UtcpManual
 from utcp.utcp_client import UtcpClient
 from utcp.implementations.utcp_client_implementation import UtcpClientImplementation

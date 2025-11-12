@@ -1,7 +1,5 @@
 import sys
-import os
 import json
-import time
 import socket
 import threading
 import asyncio
@@ -39,6 +37,7 @@ def start_udp_server(host: str, port: int):
             try:
                 parsed = json.loads(msg)
             except Exception:
+                # Ignore JSON parsing errors; non-JSON input will be handled below
                 parsed = None
             if isinstance(parsed, dict) and parsed.get("type") == "utcp":
                 manual = {
@@ -182,6 +181,7 @@ def start_tcp_server(host: str, port: int, delimiter: str = "\n"):
             try:
                 conn.shutdown(socket.SHUT_RDWR)
             except Exception:
+                # Ignore errors if socket is already closed or shutdown fails
                 pass
             conn.close()
 
@@ -259,7 +259,7 @@ async def run_sanity():
     assert udp_resp.get("ok") is True and udp_resp.get("echo") == "hello"
     assert tcp_resp.get("ok") is True and tcp_resp.get("echo") == "world"
 
-    print("Sanity passed: UDP/TCP discovery and calls work with tool_call_template normalization.")
+    print("Sanity check passed: UDP/TCP discovery and calls work with tool_call_template normalization.")
 
 if __name__ == "__main__":
     asyncio.run(run_sanity())

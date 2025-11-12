@@ -48,6 +48,7 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
         ):
             raise ValueError(
                 "Security error: URL must use HTTPS or start with 'http://localhost' or 'http://127.0.0.1'. "
+                "Non-secure URLs are vulnerable to man-in-the-middle attacks. "
                 f"Got: {url}."
             )
 
@@ -185,15 +186,18 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
             op_type = getattr(tool_call_template, "operation_type", "query")
             # Strip manual prefix if present (client prefixes at save time)
             base_tool_name = tool_name.split(".", 1)[-1] if "." in tool_name else tool_name
+            # Filter out header fields from GraphQL variables; these are sent via HTTP headers
+            header_fields = tool_call_template.header_fields or []
+            filtered_args = {k: v for k, v in tool_args.items() if k not in header_fields}
 
-            arg_str = ", ".join(f"${k}: String" for k in tool_args.keys())
+            arg_str = ", ".join(f"${k}: String" for k in filtered_args.keys())
             var_defs = f"({arg_str})" if arg_str else ""
-            arg_pass = ", ".join(f"{k}: ${k}" for k in tool_args.keys())
+            arg_pass = ", ".join(f"{k}: ${k}" for k in filtered_args.keys())
             arg_pass = f"({arg_pass})" if arg_pass else ""
 
             gql_str = f"{op_type} {var_defs} {{ {base_tool_name}{arg_pass} }}"
             document = gql_query(gql_str)
-            result = await session.execute(document, variable_values=tool_args)
+            result = await session.execute(document, variable_values=filtered_args)
             return result
 
     async def call_tool_streaming(

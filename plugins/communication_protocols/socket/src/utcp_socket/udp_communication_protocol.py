@@ -15,6 +15,7 @@ from utcp.data.tool import Tool
 from utcp.data.call_template import CallTemplate, CallTemplateSerializer
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp.data.utcp_manual import UtcpManual
+from utcp.exceptions import UtcpSerializerValidationError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -98,8 +99,9 @@ class UDPTransport(CommunicationProtocol):
                 try:
                     ctpl = CallTemplateSerializer().validate_dict(normalized["tool_call_template"])  # type: ignore
                     normalized["tool_call_template"] = ctpl
-                except Exception:
-                    # Fallback to manual template if validation fails
+                except (UtcpSerializerValidationError, ValueError) as e:
+                    # Fallback to manual template if validation fails, but log details
+                    logger.exception("Failed to validate existing tool_call_template; falling back to manual template")
                     normalized["tool_call_template"] = manual_call_template
             elif "tool_provider" in normalized and normalized["tool_provider"] is not None:
                 # Convert legacy provider -> call template
@@ -107,12 +109,15 @@ class UDPTransport(CommunicationProtocol):
                     ctpl = UDPProviderSerializer().validate_dict(normalized["tool_provider"])  # type: ignore
                     normalized.pop("tool_provider", None)
                     normalized["tool_call_template"] = ctpl
-                except Exception:
+                except UtcpSerializerValidationError as e:
+                    logger.exception("Failed to convert legacy tool_provider to call template; falling back to manual template")
                     normalized.pop("tool_provider", None)
                     normalized["tool_call_template"] = manual_call_template
             else:
                 normalized["tool_call_template"] = manual_call_template
         except Exception:
+            # Any unexpected error during normalization should be logged
+            logger.exception("Unexpected error normalizing tool definition; falling back to manual template")
             normalized["tool_call_template"] = manual_call_template
         return normalized
     
@@ -321,5 +326,12 @@ class UDPTransport(CommunicationProtocol):
             self._log_error(f"Error calling UDP tool '{tool_name}': {traceback.format_exc()}")
             raise
 
+    # Copilot AI (5 days ago):
+    # The call_tool_streaming method wraps a generator function but doesn't use the async def syntax for the method itself.
+    # While this works, it's inconsistent with the other implementation in tcp_communication_protocol.py (lines 384-387) which properly uses async def with an inner generator.
+    # For consistency and clarity, this should also use async def directly:
+    #
+    # async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate):
+    #     yield await self.call_tool(caller, tool_name, tool_args, tool_call_template)
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate):
         yield await self.call_tool(caller, tool_name, tool_args, tool_call_template)

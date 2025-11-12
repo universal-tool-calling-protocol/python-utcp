@@ -148,9 +148,14 @@ class TCPTransport(CommunicationProtocol):
         elif provider.framing_strategy == "delimiter":
             # Add delimiter after the message
             delimiter = provider.message_delimiter or "\x00"
-            # Handle escape sequences
-            delimiter = delimiter.encode('utf-8').decode('unicode_escape')
-            return message_bytes + delimiter.encode('utf-8')
+            if provider.interpret_escape_sequences:
+                # Handle escape sequences (e.g., "\n", "\r\n", "\x00")
+                delimiter = delimiter.encode('utf-8').decode('unicode_escape')
+                delimiter_bytes = delimiter.encode('utf-8')
+            else:
+                # Use delimiter literally as provided
+                delimiter_bytes = delimiter.encode('utf-8')
+            return message_bytes + delimiter_bytes
         
         elif provider.framing_strategy in ("fixed_length", "stream"):
             # No additional framing needed
@@ -202,8 +207,19 @@ class TCPTransport(CommunicationProtocol):
         
         elif provider.framing_strategy == "delimiter":
             # Read until delimiter is found
+            # Copilot AI (5 days ago):
+            # The default delimiter has been changed from "\\x00" (escaped backslash) to "\x00" (null character).
+            # This changes the semantic meaning - the old code expected the literal string \x00 (4 characters: backslash, x, 0, 0),
+            # while the new code expects a single null byte. Ensure this is intentional and that all servers using this protocol are
+            # updated accordingly, as this is a breaking change in the wire protocol.
+            # Suggested change:
+            #     delimiter = provider.message_delimiter or "\\x00"
+            #     delimiter = delimiter.encode('utf-8')
             delimiter = provider.message_delimiter or "\x00"
-            delimiter = delimiter.encode('utf-8').decode('unicode_escape').encode('utf-8')
+            if provider.interpret_escape_sequences:
+                delimiter_bytes = delimiter.encode('utf-8').decode('unicode_escape').encode('utf-8')
+            else:
+                delimiter_bytes = delimiter.encode('utf-8')
             
             response_data = b""
             while True:
@@ -213,9 +229,9 @@ class TCPTransport(CommunicationProtocol):
                 response_data += chunk
                 
                 # Check if we've received the delimiter
-                if response_data.endswith(delimiter):
+                if response_data.endswith(delimiter_bytes):
                     # Remove delimiter from response
-                    return response_data[:-len(delimiter)]
+                    return response_data[:-len(delimiter_bytes)]
         
         elif provider.framing_strategy == "fixed_length":
             # Read exactly fixed_message_length bytes
@@ -246,6 +262,13 @@ class TCPTransport(CommunicationProtocol):
                     break
             
             return response_data
+
+        else:
+            # Copilot AI (5 days ago):
+            # The else branch for unknown framing strategies was previously removed,
+            # which could cause silent fallthrough and confusing behavior. Add explicit
+            # validation to raise a descriptive error when an unsupported strategy is provided.
+            raise ValueError(f"Unknown framing strategy: {provider.framing_strategy!r}")
         
     async def _send_tcp_message(
         self,

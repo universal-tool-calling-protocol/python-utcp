@@ -1,4 +1,4 @@
-from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.data.call_template import CallTemplate
 from utcp.data.auth import Auth, AuthSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
