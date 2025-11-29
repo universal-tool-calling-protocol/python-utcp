@@ -86,6 +86,7 @@ UTCP supports multiple communication protocols through dedicated plugins:
 | [`utcp-cli`](plugins/communication_protocols/cli/) | Command-line tools | ✅ Stable | [CLI Plugin README](plugins/communication_protocols/cli/README.md) |
 | [`utcp-mcp`](plugins/communication_protocols/mcp/) | Model Context Protocol | ✅ Stable | [MCP Plugin README](plugins/communication_protocols/mcp/README.md) |
 | [`utcp-text`](plugins/communication_protocols/text/) | Local file-based tools | ✅ Stable | [Text Plugin README](plugins/communication_protocols/text/README.md) |
+| [`utcp-websocket`](plugins/communication_protocols/websocket/) | WebSocket real-time bidirectional communication | ✅ Stable | [WebSocket Plugin README](plugins/communication_protocols/websocket/README.md) |
 | [`utcp-socket`](plugins/communication_protocols/socket/) | TCP/UDP protocols | 🚧 In Progress | [Socket Plugin README](plugins/communication_protocols/socket/README.md) |
 | [`utcp-gql`](plugins/communication_protocols/gql/) | GraphQL APIs | 🚧 In Progress | [GraphQL Plugin README](plugins/communication_protocols/gql/README.md) |
 
@@ -376,9 +377,16 @@ Configuration examples for each protocol. Remember to replace `provider_type` wi
   "url": "https://api.example.com/users/{user_id}", // Required
   "http_method": "POST", // Required, default: "GET"
   "content_type": "application/json", // Optional, default: "application/json"
-  "auth": { // Optional, example using ApiKeyAuth for a Bearer token. The client must prepend "Bearer " to the token.
+  "allowed_communication_protocols": ["http"], // Optional, defaults to [call_template_type]. Restricts which protocols tools can use.
+  "auth": { // Optional, authentication for the HTTP request (example using ApiKeyAuth for Bearer token)
     "auth_type": "api_key",
     "api_key": "Bearer $API_KEY", // Required
+    "var_name": "Authorization", // Optional, default: "X-Api-Key"
+    "location": "header" // Optional, default: "header"
+  },
+  "auth_tools": { // Optional, authentication for converted tools, if this call template points to an openapi spec that should be automatically converted to a utcp manual (applied only to endpoints requiring auth per OpenAPI spec)
+    "auth_type": "api_key",
+    "api_key": "Bearer $TOOL_API_KEY", // Required
     "var_name": "Authorization", // Optional, default: "X-Api-Key"
     "location": "header" // Optional, default: "header"
   },
@@ -437,31 +445,34 @@ Note the name change from `http_stream` to `streamable_http`.
 
 ```json
 {
-  "name": "my_cli_tool",
+  "name": "multi_step_cli_tool",
   "call_template_type": "cli", // Required
-  "commands": [ // Required - array of commands to execute in sequence
+  "commands": [ // Required - sequential command execution
     {
-      "command": "cd UTCP_ARG_target_dir_UTCP_END",
-      "append_to_final_output": false // Optional, default is false if not last command
+      "command": "git clone UTCP_ARG_repo_url_UTCP_END temp_repo",
+      "append_to_final_output": false
     },
     {
-      "command": "my-command --input UTCP_ARG_input_file_UTCP_END"
-      // append_to_final_output defaults to true for last command
+      "command": "cd temp_repo && find . -name '*.py' | wc -l"
+      // Last command output returned by default
     }
   ],
   "env_vars": { // Optional
-    "MY_VAR": "my_value"
+    "GIT_AUTHOR_NAME": "UTCP Bot",
+    "API_KEY": "${MY_API_KEY}"
   },
-  "working_dir": "/path/to/working/directory", // Optional
+  "working_dir": "/tmp", // Optional
   "auth": null // Optional (always null for CLI)
 }
 ```
 
-**Notes:**
-- Commands execute in a single subprocess (PowerShell on Windows, Bash on Unix)
-- Use `UTCP_ARG_argname_UTCP_END` placeholders for arguments
-- Reference previous command output with `$CMD_0_OUTPUT`, `$CMD_1_OUTPUT`, etc.
-- Only the last command's output is returned by default
+**CLI Protocol Features:**
+- **Multi-command execution**: Commands run sequentially in single subprocess
+- **Cross-platform**: PowerShell on Windows, Bash on Unix/Linux/macOS  
+- **State preservation**: Directory changes (`cd`) persist between commands
+- **Argument placeholders**: `UTCP_ARG_argname_UTCP_END` format
+- **Output referencing**: Access previous outputs with `$CMD_0_OUTPUT`, `$CMD_1_OUTPUT`
+- **Flexible output control**: Choose which command outputs to include in final result
 
 ### Text Call Template
 
@@ -470,7 +481,13 @@ Note the name change from `http_stream` to `streamable_http`.
   "name": "my_text_manual",
   "call_template_type": "text", // Required
   "file_path": "./manuals/my_manual.json", // Required
-  "auth": null // Optional (always null for Text)
+  "auth": null, // Optional (always null for Text)
+  "auth_tools": { // Optional, authentication for generated tools from OpenAPI specs
+    "auth_type": "api_key",
+    "api_key": "Bearer ${API_TOKEN}",
+    "var_name": "Authorization",
+    "location": "header"
+  }
 }
 ```
 
@@ -496,6 +513,81 @@ Note the name change from `http_stream` to `streamable_http`.
     "scope": "read:tools" // Optional
   }
 }
+```
+
+## Security: Protocol Restrictions
+
+UTCP provides fine-grained control over which communication protocols each manual can use through the `allowed_communication_protocols` field. This prevents potentially dangerous protocol escalation (e.g., an HTTP-based manual accidentally calling CLI tools).
+
+### Default Behavior (Secure by Default)
+
+When `allowed_communication_protocols` is not set or is empty, a manual can only register and call tools that use the **same protocol type** as the manual itself:
+
+```python
+from utcp_http.http_call_template import HttpCallTemplate
+
+# This manual can ONLY register/call HTTP tools (default restriction)
+http_manual = HttpCallTemplate(
+    name="my_api",
+    call_template_type="http",
+    url="https://api.example.com/utcp"
+    # allowed_communication_protocols not set → defaults to ["http"]
+)
+```
+
+### Allowing Multiple Protocols
+
+To allow a manual to work with tools from multiple protocols, explicitly set `allowed_communication_protocols`:
+
+```python
+from utcp_http.http_call_template import HttpCallTemplate
+
+# This manual can register/call both HTTP and CLI tools
+multi_protocol_manual = HttpCallTemplate(
+    name="flexible_manual",
+    call_template_type="http",
+    url="https://api.example.com/utcp",
+    allowed_communication_protocols=["http", "cli"]  # Explicitly allow both
+)
+```
+
+### JSON Configuration
+
+```json
+{
+  "name": "my_api",
+  "call_template_type": "http",
+  "url": "https://api.example.com/utcp",
+  "allowed_communication_protocols": ["http", "cli", "mcp"]
+}
+```
+
+### Behavior Summary
+
+| `allowed_communication_protocols` | Manual Type | Allowed Tool Protocols |
+|----------------------------------|-------------|------------------------|
+| Not set / `null` | `"http"` | Only `"http"` |
+| `[]` (empty) | `"http"` | Only `"http"` |
+| `["http", "cli"]` | `"http"` | `"http"` and `"cli"` |
+| `["http", "cli", "mcp"]` | `"cli"` | `"http"`, `"cli"`, and `"mcp"` |
+
+### Registration Filtering
+
+During `register_manual()`, tools that don't match the allowed protocols are automatically filtered out with a warning:
+
+```
+WARNING - Tool 'dangerous_tool' uses communication protocol 'cli' which is not in 
+allowed protocols ['http'] for manual 'my_api'. Tool will not be registered.
+```
+
+### Call-Time Validation
+
+Even if a tool somehow exists in the repository, calling it will fail if its protocol is not allowed:
+
+```python
+# Raises ValueError: Tool 'my_api.some_cli_tool' uses communication protocol 'cli' 
+# which is not allowed by manual 'my_api'. Allowed protocols: ['http']
+await client.call_tool("my_api.some_cli_tool", {"arg": "value"})
 ```
 
 ## Testing
@@ -534,5 +626,69 @@ The build process now involves building each package (`core` and `plugins`) sepa
 3.  Navigate to the package directory (e.g., `cd core`).
 4.  Run the build: `python -m build`.
 5.  The distributable files (`.whl` and `.tar.gz`) will be in the `dist/` directory.
+
+## OpenAPI Ingestion - Zero Infrastructure Tool Integration
+
+🚀 **Transform any existing REST API into UTCP tools without server modifications!**
+
+UTCP's OpenAPI ingestion feature automatically converts OpenAPI 2.0/3.0 specifications into UTCP tools, enabling AI agents to interact with existing APIs directly - no wrapper servers, no API changes, no additional infrastructure required.
+
+### Quick Start with OpenAPI
+
+```python
+from utcp_http.openapi_converter import OpenApiConverter
+import aiohttp
+
+# Convert any OpenAPI spec to UTCP tools
+async def convert_api():
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://api.github.com/openapi.json") as response:
+            openapi_spec = await response.json()
+    
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+    
+    print(f"Generated {len(manual.tools)} tools from GitHub API!")
+    return manual
+
+# Or use UTCP Client configuration for automatic detection
+from utcp.utcp_client import UtcpClient
+
+client = await UtcpClient.create(config={
+    "manual_call_templates": [{
+        "name": "github",
+        "call_template_type": "http", 
+        "url": "https://api.github.com/openapi.json",
+        "auth_tools": {  # Authentication for generated tools requiring auth
+            "auth_type": "api_key",
+            "api_key": "Bearer ${GITHUB_TOKEN}",
+            "var_name": "Authorization",
+            "location": "header"
+        }
+    }]
+})
+```
+
+### Key Benefits
+
+- ✅ **Zero Infrastructure**: No servers to deploy or maintain
+- ✅ **Direct API Calls**: Native performance, no proxy overhead  
+- ✅ **Automatic Conversion**: OpenAPI schemas → UTCP tools
+- ✅ **Selective Authentication**: Only protected endpoints get auth, public endpoints remain accessible
+- ✅ **Authentication Preserved**: API keys, OAuth2, Basic auth supported
+- ✅ **Multi-format Support**: JSON, YAML, OpenAPI 2.0/3.0
+- ✅ **Batch Processing**: Convert multiple APIs simultaneously
+
+### Multiple Ingestion Methods
+
+1. **Direct Converter**: `OpenApiConverter` class for full control
+2. **Remote URLs**: Fetch and convert specs from any URL
+3. **Client Configuration**: Include specs directly in UTCP config
+4. **Batch Processing**: Process multiple specs programmatically
+5. **File-based**: Convert local JSON/YAML specifications
+
+📖 **[Complete OpenAPI Ingestion Guide](docs/openapi-ingestion.md)** - Detailed examples and advanced usage
+
+---
 
 ## [Contributors](https://www.utcp.io/about)

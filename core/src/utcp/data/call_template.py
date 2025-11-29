@@ -40,11 +40,17 @@ class CallTemplate(BaseModel):
             Should be unique across all providers and recommended to be set to a human-readable name.
             Can only contain letters, numbers and underscores. All special characters must be replaced with underscores.
         call_template_type: The transport protocol type used by this provider.
+        allowed_communication_protocols: Optional list of communication protocol types that tools
+            registered under this manual are allowed to use. If None or empty, defaults to only allowing
+            the same protocol type as the manual's call_template_type. This provides fine-grained security
+            control - e.g., set to ["http", "cli"] to allow both HTTP and CLI tools, or leave unset to
+            restrict tools to the manual's own protocol type.
     """
     
     name: str = Field(default_factory=lambda: uuid.uuid4().hex)
     call_template_type: str
     auth: Optional[Auth] = None
+    allowed_communication_protocols: Optional[List[str]] = None
 
     @field_serializer("auth")
     def serialize_auth(self, auth: Optional[Auth]):

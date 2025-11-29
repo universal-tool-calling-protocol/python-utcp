@@ -95,11 +95,26 @@ class UtcpClientImplementation(UtcpClient):
         """REQUIRED
         Register a manual in the client.
 
+        Registers a manual and its tools with the client. During registration, tools are
+        filtered based on the manual's `allowed_communication_protocols` setting:
+        
+        - If `allowed_communication_protocols` is set to a non-empty list, only tools using
+          protocols in that list are registered.
+        - If `allowed_communication_protocols` is None or empty, it defaults to only allowing
+          the manual's own `call_template_type`. This provides secure-by-default behavior.
+        
+        Tools that don't match the allowed protocols are excluded from registration and a
+        warning is logged for each excluded tool.
+
         Args:
             manual_call_template: The `CallTemplate` instance representing the manual to register.
 
         Returns:
-            A `RegisterManualResult` instance representing the result of the registration.
+            A `RegisterManualResult` instance containing the registered tools (filtered by
+            allowed protocols) and any errors encountered.
+
+        Raises:
+            ValueError: If manual name is already registered or communication protocol is not found.
         """
         # Replace all non-word characters with underscore
         manual_call_template.name = re.sub(r'[^\w]', '_', manual_call_template.name)
@@ -112,9 +127,27 @@ class UtcpClientImplementation(UtcpClient):
         result = await CommunicationProtocol.communication_protocols[manual_call_template.call_template_type].register_manual(self, manual_call_template)
 
         if result.success:
+            # Determine allowed protocols: use explicit list or default to manual's own protocol
+            allowed_protocols = manual_call_template.allowed_communication_protocols
+            if not allowed_protocols:
+                allowed_protocols = [manual_call_template.call_template_type]
+            
+            # Filter tools based on allowed communication protocols
+            filtered_tools = []
             for tool in result.manual.tools:
-                if not tool.name.startswith(manual_call_template.name + "."):
-                    tool.name = manual_call_template.name + "." + tool.name
+                tool_protocol = tool.tool_call_template.call_template_type if tool.tool_call_template else manual_call_template.call_template_type
+                if tool_protocol in allowed_protocols:
+                    if not tool.name.startswith(manual_call_template.name + "."):
+                        tool.name = manual_call_template.name + "." + tool.name
+                    filtered_tools.append(tool)
+                else:
+                    logger.warning(
+                        f"Tool '{tool.name}' uses communication protocol '{tool_protocol}' "
+                        f"which is not in allowed protocols {allowed_protocols} for manual '{manual_call_template.name}'. "
+                        f"Tool will not be registered."
+                    )
+            
+            result.manual.tools = filtered_tools
             await self.config.tool_repository.save_manual(result.manual_call_template, result.manual)
 
         return result
@@ -177,12 +210,25 @@ class UtcpClientImplementation(UtcpClient):
         """REQUIRED
         Call a tool in the client.
 
+        Executes a registered tool with the provided arguments. Before execution, validates
+        that the tool's communication protocol is allowed by the parent manual's
+        `allowed_communication_protocols` setting:
+        
+        - If `allowed_communication_protocols` is set to a non-empty list, the tool's protocol
+          must be in that list.
+        - If `allowed_communication_protocols` is None or empty, only tools using the manual's
+          own `call_template_type` are allowed.
+
         Args:
-            tool_name: The name of the tool to call.
+            tool_name: The fully qualified name of the tool (e.g., "manual_name.tool_name").
             tool_args: A dictionary of arguments to pass to the tool.
 
         Returns:
-            The result of the tool call.
+            The result of the tool call, after any post-processing.
+
+        Raises:
+            ValueError: If the tool is not found or if the tool's communication protocol
+                is not in the manual's allowed protocols.
         """
         manual_name = tool_name.split(".")[0]
         tool = await self.config.tool_repository.get_tool(tool_name)
@@ -190,6 +236,20 @@ class UtcpClientImplementation(UtcpClient):
             raise ValueError(f"Tool not found: {tool_name}")
         tool_call_template = tool.tool_call_template
         tool_call_template = self._substitute_call_template_variables(tool_call_template, manual_name)
+        
+        # Check if the tool's communication protocol is allowed by the manual
+        manual_call_template = await self.config.tool_repository.get_manual_call_template(manual_name)
+        if manual_call_template:
+            allowed_protocols = manual_call_template.allowed_communication_protocols
+            if not allowed_protocols:
+                allowed_protocols = [manual_call_template.call_template_type]
+            if tool_call_template.call_template_type not in allowed_protocols:
+                raise ValueError(
+                    f"Tool '{tool_name}' uses communication protocol '{tool_call_template.call_template_type}' "
+                    f"which is not allowed by manual '{manual_name}'. "
+                    f"Allowed protocols: {allowed_protocols}"
+                )
+        
         result = await CommunicationProtocol.communication_protocols[tool_call_template.call_template_type].call_tool(self, tool_name, tool_args, tool_call_template)
         
         for post_processor in self.config.post_processing:
@@ -198,14 +258,27 @@ class UtcpClientImplementation(UtcpClient):
 
     async def call_tool_streaming(self, tool_name: str, tool_args: Dict[str, Any]) -> AsyncGenerator[Any, None]:
         """REQUIRED
-        Call a tool in the client streamingly.
+        Call a tool in the client with streaming response.
+
+        Executes a registered tool with streaming output. Before execution, validates
+        that the tool's communication protocol is allowed by the parent manual's
+        `allowed_communication_protocols` setting:
+        
+        - If `allowed_communication_protocols` is set to a non-empty list, the tool's protocol
+          must be in that list.
+        - If `allowed_communication_protocols` is None or empty, only tools using the manual's
+          own `call_template_type` are allowed.
 
         Args:
-            tool_name: The name of the tool to call.
+            tool_name: The fully qualified name of the tool (e.g., "manual_name.tool_name").
             tool_args: A dictionary of arguments to pass to the tool.
 
-        Returns:
-            An async generator yielding the result of the tool call.
+        Yields:
+            Chunks of the tool's streaming response, after any post-processing.
+
+        Raises:
+            ValueError: If the tool is not found or if the tool's communication protocol
+                is not in the manual's allowed protocols.
         """
         manual_name = tool_name.split(".")[0]
         tool = await self.config.tool_repository.get_tool(tool_name)
@@ -213,6 +286,20 @@ class UtcpClientImplementation(UtcpClient):
             raise ValueError(f"Tool not found: {tool_name}")
         tool_call_template = tool.tool_call_template
         tool_call_template = self._substitute_call_template_variables(tool_call_template, manual_name)
+        
+        # Check if the tool's communication protocol is allowed by the manual
+        manual_call_template = await self.config.tool_repository.get_manual_call_template(manual_name)
+        if manual_call_template:
+            allowed_protocols = manual_call_template.allowed_communication_protocols
+            if not allowed_protocols:
+                allowed_protocols = [manual_call_template.call_template_type]
+            if tool_call_template.call_template_type not in allowed_protocols:
+                raise ValueError(
+                    f"Tool '{tool_name}' uses communication protocol '{tool_call_template.call_template_type}' "
+                    f"which is not allowed by manual '{manual_name}'. "
+                    f"Allowed protocols: {allowed_protocols}"
+                )
+        
         async for item in CommunicationProtocol.communication_protocols[tool_call_template.call_template_type].call_tool_streaming(self, tool_name, tool_args, tool_call_template):
             for post_processor in self.config.post_processing:
                 item = post_processor.post_process(self, tool, tool_call_template, item)
