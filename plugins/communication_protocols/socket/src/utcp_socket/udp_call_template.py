@@ -1,6 +1,9 @@
 from utcp.data.call_template import CallTemplate
 from typing import Optional, Literal
 from pydantic import Field
+from utcp.interfaces.serializer import Serializer
+from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 
 class UDPProvider(CallTemplate):
     """Provider configuration for UDP (User Datagram Protocol) socket tools.
@@ -38,3 +41,16 @@ class UDPProvider(CallTemplate):
     response_byte_format: Optional[str] = Field(default="utf-8", description="Encoding to decode response bytes. If None, returns raw bytes.")
     timeout: int = 30000
     auth: None = None
+
+
+class UDPProviderSerializer(Serializer[UDPProvider]):
+    def to_dict(self, obj: UDPProvider) -> dict:
+        return obj.model_dump()
+
+    def validate_dict(self, data: dict) -> UDPProvider:
+        try:
+            return UDPProvider.model_validate(data)
+        except Exception as e:
+            raise UtcpSerializerValidationError(
+                f"Invalid UDPProvider: {e}\n{traceback.format_exc()}"
+            )

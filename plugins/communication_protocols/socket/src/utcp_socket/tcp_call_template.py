@@ -1,6 +1,9 @@
 from utcp.data.call_template import CallTemplate
 from typing import Optional, Literal
 from pydantic import Field
+from utcp.interfaces.serializer import Serializer
+from utcp.exceptions import UtcpSerializerValidationError
+import traceback
 
 class TCPProvider(CallTemplate):
     """Provider configuration for raw TCP socket tools.
@@ -63,7 +66,11 @@ class TCPProvider(CallTemplate):
     # Delimiter-based framing options
     message_delimiter: str = Field(
         default='\x00',
-        description="Delimiter to detect end of TCP response (e.g., '\\n', '\\r\\n', '\\x00'). Used with 'delimiter' framing."
+        description="Delimiter to detect end of TCP response (e.g., '\n', '\r\n', '\x00'). Used with 'delimiter' framing."
+    )
+    interpret_escape_sequences: bool = Field(
+        default=True,
+        description="If True, interpret Python-style escape sequences in message_delimiter (e.g., '\\n', '\\r\\n', '\\x00'). If False, use the delimiter literally as provided."
     )
     # Fixed-length framing options
     fixed_message_length: Optional[int] = Field(
@@ -77,3 +84,16 @@ class TCPProvider(CallTemplate):
     )
     timeout: int = 30000
     auth: None = None
+
+
+class TCPProviderSerializer(Serializer[TCPProvider]):
+    def to_dict(self, obj: TCPProvider) -> dict:
+        return obj.model_dump()
+
+    def validate_dict(self, data: dict) -> TCPProvider:
+        try:
+            return TCPProvider.model_validate(data)
+        except Exception as e:
+            raise UtcpSerializerValidationError(
+                f"Invalid TCPProvider: {e}\n{traceback.format_exc()}"
+            )

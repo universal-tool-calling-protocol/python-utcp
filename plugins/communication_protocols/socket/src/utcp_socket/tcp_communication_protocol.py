@@ -10,9 +10,12 @@ import struct
 import sys
 from typing import Dict, Any, List, Optional, Callable, Union
 
-from utcp.client.client_transport_interface import ClientTransportInterface
-from utcp.shared.provider import Provider, TCPProvider
-from utcp.shared.tool import Tool
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp_socket.tcp_call_template import TCPProvider, TCPProviderSerializer
+from utcp.data.tool import Tool
+from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.data.utcp_manual import UtcpManual
 import logging
 
 logging.basicConfig(
@@ -22,7 +25,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-class TCPTransport(ClientTransportInterface):
+class TCPTransport(CommunicationProtocol):
     """Transport implementation for TCP-based tool providers.
     
     This transport communicates with tools over TCP sockets. It supports:
@@ -85,6 +88,35 @@ class TCPTransport(ClientTransportInterface):
         else:
             # Default to JSON format
             return json.dumps(tool_args)
+
+    def _ensure_tool_call_template(self, tool_data: Dict[str, Any], manual_call_template: TCPProvider) -> Dict[str, Any]:
+        """Normalize tool definition to include a valid 'tool_call_template'.
+        
+        - If 'tool_call_template' exists, validate it.
+        - Else if legacy 'tool_provider' exists, convert using TCPProviderSerializer.
+        - Else default to the provided manual_call_template.
+        """
+        normalized = dict(tool_data)
+        try:
+            if "tool_call_template" in normalized and normalized["tool_call_template"] is not None:
+                try:
+                    ctpl = CallTemplateSerializer().validate_dict(normalized["tool_call_template"])  # type: ignore
+                    normalized["tool_call_template"] = ctpl
+                except Exception:
+                    normalized["tool_call_template"] = manual_call_template
+            elif "tool_provider" in normalized and normalized["tool_provider"] is not None:
+                try:
+                    ctpl = TCPProviderSerializer().validate_dict(normalized["tool_provider"])  # type: ignore
+                    normalized.pop("tool_provider", None)
+                    normalized["tool_call_template"] = ctpl
+                except Exception:
+                    normalized.pop("tool_provider", None)
+                    normalized["tool_call_template"] = manual_call_template
+            else:
+                normalized["tool_call_template"] = manual_call_template
+        except Exception:
+            normalized["tool_call_template"] = manual_call_template
+        return normalized
     
     def _encode_message_with_framing(self, message: str, provider: TCPProvider) -> bytes:
         """Encode message with appropriate TCP framing.
@@ -115,10 +147,15 @@ class TCPTransport(ClientTransportInterface):
         
         elif provider.framing_strategy == "delimiter":
             # Add delimiter after the message
-            delimiter = provider.message_delimiter or "\\x00"
-            # Handle escape sequences
-            delimiter = delimiter.encode('utf-8').decode('unicode_escape')
-            return message_bytes + delimiter.encode('utf-8')
+            delimiter = provider.message_delimiter or "\x00"
+            if provider.interpret_escape_sequences:
+                # Handle escape sequences (e.g., "\n", "\r\n", "\x00")
+                delimiter = delimiter.encode('utf-8').decode('unicode_escape')
+                delimiter_bytes = delimiter.encode('utf-8')
+            else:
+                # Use delimiter literally as provided
+                delimiter_bytes = delimiter.encode('utf-8')
+            return message_bytes + delimiter_bytes
         
         elif provider.framing_strategy in ("fixed_length", "stream"):
             # No additional framing needed
@@ -170,8 +207,19 @@ class TCPTransport(ClientTransportInterface):
         
         elif provider.framing_strategy == "delimiter":
             # Read until delimiter is found
-            delimiter = provider.message_delimiter or "\\x00"
-            delimiter = delimiter.encode('utf-8').decode('unicode_escape').encode('utf-8')
+            # Delimiter handling:
+            # The code supports both literal delimiters (e.g., "\\x00") and escape-sequence interpreted delimiters (e.g., "\x00")
+            # via the `interpret_escape_sequences` flag in TCPProvider. This ensures compatibility with both legacy and updated
+            # wire protocols. The delimiter is interpreted according to the flag, so no breaking change occurs unless the flag
+            # is set differently than expected by the server/client.
+            # Example:
+            #     If interpret_escape_sequences is True, "\\x00" becomes a null byte; if False, it remains four literal bytes.
+            #     delimiter = delimiter.encode('utf-8')
+            delimiter = provider.message_delimiter or "\x00"
+            if provider.interpret_escape_sequences:
+                delimiter_bytes = delimiter.encode('utf-8').decode('unicode_escape').encode('utf-8')
+            else:
+                delimiter_bytes = delimiter.encode('utf-8')
             
             response_data = b""
             while True:
@@ -181,9 +229,9 @@ class TCPTransport(ClientTransportInterface):
                 response_data += chunk
                 
                 # Check if we've received the delimiter
-                if response_data.endswith(delimiter):
+                if response_data.endswith(delimiter_bytes):
                     # Remove delimiter from response
-                    return response_data[:-len(delimiter)]
+                    return response_data[:-len(delimiter_bytes)]
         
         elif provider.framing_strategy == "fixed_length":
             # Read exactly fixed_message_length bytes
@@ -214,10 +262,14 @@ class TCPTransport(ClientTransportInterface):
                     break
             
             return response_data
-        
-        else:
-            raise ValueError(f"Unknown framing strategy: {provider.framing_strategy}")
 
+        else:
+            # Copilot AI (5 days ago):
+            # The else branch for unknown framing strategies was previously removed,
+            # which could cause silent fallthrough and confusing behavior. Add explicit
+            # validation to raise a descriptive error when an unsupported strategy is provided.
+            raise ValueError(f"Unknown framing strategy: {provider.framing_strategy!r}")
+        
     async def _send_tcp_message(
         self,
         host: str,
@@ -289,122 +341,91 @@ class TCPTransport(ClientTransportInterface):
             self._log_error(f"Error in TCP communication: {e}")
             raise
 
-    async def register_tool_provider(self, manual_provider: Provider) -> List[Tool]:
-        """Register a TCP provider and discover its tools.
-        
-        Sends a discovery message to the TCP provider and parses the response.
-        
-        Args:
-            manual_provider: The TCPProvider to register
-            
-        Returns:
-            List of tools discovered from the TCP provider
-            
-        Raises:
-            ValueError: If provider is not a TCPProvider
-        """
-        if not isinstance(manual_provider, TCPProvider):
+    async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
+        """Register a TCP manual and discover its tools."""
+        if not isinstance(manual_call_template, TCPProvider):
             raise ValueError("TCPTransport can only be used with TCPProvider")
         
-        self._log_info(f"Registering TCP provider '{manual_provider.name}'")
+        self._log_info(f"Registering TCP provider '{manual_call_template.name}'")
         
         try:
-            # Send discovery message
-            discovery_message = json.dumps({
-                "type": "utcp"
-            })
-            
+            discovery_message = json.dumps({"type": "utcp"})
             response = await self._send_tcp_message(
-                manual_provider.host,
-                manual_provider.port,
+                manual_call_template.host,
+                manual_call_template.port,
                 discovery_message,
-                manual_provider,
-                manual_provider.timeout / 1000.0,  # Convert ms to seconds
-                manual_provider.response_byte_format
+                manual_call_template,
+                manual_call_template.timeout / 1000.0,
+                manual_call_template.response_byte_format
             )
-            
-            # Parse response
             try:
-                # Handle bytes response by trying to decode as UTF-8 for JSON parsing
-                if isinstance(response, bytes):
-                    response_str = response.decode('utf-8')
-                else:
-                    response_str = response
-                    
+                response_str = response.decode('utf-8') if isinstance(response, bytes) else response
                 response_data = json.loads(response_str)
-                
-                # Check if response contains tools
+                tools: List[Tool] = []
                 if isinstance(response_data, dict) and 'tools' in response_data:
                     tools_data = response_data['tools']
-                    
-                    # Parse tools
-                    tools = []
                     for tool_data in tools_data:
                         try:
-                            tool = Tool(**tool_data)
-                            tools.append(tool)
+                            normalized = self._ensure_tool_call_template(tool_data, manual_call_template)
+                            tools.append(Tool(**normalized))
                         except Exception as e:
-                            self._log_error(f"Invalid tool definition in TCP provider '{manual_provider.name}': {e}")
+                            self._log_error(f"Invalid tool definition in TCP provider '{manual_call_template.name}': {e}")
                             continue
-                    
-                    self._log_info(f"Discovered {len(tools)} tools from TCP provider '{manual_provider.name}'")
-                    return tools
+                    self._log_info(f"Discovered {len(tools)} tools from TCP provider '{manual_call_template.name}'")
                 else:
-                    self._log_info(f"No tools found in TCP provider '{manual_provider.name}' response")
-                    return []
-                    
+                    self._log_info(f"No tools found in TCP provider '{manual_call_template.name}' response")
+                manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=tools)
+                return RegisterManualResult(
+                    manual_call_template=manual_call_template,
+                    manual=manual,
+                    success=True,
+                    errors=[]
+                )
             except json.JSONDecodeError as e:
-                self._log_error(f"Invalid JSON response from TCP provider '{manual_provider.name}': {e}")
-                return []
-                
+                self._log_error(f"Invalid JSON response from TCP provider '{manual_call_template.name}': {e}")
+                return RegisterManualResult(
+                    manual_call_template=manual_call_template,
+                    manual=UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[]),
+                    success=False,
+                    errors=[str(e)]
+                )
         except Exception as e:
-            self._log_error(f"Error registering TCP provider '{manual_provider.name}': {e}")
-            return []
+            self._log_error(f"Error registering TCP provider '{manual_call_template.name}': {e}")
+            return RegisterManualResult(
+                manual_call_template=manual_call_template,
+                manual=UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[]),
+                success=False,
+                errors=[str(e)]
+            )
     
-    async def deregister_tool_provider(self, manual_provider: Provider) -> None:
-        """Deregister a TCP provider.
-        
-        This is a no-op for TCP providers since connections are created per request.
-        
-        Args:
-            manual_provider: The provider to deregister
-        """
-        if not isinstance(manual_provider, TCPProvider):
+    async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
+        """Deregister a TCP provider (no-op)."""
+        if not isinstance(manual_call_template, TCPProvider):
             raise ValueError("TCPTransport can only be used with TCPProvider")
-            
-        self._log_info(f"Deregistering TCP provider '{manual_provider.name}' (no-op)")
+        self._log_info(f"Deregistering TCP provider '{manual_call_template.name}' (no-op)")
     
-    async def call_tool(self, tool_name: str, tool_args: Dict[str, Any], tool_provider: Provider) -> Any:
-        """Call a TCP tool.
-        
-        Sends a tool call message to the TCP provider and returns the response.
-        
-        Args:
-            tool_name: Name of the tool to call
-            tool_args: Arguments for the tool call
-            tool_provider: The TCPProvider containing the tool
-            
-        Returns:
-            The response from the TCP tool
-            
-        Raises:
-            ValueError: If provider is not a TCPProvider
-        """
-        if not isinstance(tool_provider, TCPProvider):
+    async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate):
+        async def _generator():
+            yield await self.call_tool(caller, tool_name, tool_args, tool_call_template)
+        return _generator()
+    
+    async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        """Call a TCP tool."""
+        if not isinstance(tool_call_template, TCPProvider):
             raise ValueError("TCPTransport can only be used with TCPProvider")
         
-        self._log_info(f"Calling TCP tool '{tool_name}' on provider '{tool_provider.name}'")
+        self._log_info(f"Calling TCP tool '{tool_name}' on provider '{tool_call_template.name}'")
         
         try:
-            tool_call_message = self._format_tool_call_message(tool_args, tool_provider)
+            tool_call_message = self._format_tool_call_message(tool_args, tool_call_template)
             
             response = await self._send_tcp_message(
-                tool_provider.host,
-                tool_provider.port,
+                tool_call_template.host,
+                tool_call_template.port,
                 tool_call_message,
-                tool_provider,
-                tool_provider.timeout / 1000.0,  # Convert ms to seconds
-                tool_provider.response_byte_format
+                tool_call_template,
+                tool_call_template.timeout / 1000.0,
+                tool_call_template.response_byte_format
             )
             return response
                 
