@@ -377,6 +377,7 @@ Configuration examples for each protocol. Remember to replace `provider_type` wi
   "url": "https://api.example.com/users/{user_id}", // Required
   "http_method": "POST", // Required, default: "GET"
   "content_type": "application/json", // Optional, default: "application/json"
+  "allowed_communication_protocols": ["http"], // Optional, defaults to [call_template_type]. Restricts which protocols tools can use.
   "auth": { // Optional, authentication for the HTTP request (example using ApiKeyAuth for Bearer token)
     "auth_type": "api_key",
     "api_key": "Bearer $API_KEY", // Required
@@ -512,6 +513,81 @@ Note the name change from `http_stream` to `streamable_http`.
     "scope": "read:tools" // Optional
   }
 }
+```
+
+## Security: Protocol Restrictions
+
+UTCP provides fine-grained control over which communication protocols each manual can use through the `allowed_communication_protocols` field. This prevents potentially dangerous protocol escalation (e.g., an HTTP-based manual accidentally calling CLI tools).
+
+### Default Behavior (Secure by Default)
+
+When `allowed_communication_protocols` is not set or is empty, a manual can only register and call tools that use the **same protocol type** as the manual itself:
+
+```python
+from utcp_http.http_call_template import HttpCallTemplate
+
+# This manual can ONLY register/call HTTP tools (default restriction)
+http_manual = HttpCallTemplate(
+    name="my_api",
+    call_template_type="http",
+    url="https://api.example.com/utcp"
+    # allowed_communication_protocols not set → defaults to ["http"]
+)
+```
+
+### Allowing Multiple Protocols
+
+To allow a manual to work with tools from multiple protocols, explicitly set `allowed_communication_protocols`:
+
+```python
+from utcp_http.http_call_template import HttpCallTemplate
+
+# This manual can register/call both HTTP and CLI tools
+multi_protocol_manual = HttpCallTemplate(
+    name="flexible_manual",
+    call_template_type="http",
+    url="https://api.example.com/utcp",
+    allowed_communication_protocols=["http", "cli"]  # Explicitly allow both
+)
+```
+
+### JSON Configuration
+
+```json
+{
+  "name": "my_api",
+  "call_template_type": "http",
+  "url": "https://api.example.com/utcp",
+  "allowed_communication_protocols": ["http", "cli", "mcp"]
+}
+```
+
+### Behavior Summary
+
+| `allowed_communication_protocols` | Manual Type | Allowed Tool Protocols |
+|----------------------------------|-------------|------------------------|
+| Not set / `null` | `"http"` | Only `"http"` |
+| `[]` (empty) | `"http"` | Only `"http"` |
+| `["http", "cli"]` | `"http"` | `"http"` and `"cli"` |
+| `["http", "cli", "mcp"]` | `"cli"` | `"http"`, `"cli"`, and `"mcp"` |
+
+### Registration Filtering
+
+During `register_manual()`, tools that don't match the allowed protocols are automatically filtered out with a warning:
+
+```
+WARNING - Tool 'dangerous_tool' uses communication protocol 'cli' which is not in 
+allowed protocols ['http'] for manual 'my_api'. Tool will not be registered.
+```
+
+### Call-Time Validation
+
+Even if a tool somehow exists in the repository, calling it will fail if its protocol is not allowed:
+
+```python
+# Raises ValueError: Tool 'my_api.some_cli_tool' uses communication protocol 'cli' 
+# which is not allowed by manual 'my_api'. Allowed protocols: ['http']
+await client.call_tool("my_api.some_cli_tool", {"arg": "value"})
 ```
 
 ## Testing

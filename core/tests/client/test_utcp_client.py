@@ -725,6 +725,236 @@ class TestUtcpClientEdgeCases:
             os.unlink(temp_file)
 
 
+class TestAllowedCommunicationProtocols:
+    """Test allowed_communication_protocols restriction functionality."""
+
+    @pytest.mark.asyncio
+    async def test_call_tool_allowed_protocol(self, utcp_client, sample_tools, isolated_communication_protocols):
+        """Test calling a tool when its protocol is in the allowed list."""
+        client = utcp_client
+        call_template = HttpCallTemplate(
+            name="test_manual",
+            url="https://api.example.com/tool",
+            http_method="POST",
+            call_template_type="http",
+            allowed_communication_protocols=["http", "cli"]  # Allow both HTTP and CLI
+        )
+        
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=sample_tools[:1])
+        mock_protocol = MockCommunicationProtocol(manual, "test_result")
+        CommunicationProtocol.communication_protocols["http"] = mock_protocol
+        
+        await client.register_manual(call_template)
+        
+        # Call should succeed since "http" is in allowed_communication_protocols
+        result = await client.call_tool("test_manual.http_tool", {"param1": "value1"})
+        assert result == "test_result"
+
+    @pytest.mark.asyncio
+    async def test_register_filters_disallowed_protocol_tools(self, utcp_client, sample_tools, isolated_communication_protocols):
+        """Test that tools with disallowed protocols are filtered during registration."""
+        client = utcp_client
+        
+        # Register HTTP manual that only allows "http" protocol
+        http_call_template = HttpCallTemplate(
+            name="http_manual",
+            url="https://api.example.com/tool",
+            http_method="POST",
+            call_template_type="http",
+            allowed_communication_protocols=["http"]  # Only allow HTTP
+        )
+        
+        # Create a tool that uses CLI protocol (which is not allowed)
+        cli_tool = Tool(
+            name="cli_tool",
+            description="CLI test tool",
+            inputs=JsonSchema(
+                type="object",
+                properties={"command": {"type": "string", "description": "Command to execute"}},
+                required=["command"]
+            ),
+            outputs=JsonSchema(
+                type="object",
+                properties={"output": {"type": "string", "description": "Command output"}}
+            ),
+            tags=["cli", "test"],
+            tool_call_template=CliCallTemplate(
+                name="cli_provider",
+                commands=[{"command": "echo UTCP_ARG_command_UTCP_END"}],
+                call_template_type="cli"
+            )
+        )
+        
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[cli_tool])
+        mock_http_protocol = MockCommunicationProtocol(manual)
+        mock_cli_protocol = MockCommunicationProtocol()
+        CommunicationProtocol.communication_protocols["http"] = mock_http_protocol
+        CommunicationProtocol.communication_protocols["cli"] = mock_cli_protocol
+        
+        result = await client.register_manual(http_call_template)
+        
+        # CLI tool should be filtered out during registration
+        assert len(result.manual.tools) == 0
+        
+        # Tool should not exist in repository
+        tool = await client.config.tool_repository.get_tool("http_manual.cli_tool")
+        assert tool is None
+
+    @pytest.mark.asyncio
+    async def test_call_tool_default_protocol_restriction(self, utcp_client, sample_tools, isolated_communication_protocols):
+        """Test that when no allowed_communication_protocols is set, only the manual's protocol is allowed."""
+        client = utcp_client
+        
+        # Register HTTP manual without explicit protocol restrictions
+        # Default behavior: only HTTP tools should be allowed
+        http_call_template = HttpCallTemplate(
+            name="http_manual",
+            url="https://api.example.com/tool",
+            http_method="POST",
+            call_template_type="http"
+            # No allowed_communication_protocols set - defaults to ["http"]
+        )
+        
+        # Create tools: one HTTP (should be registered), one CLI (should be filtered out)
+        http_tool = Tool(
+            name="http_tool",
+            description="HTTP test tool",
+            inputs=JsonSchema(type="object", properties={}),
+            outputs=JsonSchema(type="object", properties={}),
+            tool_call_template=HttpCallTemplate(
+                name="http_provider",
+                url="https://api.example.com/call",
+                http_method="GET",
+                call_template_type="http"
+            )
+        )
+        cli_tool = Tool(
+            name="cli_tool",
+            description="CLI test tool",
+            inputs=JsonSchema(type="object", properties={}),
+            outputs=JsonSchema(type="object", properties={}),
+            tool_call_template=CliCallTemplate(
+                name="cli_provider",
+                commands=[{"command": "echo test"}],
+                call_template_type="cli"
+            )
+        )
+        
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[http_tool, cli_tool])
+        mock_http_protocol = MockCommunicationProtocol(manual, call_result="http_result")
+        mock_cli_protocol = MockCommunicationProtocol()
+        CommunicationProtocol.communication_protocols["http"] = mock_http_protocol
+        CommunicationProtocol.communication_protocols["cli"] = mock_cli_protocol
+        
+        result = await client.register_manual(http_call_template)
+        
+        # Only HTTP tool should be registered, CLI tool should be filtered out
+        assert len(result.manual.tools) == 1
+        assert result.manual.tools[0].name == "http_manual.http_tool"
+        
+        # HTTP tool call should succeed
+        call_result = await client.call_tool("http_manual.http_tool", {})
+        assert call_result == "http_result"
+        
+        # CLI tool should not exist in repository
+        cli_tool_in_repo = await client.config.tool_repository.get_tool("http_manual.cli_tool")
+        assert cli_tool_in_repo is None
+
+    @pytest.mark.asyncio
+    async def test_register_with_multiple_allowed_protocols(self, utcp_client, sample_tools, isolated_communication_protocols):
+        """Test registration with multiple allowed protocols allows all specified types."""
+        client = utcp_client
+        
+        http_call_template = HttpCallTemplate(
+            name="multi_protocol_manual",
+            url="https://api.example.com/tool",
+            http_method="POST",
+            call_template_type="http",
+            allowed_communication_protocols=["http", "cli"]  # Allow both
+        )
+        
+        http_tool = Tool(
+            name="http_tool",
+            description="HTTP test tool",
+            inputs=JsonSchema(type="object", properties={}),
+            outputs=JsonSchema(type="object", properties={}),
+            tool_call_template=HttpCallTemplate(
+                name="http_provider",
+                url="https://api.example.com/call",
+                http_method="GET",
+                call_template_type="http"
+            )
+        )
+        cli_tool = Tool(
+            name="cli_tool",
+            description="CLI test tool",
+            inputs=JsonSchema(type="object", properties={}),
+            outputs=JsonSchema(type="object", properties={}),
+            tool_call_template=CliCallTemplate(
+                name="cli_provider",
+                commands=[{"command": "echo test"}],
+                call_template_type="cli"
+            )
+        )
+        
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[http_tool, cli_tool])
+        mock_http_protocol = MockCommunicationProtocol(manual, call_result="http_result")
+        mock_cli_protocol = MockCommunicationProtocol(call_result="cli_result")
+        CommunicationProtocol.communication_protocols["http"] = mock_http_protocol
+        CommunicationProtocol.communication_protocols["cli"] = mock_cli_protocol
+        
+        result = await client.register_manual(http_call_template)
+        
+        # Both tools should be registered
+        assert len(result.manual.tools) == 2
+        tool_names = [t.name for t in result.manual.tools]
+        assert "multi_protocol_manual.http_tool" in tool_names
+        assert "multi_protocol_manual.cli_tool" in tool_names
+        
+        # Both tools should be callable
+        http_result = await client.call_tool("multi_protocol_manual.http_tool", {})
+        assert http_result == "http_result"
+        
+        cli_result = await client.call_tool("multi_protocol_manual.cli_tool", {})
+        assert cli_result == "cli_result"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_empty_allowed_protocols_defaults_to_manual_type(self, utcp_client, sample_tools, isolated_communication_protocols):
+        """Test that empty allowed_communication_protocols defaults to manual's protocol type."""
+        client = utcp_client
+        
+        http_call_template = HttpCallTemplate(
+            name="http_manual",
+            url="https://api.example.com/tool",
+            http_method="POST",
+            call_template_type="http",
+            allowed_communication_protocols=[]  # Empty list defaults to ["http"]
+        )
+        
+        cli_tool = Tool(
+            name="cli_tool",
+            description="CLI test tool",
+            inputs=JsonSchema(type="object", properties={}),
+            outputs=JsonSchema(type="object", properties={}),
+            tool_call_template=CliCallTemplate(
+                name="cli_provider",
+                commands=[{"command": "echo test"}],
+                call_template_type="cli"
+            )
+        )
+        
+        manual = UtcpManual(utcp_version="1.0", manual_version="1.0", tools=[cli_tool])
+        mock_http_protocol = MockCommunicationProtocol(manual)
+        mock_cli_protocol = MockCommunicationProtocol(call_result="cli_result")
+        CommunicationProtocol.communication_protocols["http"] = mock_http_protocol
+        CommunicationProtocol.communication_protocols["cli"] = mock_cli_protocol
+        
+        result = await client.register_manual(http_call_template)
+        
+        # CLI tool should be filtered out during registration
+        assert len(result.manual.tools) == 0
+
+
 class TestToolSerialization:
     """Test Tool and JsonSchema serialization."""
 
