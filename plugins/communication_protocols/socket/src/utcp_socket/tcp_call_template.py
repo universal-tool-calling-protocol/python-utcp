@@ -68,6 +68,10 @@ class TCPProvider(CallTemplate):
         default='\x00',
         description="Delimiter to detect end of TCP response (e.g., '\n', '\r\n', '\x00'). Used with 'delimiter' framing."
     )
+    interpret_escape_sequences: bool = Field(
+        default=True,
+        description="If True, interpret Python-style escape sequences in message_delimiter (e.g., '\\n', '\\r\\n', '\\x00'). If False, use the delimiter literally as provided."
+    )
     # Fixed-length framing options
     fixed_message_length: Optional[int] = Field(
         default=None,

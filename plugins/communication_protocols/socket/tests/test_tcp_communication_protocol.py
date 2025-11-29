@@ -15,6 +15,7 @@ async def start_tcp_server():
             # Read any incoming data to simulate request handling
             await reader.read(1024)
         except Exception:
+            # Ignore exceptions during read (e.g., client disconnects), as this is a test server.
             pass
         # Send response and close connection
         writer.write(response_container["bytes"])
@@ -23,6 +24,7 @@ async def start_tcp_server():
             writer.close()
             await writer.wait_closed()
         except Exception:
+            # Ignore exceptions during writer close; connection may already be closed or in error state.
             pass
 
     server = await asyncio.start_server(handle, host="127.0.0.1", port=0)
