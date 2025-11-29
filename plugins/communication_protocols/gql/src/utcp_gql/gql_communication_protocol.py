@@ -14,7 +14,7 @@ from utcp.data.auth_implementations.api_key_auth import ApiKeyAuth
 from utcp.data.auth_implementations.basic_auth import BasicAuth
 from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 
-from utcp_gql.gql_call_template import GraphQLProvider
+from utcp_gql.gql_call_template import GraphQLCallTemplate
 
 if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
@@ -70,25 +70,25 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
                 return token_response["access_token"]
 
     async def _prepare_headers(
-        self, provider: GraphQLProvider, tool_args: Optional[Dict[str, Any]] = None
+        self, call_template: GraphQLCallTemplate, tool_args: Optional[Dict[str, Any]] = None
     ) -> Dict[str, str]:
-        headers: Dict[str, str] = provider.headers.copy() if provider.headers else {}
-        if provider.auth:
-            if isinstance(provider.auth, ApiKeyAuth):
-                if provider.auth.api_key and provider.auth.location == "header":
-                    headers[provider.auth.var_name] = provider.auth.api_key
-            elif isinstance(provider.auth, BasicAuth):
+        headers: Dict[str, str] = call_template.headers.copy() if call_template.headers else {}
+        if call_template.auth:
+            if isinstance(call_template.auth, ApiKeyAuth):
+                if call_template.auth.api_key and call_template.auth.location == "header":
+                    headers[call_template.auth.var_name] = call_template.auth.api_key
+            elif isinstance(call_template.auth, BasicAuth):
                 import base64
 
-                userpass = f"{provider.auth.username}:{provider.auth.password}"
+                userpass = f"{call_template.auth.username}:{call_template.auth.password}"
                 headers["Authorization"] = "Basic " + base64.b64encode(userpass.encode()).decode()
-            elif isinstance(provider.auth, OAuth2Auth):
-                token = await self._handle_oauth2(provider.auth)
+            elif isinstance(call_template.auth, OAuth2Auth):
+                token = await self._handle_oauth2(call_template.auth)
                 headers["Authorization"] = f"Bearer {token}"
 
         # Map selected tool_args into headers if requested
-        if tool_args and provider.header_fields:
-            for field in provider.header_fields:
+        if tool_args and call_template.header_fields:
+            for field in call_template.header_fields:
                 if field in tool_args and isinstance(tool_args[field], str):
                     headers[field] = tool_args[field]
 
@@ -97,8 +97,8 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
     async def register_manual(
         self, caller: "UtcpClient", manual_call_template: CallTemplate
     ) -> RegisterManualResult:
-        if not isinstance(manual_call_template, GraphQLProvider):
-            raise ValueError("GraphQLCommunicationProtocol requires a GraphQLProvider call template")
+        if not isinstance(manual_call_template, GraphQLCallTemplate):
+            raise ValueError("GraphQLCommunicationProtocol requires a GraphQLCallTemplate call template")
         self._enforce_https_or_localhost(manual_call_template.url)
 
         try:
@@ -176,26 +176,40 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
         tool_args: Dict[str, Any],
         tool_call_template: CallTemplate,
     ) -> Any:
-        if not isinstance(tool_call_template, GraphQLProvider):
-            raise ValueError("GraphQLCommunicationProtocol requires a GraphQLProvider call template")
+        if not isinstance(tool_call_template, GraphQLCallTemplate):
+            raise ValueError("GraphQLCommunicationProtocol requires a GraphQLCallTemplate call template")
         self._enforce_https_or_localhost(tool_call_template.url)
 
         headers = await self._prepare_headers(tool_call_template, tool_args)
         transport = AIOHTTPTransport(url=tool_call_template.url, headers=headers)
         async with GqlClient(transport=transport, fetch_schema_from_transport=True) as session:
-            op_type = getattr(tool_call_template, "operation_type", "query")
-            # Strip manual prefix if present (client prefixes at save time)
-            base_tool_name = tool_name.split(".", 1)[-1] if "." in tool_name else tool_name
             # Filter out header fields from GraphQL variables; these are sent via HTTP headers
             header_fields = tool_call_template.header_fields or []
             filtered_args = {k: v for k, v in tool_args.items() if k not in header_fields}
 
-            arg_str = ", ".join(f"${k}: String" for k in filtered_args.keys())
-            var_defs = f"({arg_str})" if arg_str else ""
-            arg_pass = ", ".join(f"{k}: ${k}" for k in filtered_args.keys())
-            arg_pass = f"({arg_pass})" if arg_pass else ""
+            # Use custom query if provided (highest flexibility for agents)
+            if tool_call_template.query:
+                gql_str = tool_call_template.query
+            else:
+                # Auto-generate query - use variable_types for proper typing
+                op_type = getattr(tool_call_template, "operation_type", "query")
+                base_tool_name = tool_name.split(".", 1)[-1] if "." in tool_name else tool_name
+                variable_types = tool_call_template.variable_types or {}
 
-            gql_str = f"{op_type} {var_defs} {{ {base_tool_name}{arg_pass} }}"
+                # Build variable definitions with proper types (default to String)
+                arg_str = ", ".join(
+                    f"${k}: {variable_types.get(k, 'String')}"
+                    for k in filtered_args.keys()
+                )
+                var_defs = f"({arg_str})" if arg_str else ""
+                arg_pass = ", ".join(f"{k}: ${k}" for k in filtered_args.keys())
+                arg_pass = f"({arg_pass})" if arg_pass else ""
+
+                # Note: Auto-generated queries for object-returning fields will still fail
+                # without a selection set. Use the `query` field for full control.
+                gql_str = f"{op_type} {var_defs} {{ {base_tool_name}{arg_pass} }}"
+                logger.debug(f"Auto-generated GraphQL: {gql_str}")
+
             document = gql_query(gql_str)
             result = await session.execute(document, variable_values=filtered_args)
             return result

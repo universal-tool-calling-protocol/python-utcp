@@ -12,8 +12,8 @@ Prerequisites:
 1) Install core and the socket plugin in editable mode with dev extras:
 
 ```bash
-pip install -e "core[dev]"
-pip install -e plugins/communication_protocols/socket[dev]
+pip install -e "./core[dev]"
+pip install -e ./plugins/communication_protocols/socket[dev]
 ```
 
 2) Run the socket plugin tests:
