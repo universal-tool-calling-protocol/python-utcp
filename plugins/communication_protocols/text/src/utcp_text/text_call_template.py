@@ -7,22 +7,27 @@ from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
 import traceback
 
+
 class TextCallTemplate(CallTemplate):
     """REQUIRED
-    Call template for text file-based manuals and tools.
+    Text call template for UTCP client.
 
-    Reads UTCP manuals or tool definitions from local JSON/YAML files. Useful for
-    static tool configurations or environments where manuals are distributed as files.
+    This template allows passing UTCP manuals or tool definitions directly as text content.
+    It supports both JSON and YAML formats and can convert OpenAPI specifications to UTCP manuals.
+    It's browser-compatible and requires no file system access.
+    For file-based manuals, use the file protocol instead.
 
     Attributes:
-        call_template_type: Always "text" for text file call templates.
-        file_path: Path to the file containing the UTCP manual or tool definitions.
-        auth: Always None - text call templates don't support authentication for file access.
+        call_template_type: Always "text" for text call templates.
+        content: Direct text content of the UTCP manual or tool definitions (required).
+        base_url: Optional base URL for API endpoints when converting OpenAPI specs.
+        auth: Always None - text call templates don't support authentication.
         auth_tools: Optional authentication to apply to generated tools from OpenAPI specs.
     """
 
     call_template_type: Literal["text"] = "text"
-    file_path: str = Field(..., description="The path to the file containing the UTCP manual or tool definitions.")
+    content: str = Field(..., description="Direct text content of the UTCP manual or tool definitions.")
+    base_url: Optional[str] = Field(None, description="Optional base URL for API endpoints when converting OpenAPI specs.")
     auth: None = None
     auth_tools: Optional[Auth] = Field(None, description="Authentication to apply to generated tools from OpenAPI specs.")
 
@@ -58,6 +63,14 @@ class TextCallTemplateSerializer(Serializer[TextCallTemplate]):
     def validate_dict(self, obj: dict) -> TextCallTemplate:
         """REQUIRED
         Validate and convert a dictionary to a TextCallTemplate."""
+        # Check for old file_path field and provide helpful migration message
+        if "file_path" in obj:
+            raise UtcpSerializerValidationError(
+                "TextCallTemplate no longer supports 'file_path'. "
+                "The text protocol now accepts direct content via the 'content' field. "
+                "For file-based manuals, use the 'file' protocol instead (call_template_type: 'file'). "
+                "Install with: pip install utcp-file"
+            )
         try:
             return TextCallTemplate.model_validate(obj)
         except Exception as e:

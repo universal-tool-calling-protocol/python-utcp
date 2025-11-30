@@ -2,16 +2,15 @@
 
 [![PyPI Downloads](https://static.pepy.tech/badge/utcp-text)](https://pepy.tech/projects/utcp-text)
 
-A simple, file-based resource plugin for UTCP. This plugin allows you to define tools that return the content of a specified local file.
+A text content plugin for UTCP. This plugin allows you to pass UTCP manuals or tool definitions directly as text content, without requiring file system access. It's browser-compatible and ideal for embedded configurations.
 
 ## Features
 
-- **Local File Content**: Define tools that read and return the content of local files.
-- **UTCP Manual Discovery**: Load tool definitions from local UTCP manual files in JSON or YAML format.
-- **OpenAPI Support**: Automatically converts local OpenAPI specs to UTCP tools with optional authentication.
-- **Static & Simple**: Ideal for returning mock data, configuration, or any static text content from a file.
-- **Version Control**: Tool definitions and their corresponding content files can be versioned with your code.
-- **No File Authentication**: Designed for simple, local file access without authentication for file reading.
+- **Direct Text Content**: Pass UTCP manuals or tool definitions directly as strings.
+- **Browser Compatible**: No file system access required, works in browser environments.
+- **JSON & YAML Support**: Parses both JSON and YAML formatted content.
+- **OpenAPI Support**: Automatically converts OpenAPI specs to UTCP tools with optional authentication.
+- **Base URL Override**: Override API base URLs when converting OpenAPI specs.
 - **Tool Authentication**: Supports authentication for generated tools from OpenAPI specs via `auth_tools`.
 
 ## Installation
@@ -24,66 +23,49 @@ pip install utcp-text
 
 The Text plugin operates in two main ways:
 
-1.  **Tool Discovery (`register_manual`)**: It can read a standard UTCP manual file (e.g., `my-tools.json`) to learn about available tools. This is how the `UtcpClient` discovers what tools can be called.
-2.  **Tool Execution (`call_tool`)**: When you call a tool, the plugin looks at the `tool_call_template` associated with that tool. It expects a `text` template, and it will read and return the entire content of the `file_path` specified in that template.
+1.  **Tool Discovery (`register_manual`)**: It parses the `content` field directly as a UTCP manual or OpenAPI spec. This is how the `UtcpClient` discovers what tools can be called.
+2.  **Tool Execution (`call_tool`)**: When you call a tool, the plugin returns the `content` field directly.
 
-**Important**: The `call_tool` function **does not** use the arguments you pass to it. It simply returns the full content of the file defined in the tool's template.
+**Note**: For file-based tool definitions, use the `utcp-file` plugin instead.
 
 ## Quick Start
 
-Here is a complete example demonstrating how to define and use a tool that returns the content of a file.
+Here is a complete example demonstrating how to define and use tools with direct text content.
 
-### 1. Create a Content File
-
-First, create a file with some content that you want your tool to return.
-
-`./mock_data/user.json`:
-```json
-{
-  "id": 123,
-  "name": "John Doe",
-  "email": "john.doe@example.com"
-}
-```
-
-### 2. Create a UTCP Manual
-
-Next, define a UTCP manual that describes your tool. The `tool_call_template` must be of type `text` and point to the content file you just created.
-
-`./manuals/local_tools.json`:
-```json
-{
-  "manual_version": "1.0.0",
-  "utcp_version": "1.0.2",
-  "tools": [
-    {
-      "name": "get_mock_user",
-      "description": "Returns a mock user profile from a local file.",
-      "tool_call_template": {
-        "call_template_type": "text",
-        "file_path": "./mock_data/user.json"
-      }
-    }
-  ]
-}
-```
-
-### 3. Use the Tool in Python
-
-Finally, use the `UtcpClient` to load the manual and call the tool.
+### 1. Define Tools with Inline Content
 
 ```python
 import asyncio
+import json
 from utcp.utcp_client import UtcpClient
 
+# Define a UTCP manual as a Python dict, then convert to JSON string
+manual_content = json.dumps({
+    "manual_version": "1.0.0",
+    "utcp_version": "1.0.2",
+    "tools": [
+        {
+            "name": "get_mock_user",
+            "description": "Returns a mock user profile.",
+            "tool_call_template": {
+                "call_template_type": "text",
+                "content": json.dumps({
+                    "id": 123,
+                    "name": "John Doe",
+                    "email": "john.doe@example.com"
+                })
+            }
+        }
+    ]
+})
+
 async def main():
-    # Create a client, providing the path to the manual.
-    # The text plugin is used automatically for the "text" call_template_type.
+    # Create a client with direct text content
     client = await UtcpClient.create(config={
         "manual_call_templates": [{
-            "name": "local_file_tools",
+            "name": "inline_tools",
             "call_template_type": "text",
-            "file_path": "./manuals/local_tools.json"
+            "content": manual_content
         }]
     })
 
@@ -91,8 +73,8 @@ async def main():
     tools = await client.list_tools()
     print("Available tools:", [tool.name for tool in tools])
 
-    # Call the tool. The result will be the content of './mock_data/user.json'
-    result = await client.call_tool("local_file_tools.get_mock_user", {})
+    # Call the tool
+    result = await client.call_tool("inline_tools.get_mock_user", {})
     
     print("\nTool Result:")
     print(result)
@@ -101,28 +83,58 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### Expected Output:
+### 2. Using with OpenAPI Specs
 
-```
-Available tools: ['local_file_tools.get_mock_user']
+You can also pass OpenAPI specs directly as text content:
 
-Tool Result:
-{
-  "id": 123,
-  "name": "John Doe",
-  "email": "john.doe@example.com"
-}
+```python
+import asyncio
+import json
+from utcp.utcp_client import UtcpClient
+
+openapi_spec = json.dumps({
+    "openapi": "3.0.0",
+    "info": {"title": "Pet Store", "version": "1.0.0"},
+    "servers": [{"url": "https://api.example.com"}],
+    "paths": {
+        "/pets": {
+            "get": {
+                "operationId": "listPets",
+                "summary": "List all pets",
+                "responses": {"200": {"description": "Success"}}
+            }
+        }
+    }
+})
+
+async def main():
+    client = await UtcpClient.create(config={
+        "manual_call_templates": [{
+            "name": "pet_api",
+            "call_template_type": "text",
+            "content": openapi_spec,
+            "base_url": "https://api.petstore.io/v1"  # Optional: override base URL
+        }]
+    })
+
+    tools = await client.list_tools()
+    print("Available tools:", [tool.name for tool in tools])
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ## Use Cases
 
-- **Mocking**: Return mock data for tests or local development without needing a live server.
-- **Configuration**: Load static configuration files as tool outputs.
-- **Templates**: Retrieve text templates (e.g., for emails or reports).
+- **Embedded Configurations**: Embed tool definitions directly in your application code.
+- **Browser Applications**: Use UTCP in browser environments without file system access.
+- **Dynamic Tool Generation**: Generate tool definitions programmatically at runtime.
+- **Testing**: Define mock tools inline for unit tests.
 
 ## Related Documentation
 
 - [Main UTCP Documentation](../../../README.md)
 - [Core Package Documentation](../../../core/README.md)
+- [File Plugin](../file/README.md) - For file-based tool definitions.
 - [HTTP Plugin](../http/README.md) - For calling real web APIs.
 - [CLI Plugin](../cli/README.md) - For executing command-line tools.

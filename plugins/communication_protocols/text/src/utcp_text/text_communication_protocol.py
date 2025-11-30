@@ -1,15 +1,13 @@
 """
 Text communication protocol for UTCP client.
 
-This protocol reads UTCP manuals (or OpenAPI specs) from local files to register
-tools. It does not maintain any persistent connections.
+This protocol parses UTCP manuals (or OpenAPI specs) from direct text content.
+It's browser-compatible and requires no file system access.
+For file-based manuals, use the file protocol instead.
 """
 import json
-import sys
 import yaml
-import aiofiles
-from pathlib import Path
-from typing import Dict, Any, Optional, AsyncGenerator, TYPE_CHECKING
+from typing import Dict, Any, AsyncGenerator, TYPE_CHECKING
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate
@@ -31,9 +29,10 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
 class TextCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
-    Communication protocol for file-based UTCP manuals and tools."""
+    Communication protocol for text-based UTCP manuals and tools."""
 
     def _log_info(self, message: str) -> None:
         logger.info(f"[TextCommunicationProtocol] {message}")
@@ -47,41 +46,37 @@ class TextCommunicationProtocol(CommunicationProtocol):
         if not isinstance(manual_call_template, TextCallTemplate):
             raise ValueError("TextCommunicationProtocol requires a TextCallTemplate")
 
-        file_path = Path(manual_call_template.file_path)
-        if not file_path.is_absolute() and caller.root_dir:
-            file_path = Path(caller.root_dir) / file_path
-
-        self._log_info(f"Reading manual from '{file_path}'")
-
         try:
-            if not file_path.exists():
-                raise FileNotFoundError(f"Manual file not found: {file_path}")
+            self._log_info("Parsing direct content for manual")
+            content = manual_call_template.content
 
-            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
-                file_content = await f.read()
-
-            # Parse based on extension
+            # Try JSON first, then YAML
             data: Any
-            if file_path.suffix.lower() in [".yaml", ".yml"]:
-                data = yaml.safe_load(file_content)
-            else:
-                data = json.loads(file_content)
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError as json_error:
+                try:
+                    data = yaml.safe_load(content)
+                except yaml.YAMLError:
+                    raise ValueError(f"Failed to parse content as JSON or YAML: {json_error}")
 
             utcp_manual: UtcpManual
             if isinstance(data, dict) and ("openapi" in data or "swagger" in data or "paths" in data):
                 self._log_info("Detected OpenAPI specification. Converting to UTCP manual.")
                 converter = OpenApiConverter(
-                    data, 
-                    spec_url=file_path.as_uri(), 
+                    data,
+                    spec_url="text://content",
                     call_template_name=manual_call_template.name,
-                    auth_tools=manual_call_template.auth_tools
+                    auth_tools=manual_call_template.auth_tools,
+                    base_url=manual_call_template.base_url
                 )
                 utcp_manual = converter.convert()
             else:
                 # Try to validate as UTCP manual directly
+                self._log_info("Validating content as UTCP manual.")
                 utcp_manual = UtcpManualSerializer().validate_dict(data)
 
-            self._log_info(f"Loaded {len(utcp_manual.tools)} tools from '{file_path}'")
+            self._log_info(f"Successfully registered manual with {len(utcp_manual.tools)} tools.")
             return RegisterManualResult(
                 manual_call_template=manual_call_template,
                 manual=utcp_manual,
@@ -89,21 +84,14 @@ class TextCommunicationProtocol(CommunicationProtocol):
                 errors=[],
             )
 
-        except (json.JSONDecodeError, yaml.YAMLError) as e:
-            self._log_error(f"Failed to parse manual '{file_path}': {traceback.format_exc()}")
-            return RegisterManualResult(
-                manual_call_template=manual_call_template,
-                manual=UtcpManual(tools=[]),
-                success=False,
-                errors=[traceback.format_exc()],
-            )
         except Exception as e:
-            self._log_error(f"Unexpected error reading manual '{file_path}': {traceback.format_exc()}")
+            err_msg = f"Failed to register text manual: {str(e)}"
+            self._log_error(err_msg)
             return RegisterManualResult(
                 manual_call_template=manual_call_template,
                 manual=UtcpManual(tools=[]),
                 success=False,
-                errors=[traceback.format_exc()],
+                errors=[err_msg],
             )
 
     async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
@@ -114,23 +102,12 @@ class TextCommunicationProtocol(CommunicationProtocol):
 
     async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """REQUIRED
-        Call a tool: for text templates, return file content from the configured path."""
+        Execute a tool call. Text protocol returns the content directly."""
         if not isinstance(tool_call_template, TextCallTemplate):
             raise ValueError("TextCommunicationProtocol requires a TextCallTemplate for tool calls")
 
-        file_path = Path(tool_call_template.file_path)
-        if not file_path.is_absolute() and caller.root_dir:
-            file_path = Path(caller.root_dir) / file_path
-
-        self._log_info(f"Reading content from '{file_path}' for tool '{tool_name}'")
-
-        try:
-            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
-                content = await f.read()
-            return content
-        except FileNotFoundError:
-            self._log_error(f"File not found for tool '{tool_name}': {file_path}")
-            raise
+        self._log_info(f"Returning direct content for tool '{tool_name}'")
+        return tool_call_template.content
 
     async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """REQUIRED
