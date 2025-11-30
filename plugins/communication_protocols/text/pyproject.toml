@@ -4,19 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "utcp-text"
-version = "1.0.3"
+version = "1.1.0"
 authors = [
   { name = "UTCP Contributors" },
 ]
-description = "UTCP communication protocol plugin for reading text files."
+description = "UTCP communication protocol plugin for direct text content (browser-compatible)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
-    "utcp>=1.0",
-    "utcp-http>=1.0",
-    "aiofiles>=23.2.1"
+    "utcp>=1.1",
+    "utcp-http>=1.1"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

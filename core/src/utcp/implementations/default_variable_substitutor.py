@@ -67,6 +67,10 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
         Non-string types are returned unchanged. String values are scanned
         for variable references using ${VAR} and $VAR syntax.
 
+        Note:
+            Strings containing '$ref' are skipped to support OpenAPI specs
+            stored as string content, where $ref is a JSON reference keyword.
+
         Args:
             obj: Object to perform substitution on. Can be any type.
             config: UTCP client configuration containing variable sources.
@@ -95,18 +99,22 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
         if variable_namespace and not all(c.isalnum() or c == '_' for c in variable_namespace):
             raise ValueError(f"Variable namespace '{variable_namespace}' contains invalid characters. Only alphanumeric characters and underscores are allowed.")
         
-        if isinstance(obj, dict):
-            return {k: self.substitute(v, config, variable_namespace) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self.substitute(elem, config, variable_namespace) for elem in obj]
-        elif isinstance(obj, str):
+        if isinstance(obj, str):
+            # Skip substitution for JSON $ref strings
+            if '$ref' in obj:
+                return obj
+
             # Use a regular expression to find all variables in the string, supporting ${VAR} and $VAR formats
             def replacer(match):
                 # The first group that is not None is the one that matched
                 var_name = next((g for g in match.groups() if g is not None), "")
                 return self._get_variable(var_name, config, variable_namespace)
 
-            return re.sub(r'\${(\w+)}|\$(\w+)', replacer, obj)
+            return re.sub(r'\${([a-zA-Z0-9_]+)}|\$([a-zA-Z0-9_]+)', replacer, obj)
+        elif isinstance(obj, dict):
+            return {k: self.substitute(v, config, variable_namespace) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.substitute(elem, config, variable_namespace) for elem in obj]
         else:
             return obj
 
@@ -118,6 +126,10 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
         returning fully-qualified variable names with variable namespacing.
         Useful for validation and dependency analysis.
 
+        Note:
+            Strings containing '$ref' are skipped to support OpenAPI specs
+            stored as string content, where $ref is a JSON reference keyword.
+
         Args:
             obj: Object to scan for variable references.
             variable_namespace: Variable namespace used for variable namespacing.
@@ -127,7 +139,7 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
             ValueError: If variable_namespace contains invalid characters.
 
         Returns:
-            List of fully-qualified variable names found in the object.
+            List of unique fully-qualified variable names found in the object.
 
         Example:
             ```python
@@ -156,19 +168,22 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
                 result.extend(vars)
             return result
         elif isinstance(obj, str):
+            # Skip substitution for JSON $ref strings
+            if '$ref' in obj:
+                return []
             # Find all variables in the string, supporting ${VAR} and $VAR formats
             variables = []
-            pattern = r'\${(\w+)}|\$(\w+)'
+            pattern = r'\${([a-zA-Z0-9_]+)}|\$([a-zA-Z0-9_]+)'
             
             for match in re.finditer(pattern, obj):
                 # The first group that is not None is the one that matched
                 var_name = next(g for g in match.groups() if g is not None)
                 if variable_namespace:
-                    full_var_name = variable_namespace.replace("_", "!").replace("!", "__") + "_" + var_name
+                    full_var_name = variable_namespace.replace("_", "__") + "_" + var_name
                 else:
                     full_var_name = var_name
                 variables.append(full_var_name)
             
-            return variables
+            return list(set(variables))
         else:
             return []
