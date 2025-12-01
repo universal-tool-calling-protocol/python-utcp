@@ -100,8 +100,8 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
             raise ValueError(f"Variable namespace '{variable_namespace}' contains invalid characters. Only alphanumeric characters and underscores are allowed.")
         
         if isinstance(obj, str):
-            # Skip substitution for JSON $ref strings
-            if '$ref' in obj:
+            # Skip substitution for JSON Schema $ref (but not variables like $refresh_token)
+            if re.search(r'\$ref(?![a-zA-Z0-9_])', obj):
                 return obj
 
             # Use a regular expression to find all variables in the string, supporting ${VAR} and $VAR formats
@@ -168,9 +168,10 @@ class DefaultVariableSubstitutor(VariableSubstitutor):
                 result.extend(vars)
             return result
         elif isinstance(obj, str):
-            # Skip substitution for JSON $ref strings
-            if '$ref' in obj:
+            # Skip JSON Schema $ref (but not variables like $refresh_token)
+            if re.search(r'\$ref(?![a-zA-Z0-9_])', obj):
                 return []
+
             # Find all variables in the string, supporting ${VAR} and $VAR formats
             variables = []
             pattern = r'\${([a-zA-Z0-9_]+)}|\$([a-zA-Z0-9_]+)'
