@@ -83,11 +83,12 @@ class OpenApiConverter:
     Attributes:
         spec: The parsed OpenAPI specification dictionary.
         spec_url: Optional URL where the specification was retrieved from.
+        base_url: Optional base URL override for all API endpoints.
         placeholder_counter: Counter for generating unique placeholder variables.
         call_template_name: Normalized name for the call_template derived from the spec.
     """
 
-    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, call_template_name: Optional[str] = None, auth_tools: Optional[Auth] = None):
+    def __init__(self, openapi_spec: Dict[str, Any], spec_url: Optional[str] = None, call_template_name: Optional[str] = None, auth_tools: Optional[Auth] = None, base_url: Optional[str] = None):
         """Initializes the OpenAPI converter.
 
         Args:
@@ -98,10 +99,13 @@ class OpenApiConverter:
                 the specification title is not provided.
             auth_tools: Optional auth configuration for generated tools.
                 Applied only to endpoints that require authentication per OpenAPI spec.
+            base_url: Optional base URL override for all API endpoints.
+                When provided, this takes precedence over servers in the spec.
         """
         self.spec = openapi_spec
         self.spec_url = spec_url
         self.auth_tools = auth_tools
+        self._base_url_override = base_url
         # Single counter for all placeholder variables
         self.placeholder_counter = 0
         if call_template_name is None:
@@ -141,9 +145,12 @@ class OpenApiConverter:
         """
         self.placeholder_counter = 0
         tools = []
-        servers = self.spec.get("servers")
-        if servers:
-            base_url = servers[0].get("url", "/")
+        
+        # Determine base URL: override > servers > spec_url > fallback
+        if self._base_url_override:
+            base_url = self._base_url_override
+        elif self.spec.get("servers"):
+            base_url = self.spec["servers"][0].get("url", "/")
         elif self.spec_url:
             parsed_url = urlparse(self.spec_url)
             base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
