@@ -387,6 +387,9 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # Check for structured output first - this is the expected behavior
         if hasattr(result, 'structuredContent'):
             self._log_info(f"Found structuredContent: {result.structuredContent}")
+            # If structuredContent has a 'result' key, unwrap it
+            if isinstance(result.structuredContent, dict) and 'result' in result.structuredContent:
+                return result.structuredContent['result']
             return result.structuredContent
         
         # Process content if available (fallback)
