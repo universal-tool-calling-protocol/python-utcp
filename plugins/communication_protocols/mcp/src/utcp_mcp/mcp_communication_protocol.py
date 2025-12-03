@@ -194,8 +194,8 @@ class McpCommunicationProtocol(CommunicationProtocol):
                         utcp_tool = Tool(
                             name=mcp_tool.name,
                             description=mcp_tool.description,
-                            input_schema=mcp_tool.inputSchema,
-                            output_schema=mcp_tool.outputSchema,
+                            inputs=mcp_tool.inputSchema,
+                            outputs=mcp_tool.outputSchema,
                             tool_call_template=manual_call_template
                         )
                         all_tools.append(utcp_tool)
@@ -212,12 +212,12 @@ class McpCommunicationProtocol(CommunicationProtocol):
                                 resource_tool = Tool(
                                     name=f"{server_name}.resource_{mcp_resource.name}",
                                     description=f"Read resource: {mcp_resource.description or mcp_resource.name}. URI: {mcp_resource.uri}",
-                                    input_schema={
+                                    inputs={
                                         "type": "object",
                                         "properties": {},
                                         "required": []
                                     },
-                                    output_schema={
+                                    outputs={
                                         "type": "object",
                                         "properties": {
                                             "contents": {
@@ -384,12 +384,15 @@ class McpCommunicationProtocol(CommunicationProtocol):
     def _process_tool_result(self, result, tool_name: str) -> Any:
         self._log_info(f"Processing tool result for '{tool_name}', type: {type(result)}")
         
-        # Check for structured output first
-        if hasattr(result, 'structured_output'):
-            self._log_info(f"Found structured_output: {result.structured_output}")
-            return result.structured_output
+        # Check for structured output first - this is the expected behavior
+        if hasattr(result, 'structuredContent'):
+            self._log_info(f"Found structuredContent: {result.structuredContent}")
+            # If structuredContent has a 'result' key, unwrap it
+            if isinstance(result.structuredContent, dict) and 'result' in result.structuredContent:
+                return result.structuredContent['result']
+            return result.structuredContent
         
-        # Process content if available
+        # Process content if available (fallback)
         if hasattr(result, 'content'):
             content = result.content
             self._log_info(f"Content type: {type(content)}")
@@ -426,6 +429,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 return content.json
             
             return content
+        
+        # Handle dictionary with 'result' key
+        if isinstance(result, dict) and 'result' in result:
+            return result['result']
         
         # Fallback to result attribute
         if hasattr(result, 'result'):

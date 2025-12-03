@@ -154,9 +154,7 @@ async def test_http_list_output(
     
     assert isinstance(result, list)
     assert len(result) == 3
-    assert result[0] == "item_0"
-    assert result[1] == "item_1"
-    assert result[2] == "item_2"
+    assert result == ["item_0", "item_1", "item_2"]
 
 
 @pytest.mark.asyncio
