@@ -136,7 +136,7 @@ async def test_http_unstructured_output(
     
     # Call the greet tool and verify the result
     result = await transport.call_tool(None, f"{HTTP_SERVER_NAME}.greet", {"name": "Alice"}, http_mcp_provider)
-    assert result == "Hello, Alice!"
+    assert result == {"result": "Hello, Alice!"}
 
 
 @pytest.mark.asyncio
@@ -152,11 +152,9 @@ async def test_http_list_output(
     # Call the list_items tool and verify the result
     result = await transport.call_tool(None, f"{HTTP_SERVER_NAME}.list_items", {"count": 3}, http_mcp_provider)
     
-    assert isinstance(result, list)
-    assert len(result) == 3
-    assert result[0] == "item_0"
-    assert result[1] == "item_1"
-    assert result[2] == "item_2"
+    assert isinstance(result, dict)
+    assert "result" in result
+    assert result == {"result": ["item_0", "item_1", "item_2"]}
 
 
 @pytest.mark.asyncio
@@ -172,7 +170,7 @@ async def test_http_numeric_output(
     # Call the add_numbers tool and verify the result
     result = await transport.call_tool(None, f"{HTTP_SERVER_NAME}.add_numbers", {"a": 5, "b": 7}, http_mcp_provider)
     
-    assert result == 12
+    assert result == {"result": 12}
 
 
 @pytest.mark.asyncio

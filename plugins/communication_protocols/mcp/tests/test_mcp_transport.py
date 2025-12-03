@@ -98,7 +98,7 @@ async def test_unstructured_string_output(transport: McpCommunicationProtocol, m
     await transport.register_manual(None, mcp_manual)
 
     result = await transport.call_tool(None, f"{SERVER_NAME}.greet", {"name": "Alice"}, mcp_manual)
-    assert result == "Hello, Alice!"
+    assert result == {"result": "Hello, Alice!"}
 
 
 @pytest.mark.asyncio
@@ -108,9 +108,9 @@ async def test_list_output(transport: McpCommunicationProtocol, mcp_manual: McpC
 
     result = await transport.call_tool(None, f"{SERVER_NAME}.list_items", {"count": 3}, mcp_manual)
 
-    assert isinstance(result, list)
-    assert len(result) == 3
-    assert result == ["item_0", "item_1", "item_2"]
+    assert isinstance(result, dict)
+    assert "result" in result
+    assert result == {"result": ["item_0", "item_1", "item_2"]}
 
 
 @pytest.mark.asyncio
@@ -120,7 +120,7 @@ async def test_numeric_output(transport: McpCommunicationProtocol, mcp_manual: M
 
     result = await transport.call_tool(None, f"{SERVER_NAME}.add_numbers", {"a": 5, "b": 7}, mcp_manual)
 
-    assert result == 12
+    assert result == {"result": 12}
 
 
 @pytest.mark.asyncio

@@ -384,12 +384,12 @@ class McpCommunicationProtocol(CommunicationProtocol):
     def _process_tool_result(self, result, tool_name: str) -> Any:
         self._log_info(f"Processing tool result for '{tool_name}', type: {type(result)}")
         
-        # Check for structured output first
+        # Check for structured output first - this is the expected behavior
         if hasattr(result, 'structuredContent'):
             self._log_info(f"Found structuredContent: {result.structuredContent}")
             return result.structuredContent
         
-        # Process content if available
+        # Process content if available (fallback)
         if hasattr(result, 'content'):
             content = result.content
             self._log_info(f"Content type: {type(content)}")
@@ -426,6 +426,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 return content.json
             
             return content
+        
+        # Handle dictionary with 'result' key
+        if isinstance(result, dict) and 'result' in result:
+            return result['result']
         
         # Fallback to result attribute
         if hasattr(result, 'result'):
