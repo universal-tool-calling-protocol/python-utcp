@@ -100,8 +100,7 @@ class UDPTransport(CommunicationProtocol):
                     ctpl = CallTemplateSerializer().validate_dict(normalized["tool_call_template"])  # type: ignore
                     normalized["tool_call_template"] = ctpl
                 except (UtcpSerializerValidationError, ValueError) as e:
-                    # Fallback to manual template if validation fails, but log details
-                    logger.exception("Failed to validate existing tool_call_template; falling back to manual template")
+                    logger.exception(f"Failed to validate existing tool_call_template; falling back to manual template: {e}")
                     normalized["tool_call_template"] = manual_call_template
             elif "tool_provider" in normalized and normalized["tool_provider"] is not None:
                 # Convert legacy provider -> call template
@@ -109,8 +108,8 @@ class UDPTransport(CommunicationProtocol):
                     ctpl = UDPProviderSerializer().validate_dict(normalized["tool_provider"])  # type: ignore
                     normalized.pop("tool_provider", None)
                     normalized["tool_call_template"] = ctpl
-                except UtcpSerializerValidationError as e:
-                    logger.exception("Failed to convert legacy tool_provider to call template; falling back to manual template")
+                except (UtcpSerializerValidationError, ValueError) as e:
+                    logger.exception(f"Failed to convert legacy tool_provider to call template; falling back to manual template: {e}")
                     normalized.pop("tool_provider", None)
                     normalized["tool_call_template"] = manual_call_template
             else:

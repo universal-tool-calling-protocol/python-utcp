@@ -1,4 +1,5 @@
 import importlib
+import logging
 from typing import Dict, Any, List, AsyncGenerator
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
@@ -14,19 +15,19 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 class GnmiCommunicationProtocol(CommunicationProtocol):
     def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-    def _load_gnmi_modules(self, tool_call_template: GnmiCallTemplate):
+    def _load_gnmi_modules(self, tool_call_template: GnmiCallTemplate) -> tuple[Any, Any, Any, Any, Any]:
         grpc = importlib.import_module("grpc")
         aio = importlib.import_module("grpc.aio")
         json_format = importlib.import_module("google.protobuf.json_format")
         stub_mod = importlib.import_module(tool_call_template.stub_module)
         msg_mod = importlib.import_module(tool_call_template.message_module)
         return grpc, aio, json_format, stub_mod, msg_mod
-    def _create_grpc_channel(self, grpc, aio, target: str, use_tls: bool):
+    def _create_grpc_channel(self, grpc, aio, target: str, use_tls: bool) -> Any:
         if use_tls:
             creds = grpc.ssl_channel_credentials()
             return aio.secure_channel(target, creds)
         return aio.insecure_channel(target)
-    def _create_grpc_stub(self, stub_mod, channel):
+    def _create_grpc_stub(self, stub_mod, channel) -> Any:
         stub = None
         for attr in dir(stub_mod):
             if attr.endswith("Stub"):
@@ -36,6 +37,26 @@ class GnmiCommunicationProtocol(CommunicationProtocol):
         if stub is None:
             raise ValueError("gNMI stub not found in stub_module")
         return stub
+    async def _build_metadata(self, tool_call_template: GnmiCallTemplate, tool_args: Dict[str, Any]) -> List[tuple[str, str]]:
+        metadata: List[tuple[str, str]] = []
+        if tool_call_template.metadata:
+            metadata.extend([(k, v) for k, v in tool_call_template.metadata.items()])
+        if tool_call_template.metadata_fields:
+            for k in tool_call_template.metadata_fields:
+                if k in tool_args:
+                    metadata.append((k, str(tool_args[k])))
+        if tool_call_template.auth:
+            if isinstance(tool_call_template.auth, ApiKeyAuth):
+                if tool_call_template.auth.api_key:
+                    metadata.append((tool_call_template.auth.var_name or "authorization", tool_call_template.auth.api_key))
+            elif isinstance(tool_call_template.auth, BasicAuth):
+                import base64
+                token = base64.b64encode(f"{tool_call_template.auth.username}:{tool_call_template.auth.password}".encode()).decode()
+                metadata.append(("authorization", f"Basic {token}"))
+            elif isinstance(tool_call_template.auth, OAuth2Auth):
+                token = await self._handle_oauth2(tool_call_template.auth)
+                metadata.append(("authorization", f"Bearer {token}"))
+        return metadata
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
         if not isinstance(manual_call_template, GnmiCallTemplate):
             raise ValueError("GnmiCommunicationProtocol can only be used with GnmiCallTemplate")
@@ -106,24 +127,7 @@ class GnmiCommunicationProtocol(CommunicationProtocol):
         op = tool_call_template.operation
         target = tool_call_template.target
 
-        metadata: List[tuple[str, str]] = []
-        if tool_call_template.metadata:
-            metadata.extend([(k, v) for k, v in tool_call_template.metadata.items()])
-        if tool_call_template.metadata_fields:
-            for k in tool_call_template.metadata_fields:
-                if k in tool_args:
-                    metadata.append((k, str(tool_args[k])))
-        if tool_call_template.auth:
-            if isinstance(tool_call_template.auth, ApiKeyAuth):
-                if tool_call_template.auth.api_key:
-                    metadata.append((tool_call_template.auth.var_name or "authorization", tool_call_template.auth.api_key))
-            elif isinstance(tool_call_template.auth, BasicAuth):
-                import base64
-                token = base64.b64encode(f"{tool_call_template.auth.username}:{tool_call_template.auth.password}".encode()).decode()
-                metadata.append(("authorization", f"Basic {token}"))
-            elif isinstance(tool_call_template.auth, OAuth2Auth):
-                token = await self._handle_oauth2(tool_call_template.auth)
-                metadata.append(("authorization", f"Bearer {token}"))
+        metadata = await self._build_metadata(tool_call_template, tool_args)
 
         grpc, aio, json_format, stub_mod, msg_mod = self._load_gnmi_modules(tool_call_template)
         channel = self._create_grpc_channel(grpc, aio, target, tool_call_template.use_tls)
@@ -194,24 +198,7 @@ class GnmiCommunicationProtocol(CommunicationProtocol):
         channel = self._create_grpc_channel(grpc, aio, target, tool_call_template.use_tls)
         try:
             stub = self._create_grpc_stub(stub_mod, channel)
-            metadata: List[tuple[str, str]] = []
-            if tool_call_template.metadata:
-                metadata.extend([(k, v) for k, v in tool_call_template.metadata.items()])
-            if tool_call_template.metadata_fields:
-                for k in tool_call_template.metadata_fields:
-                    if k in tool_args:
-                        metadata.append((k, str(tool_args[k])))
-            if tool_call_template.auth:
-                if isinstance(tool_call_template.auth, ApiKeyAuth):
-                    if tool_call_template.auth.api_key:
-                        metadata.append((tool_call_template.auth.var_name or "authorization", tool_call_template.auth.api_key))
-                elif isinstance(tool_call_template.auth, BasicAuth):
-                    import base64
-                    token = base64.b64encode(f"{tool_call_template.auth.username}:{tool_call_template.auth.password}".encode()).decode()
-                    metadata.append(("authorization", f"Basic {token}"))
-                elif isinstance(tool_call_template.auth, OAuth2Auth):
-                    token = await self._handle_oauth2(tool_call_template.auth)
-                    metadata.append(("authorization", f"Bearer {token}"))
+            metadata = await self._build_metadata(tool_call_template, tool_args)
             req = getattr(msg_mod, "SubscribeRequest")()
             sub_list = getattr(msg_mod, "SubscriptionList")()
             mode_str = str(tool_args.get("mode", "STREAM")).upper()
@@ -259,7 +246,8 @@ class GnmiCommunicationProtocol(CommunicationProtocol):
                     ttl = expires_in if isinstance(expires_in, (int, float)) else 300
                     self._oauth_tokens[key] = {"access_token": access_token, "expires_at": now + ttl - 10}
                     return access_token
-            except Exception:
+            except aiohttp.ClientResponseError as e:
+                logging.getLogger(__name__).warning(f"OAuth2 client_credentials failed: {e.status}")
                 from aiohttp import BasicAuth as AiohttpBasicAuth
                 header_auth = AiohttpBasicAuth(auth_details.client_id, auth_details.client_secret)
                 header_data = {
@@ -274,3 +262,38 @@ class GnmiCommunicationProtocol(CommunicationProtocol):
                     ttl = expires_in if isinstance(expires_in, (int, float)) else 300
                     self._oauth_tokens[key] = {"access_token": access_token, "expires_at": time.time() + ttl - 10}
                     return access_token
+            except aiohttp.ClientError as e:
+                logging.getLogger(__name__).warning(f"OAuth2 request error: {e}")
+                from aiohttp import BasicAuth as AiohttpBasicAuth
+                header_auth = AiohttpBasicAuth(auth_details.client_id, auth_details.client_secret)
+                header_data = {
+                    "grant_type": "client_credentials",
+                    "scope": auth_details.scope,
+                }
+                async with session.post(auth_details.token_url, data=header_data, auth=header_auth) as response:
+                    response.raise_for_status()
+                    token_response = await response.json()
+                    access_token = token_response.get("access_token")
+                    expires_in = token_response.get("expires_in")
+                    ttl = expires_in if isinstance(expires_in, (int, float)) else 300
+                    self._oauth_tokens[key] = {"access_token": access_token, "expires_at": time.time() + ttl - 10}
+                    return access_token
+            except Exception as e:
+                logging.getLogger(__name__).error(f"OAuth2 unexpected error: {e}")
+                from aiohttp import BasicAuth as AiohttpBasicAuth
+                header_auth = AiohttpBasicAuth(auth_details.client_id, auth_details.client_secret)
+                header_data = {
+                    "grant_type": "client_credentials",
+                    "scope": auth_details.scope,
+                }
+                async with session.post(auth_details.token_url, data=header_data, auth=header_auth) as response:
+                    response.raise_for_status()
+                    token_response = await response.json()
+                    access_token = token_response.get("access_token")
+                    expires_in = token_response.get("expires_in")
+                    ttl = expires_in if isinstance(expires_in, (int, float)) else 300
+                    self._oauth_tokens[key] = {"access_token": access_token, "expires_at": time.time() + ttl - 10}
+                    return access_token
+
+    async def close(self) -> None:
+        self._oauth_tokens.clear()
