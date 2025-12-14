@@ -1,5 +1,4 @@
 from typing import Optional, Dict, List, Literal
-from pydantic import Field
 
 from utcp.data.call_template import CallTemplate
 from utcp.interfaces.serializer import Serializer

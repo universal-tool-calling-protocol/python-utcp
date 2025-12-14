@@ -8,7 +8,7 @@ This plugin integrates GraphQL as a UTCP 1.0 communication protocol and call tem
 ### Installation
 
 ```bash
-pip install gql
+pip install utcp-gql
 ```
 
 ### Registration

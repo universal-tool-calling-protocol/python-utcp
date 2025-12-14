@@ -190,7 +190,18 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
             header_fields = tool_call_template.header_fields or []
             filtered_args = {k: v for k, v in tool_args.items() if k not in header_fields}
 
-            arg_str = ", ".join(f"${k}: String" for k in filtered_args.keys())
+            defs = []
+            for k, v in filtered_args.items():
+                if isinstance(v, bool):
+                    t = "Boolean"
+                elif isinstance(v, int) and not isinstance(v, bool):
+                    t = "Int"
+                elif isinstance(v, float):
+                    t = "Float"
+                else:
+                    t = "String"
+                defs.append(f"${k}: {t}")
+            arg_str = ", ".join(defs)
             var_defs = f"({arg_str})" if arg_str else ""
             arg_pass = ", ".join(f"{k}: ${k}" for k in filtered_args.keys())
             arg_pass = f"({arg_pass})" if arg_pass else ""
@@ -207,7 +218,10 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
         tool_args: Dict[str, Any],
         tool_call_template: CallTemplate,
     ) -> AsyncGenerator[Any, None]:
-        # Basic implementation: execute non-streaming and yield once
+        if not isinstance(tool_call_template, GraphQLProvider):
+            raise ValueError("GraphQLCommunicationProtocol requires a GraphQLProvider call template")
+        if getattr(tool_call_template, "operation_type", "query") == "subscription":
+            raise ValueError("GraphQL subscription streaming is not implemented")
         result = await self.call_tool(caller, tool_name, tool_args, tool_call_template)
         yield result
 
