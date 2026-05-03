@@ -33,6 +33,7 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 from utcp_http.openapi_converter import OpenApiConverter
+from utcp_http._security import ensure_secure_url
 import logging
 
 logging.basicConfig(
@@ -123,14 +124,10 @@ class HttpCommunicationProtocol(CommunicationProtocol):
 
         try:
             url = manual_call_template.url
-            
-            # Security check: Enforce HTTPS or localhost to prevent MITM attacks
-            if not (url.startswith("https://") or url.startswith("http://localhost") or url.startswith("http://127.0.0.1")):
-                raise ValueError(
-                    f"Security error: URL must use HTTPS or start with 'http://localhost' or 'http://127.0.0.1'. Got: {url}. "
-                    "Non-secure URLs are vulnerable to man-in-the-middle attacks."
-                )
-                
+
+            # Security check: only HTTPS or loopback HTTP allowed for manual discovery.
+            ensure_secure_url(url, context="manual discovery")
+
             logger.info(f"Discovering tools from '{manual_call_template.name}' (HTTP) at {url}")
             
             # Use the call template's configuration (headers, auth, HTTP method, etc.)
@@ -274,7 +271,15 @@ class HttpCommunicationProtocol(CommunicationProtocol):
 
         # Build the URL with path parameters substituted
         url = self._build_url_with_path_params(tool_call_template.url, remaining_args)
-        
+
+        # Security check: re-validate the resolved URL before each invocation.
+        # An attacker-controlled OpenAPI spec discovered over a legitimate HTTPS
+        # URL can declare ``servers[0].url`` pointing at internal services
+        # (e.g. http://169.254.169.254 for cloud metadata, http://127.0.0.1:9200
+        # for an unauthenticated Elasticsearch). Without this re-check, tool
+        # invocation is a blind SSRF primitive — see GHSA / issue #83.
+        ensure_secure_url(url, context="tool invocation")
+
         # The rest of the arguments are query parameters
         query_params = remaining_args
 
