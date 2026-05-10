@@ -86,8 +86,15 @@ class CliCommunicationProtocol(CommunicationProtocol):
         "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
         "TEMP", "TMP", "USERPROFILE", "USERNAME", "USERDOMAIN", "COMPUTERNAME",
         "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+        "ALLUSERSPROFILE", "PUBLIC",
         "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "OS",
-        "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER",
+        "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "NUMBER_OF_PROCESSORS",
+        # PowerShell + login session bits. Without PSMODULEPATH in
+        # particular, powershell.exe has to enumerate module roots from
+        # scratch on first use, which can cost 5-15s on CI runners and
+        # silently push the discovery flow past its timeout.
+        "PSMODULEPATH", "LOGONSERVER", "SESSIONNAME", "USERDNSDOMAIN",
     )
 
     @classmethod
@@ -255,7 +262,12 @@ class CliCommunicationProtocol(CommunicationProtocol):
             stdout, stderr, return_code = await self._execute_shell_script(
                 shell_script,
                 env,
-                timeout=30.0,
+                # 60s, not 30s: Windows PowerShell startup on CI
+                # runners can be slow (especially the first time
+                # in a session, before module path caches warm up).
+                # Discovery runs once per manual, so a generous
+                # ceiling here is cheap.
+                timeout=60.0,
                 working_dir=manual_call_template.working_dir,
             )
 
