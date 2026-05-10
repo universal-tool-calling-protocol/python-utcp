@@ -15,15 +15,34 @@ class CommandStep(BaseModel):
             placeholders that will be replaced with values from tool_args. Can also
             reference previous command outputs using $CMD_0_OUTPUT, $CMD_1_OUTPUT, etc.
 
-            Placeholder substitution is shell-quoted (`shlex.quote` on Unix,
-            PowerShell single-quoted literals on Windows) so that
-            `tool_args` values cannot inject extra commands. As a
-            consequence, each `UTCP_ARG_..._UTCP_END` placeholder always
-            expands to **exactly one shell token**. Tools that previously
-            relied on a single placeholder splitting into multiple flags
-            (e.g. `UTCP_ARG_flags_UTCP_END` -> `--verbose --debug`) must now
-            use one placeholder per intended flag. This change ships with
-            utcp-cli 1.1.2 and addresses GHSA-33p6-5jxp-p3x4.
+            Placeholders are NOT inlined as text. Instead the protocol
+            emits a context-aware shell variable reference (`"$VAR"` /
+            `${VAR}` / `$env:VAR`) and ships the actual `tool_args`
+            value to the subprocess via an environment variable, so the
+            shell expands the value AFTER it has parsed the script.
+            Attacker-controlled bytes therefore cannot inject commands
+            or escape any quoting context.
+
+            A placeholder always substitutes a **single logical value**
+            (never a list of shell words) -- the substituted value
+            cannot be reinterpreted as additional shell syntax. Several
+            placeholders may appear within the same quoted region (e.g.
+            ``"https://api/UTCP_ARG_id_UTCP_END/UTCP_ARG_action_UTCP_END"``)
+            and they compose with the surrounding literal text into one
+            shell argument. Tools that previously relied on a single
+            placeholder splitting into multiple flags (e.g.
+            ``UTCP_ARG_flags_UTCP_END`` -> ``--verbose --debug``) must
+            now use one placeholder per intended flag. This change
+            ships with utcp-cli 1.1.3 and addresses GHSA-33p6-5jxp-p3x4
+            (including the residual double-quote-context bypass that
+            the inline ``shlex.quote`` strategy in 1.1.2 left open).
+
+            PowerShell limitation: a placeholder appearing inside a
+            single-quoted PowerShell string (``'...'``) raises
+            ``ValueError`` at script-build time -- PowerShell does not
+            expand variables inside single quotes, and rewriting the
+            surrounding token is too brittle. Use a double-quoted
+            string (``"..."``) instead.
         append_to_final_output: Whether this command's output should be included
             in the final result. If not specified, defaults to False for all
             commands except the last one.
@@ -48,9 +67,11 @@ class CommandStep(BaseModel):
     command: str = Field(
         description=(
             "Command string to execute, may contain UTCP_ARG_argname_UTCP_END "
-            "placeholders. Each placeholder is shell-quoted at substitution "
-            "time and therefore expands to exactly one shell token; use one "
-            "placeholder per intended argument."
+            "placeholders. Each placeholder substitutes a single value via "
+            "a shell-variable reference chosen for its surrounding quote "
+            "context; substituted values cannot be reinterpreted as "
+            "additional shell syntax. Several placeholders may appear in "
+            "the same quoted region and compose into one argument."
         )
     )
     append_to_final_output: Optional[bool] = Field(
@@ -81,15 +102,29 @@ class CliCallTemplate(CallTemplate):
 
     Example: `echo "Previous result: $CMD_0_OUTPUT"`
 
-    **Argument Substitution and Quoting (utcp-cli >= 1.1.2):**
-    `UTCP_ARG_argname_UTCP_END` placeholders are replaced with the
-    corresponding `tool_args` value, shell-quoted for the target shell
-    (`shlex.quote` on Unix, PowerShell single-quoted literal on Windows).
-    Each placeholder therefore expands to exactly one shell token. If a
-    tool needs multiple flags or arguments, define multiple placeholders
-    (one per flag) instead of relying on a single placeholder splitting
-    on whitespace. This change closes the command-injection vector
-    tracked as GHSA-33p6-5jxp-p3x4.
+    **Argument Substitution (utcp-cli >= 1.1.3):**
+    ``UTCP_ARG_argname_UTCP_END`` placeholders are replaced with a
+    context-aware shell variable reference (``"$VAR"`` outside quotes,
+    ``${VAR}`` inside double quotes, an adjacent-quote concat trick
+    inside single-quoted bash). The actual ``tool_args`` value is
+    shipped to the subprocess via a fresh, per-invocation env var; the
+    shell expands it at runtime AFTER it has parsed the script, so
+    attacker-controlled bytes cannot inject commands or escape any
+    quoting context.
+
+    A placeholder always substitutes a single logical value (never a
+    list of shell words). Several placeholders may appear in one
+    quoted region and compose with the surrounding text into one
+    argument (e.g.
+    ``"https://api/UTCP_ARG_id_UTCP_END/UTCP_ARG_action_UTCP_END"``).
+    If a tool needs multiple separate flags, use one placeholder per
+    flag in bare position. PowerShell single-quoted strings cannot
+    expand variables, so a placeholder inside ``'...'`` on Windows
+    raises ``ValueError`` at script-build time; use a double-quoted
+    string instead. This change closes the command-injection vector
+    tracked as GHSA-33p6-5jxp-p3x4 (and its residual
+    double-quote-context bypass that the inline ``shlex.quote``
+    strategy in 1.1.2 left open).
 
     **Subprocess Environment (utcp-cli >= 1.1.2):**
     The CLI subprocess no longer inherits the full host environment.
@@ -221,8 +256,12 @@ class CliCallTemplate(CallTemplate):
     commands: List[CommandStep] = Field(
         description=(
             "List of commands to execute in order. Each command can contain "
-            "UTCP_ARG_argname_UTCP_END placeholders, which are shell-quoted "
-            "on substitution and therefore expand to exactly one shell token."
+            "UTCP_ARG_argname_UTCP_END placeholders, which substitute a "
+            "single value via a shell-variable reference chosen for the "
+            "surrounding quote context. Substituted values cannot be "
+            "reinterpreted as additional shell syntax. Several placeholders "
+            "may appear in the same quoted region and compose into one "
+            "argument."
         )
     )
     env_vars: Optional[Dict[str, str]] = Field(

