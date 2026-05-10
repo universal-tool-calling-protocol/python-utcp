@@ -155,17 +155,9 @@ class OpenApiConverter:
         elif self.spec.get("servers"):
             base_url = self.spec["servers"][0].get("url", "/")
 
-            # Defense in depth against issue #83 / GHSA-39j6-4867-gg4w:
-            # a remote OpenAPI spec must not be allowed to redirect tool
-            # invocation at the agent's own loopback interface (cloud
-            # metadata, internal admin panels, etc.). The runtime check in
-            # call_tool already blocks the request, but rejecting at
-            # conversion time produces a clearer error and prevents the
-            # malicious tools from ever entering the registry.
-            #
-            # We only reject when the *spec was fetched from a non-loopback
-            # source*. A user pointing the converter at their own
-            # localhost OpenAPI spec is allowed to declare loopback
+            # Rule: a spec fetched from a non-loopback source cannot declare
+            # a loopback server URL. A user pointing the converter at their
+            # own localhost OpenAPI spec is allowed to declare loopback
             # servers, and an explicit ``base_url`` override always wins
             # (handled above).
             if (
