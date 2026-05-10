@@ -490,7 +490,6 @@ else:
 async def test_placeholder_substitution():
     """Test that UTCP_ARG placeholders are properly substituted.
 
-    As of utcp-cli 1.1.3, substitution emits a shell-variable reference
     in the script and ships the actual value via env var.
     """
     transport = CliCommunicationProtocol()

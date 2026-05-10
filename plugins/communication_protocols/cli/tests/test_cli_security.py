@@ -7,7 +7,7 @@ Pin the fixes for:
 - GHSA-5v57-8rxj-3p2r (CWE-526, full host environment leaked to the
   CLI subprocess via ``_prepare_environment``).
 
-As of utcp-cli 1.1.3, substitution is context-aware: it tracks the
+Substitution is context-aware: it tracks the
 surrounding quote state in the template and emits a shell variable
 reference (``$VAR`` / ``${VAR}`` / ``$env:VAR``) for each placeholder,
 then carries the actual values to the subprocess via env vars. The

@@ -32,10 +32,7 @@ class CommandStep(BaseModel):
             shell argument. Tools that previously relied on a single
             placeholder splitting into multiple flags (e.g.
             ``UTCP_ARG_flags_UTCP_END`` -> ``--verbose --debug``) must
-            now use one placeholder per intended flag. This change
-            ships with utcp-cli 1.1.3 and addresses GHSA-33p6-5jxp-p3x4
-            (including the residual double-quote-context bypass that
-            the inline ``shlex.quote`` strategy in 1.1.2 left open).
+            now use one placeholder per intended flag. 
 
             PowerShell limitation: a placeholder appearing inside a
             single-quoted PowerShell string (``'...'``) raises
@@ -102,7 +99,7 @@ class CliCallTemplate(CallTemplate):
 
     Example: `echo "Previous result: $CMD_0_OUTPUT"`
 
-    **Argument Substitution (utcp-cli >= 1.1.3):**
+    **Argument Substitution:**
     ``UTCP_ARG_argname_UTCP_END`` placeholders are replaced with a
     context-aware shell variable reference (``"$VAR"`` outside quotes,
     ``${VAR}`` inside double quotes, an adjacent-quote concat trick
