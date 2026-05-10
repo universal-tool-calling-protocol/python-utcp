@@ -82,20 +82,38 @@ class TestSubstitutionContextAwareEmission:
         assert cmd == f'echo "esc\\" ${{{_v("a")}}}"'
 
     @pytest.mark.skipif(os.name != "nt", reason="PowerShell semantics")
-    def test_ps_bare_emits_env_var(self, transport):
+    def test_ps_bare_emits_braced_env_var(self, transport):
         cmd, env = transport._substitute_utcp_args(
             "mytool UTCP_ARG_x_UTCP_END", {"x": "a b"}, NONCE
         )
-        assert cmd == f"mytool $env:{_v('x')}"
+        # Braced form so suffix chars cannot be consumed into the var
+        # name boundary.
+        assert cmd == "mytool ${env:" + _v("x") + "}"
         assert env[_v("x")] == "a b"
 
     @pytest.mark.skipif(os.name != "nt", reason="PowerShell semantics")
-    def test_ps_dq_emits_env_var(self, transport):
+    def test_ps_dq_emits_braced_env_var(self, transport):
         cmd, env = transport._substitute_utcp_args(
             'Write-Output "Hi UTCP_ARG_x_UTCP_END!"', {"x": "a; rm /"}, NONCE
         )
-        assert cmd == f'Write-Output "Hi $env:{_v("x")}!"'
+        assert cmd == 'Write-Output "Hi ${env:' + _v("x") + '}!"'
         assert env[_v("x")] == "a; rm /"
+
+    @pytest.mark.skipif(os.name != "nt", reason="PowerShell semantics")
+    def test_ps_alphanumeric_suffix_does_not_extend_var_name(self, transport):
+        # Regression: with the bare `$env:VAR` form, an alphanumeric or
+        # underscore suffix in the template would be parsed as part of
+        # the env var name. The braced form `${env:VAR}` closes the
+        # boundary cleanly so the template suffix stays literal.
+        cmd, env = transport._substitute_utcp_args(
+            'Write-Output "URL=UTCP_ARG_id_UTCP_END123suffix"',
+            {"id": "abc"},
+            NONCE,
+        )
+        assert cmd == (
+            'Write-Output "URL=${env:' + _v("id") + '}123suffix"'
+        )
+        assert env[_v("id")] == "abc"
 
     @pytest.mark.skipif(os.name != "nt", reason="PowerShell semantics")
     def test_ps_sq_raises_with_clear_message(self, transport):
@@ -110,7 +128,7 @@ class TestSubstitutionContextAwareEmission:
             'Write-Output "pre `"x`" UTCP_ARG_a_UTCP_END"', {"a": "v"}, NONCE
         )
         # dq state must still be active when placeholder is hit.
-        assert cmd == f'Write-Output "pre `"x`" $env:{_v("a")}"'
+        assert cmd == 'Write-Output "pre `"x`" ${env:' + _v("a") + '}"'
 
     def test_multiple_placeholders_share_namespace(self, transport):
         cmd, env = transport._substitute_utcp_args(
@@ -132,7 +150,10 @@ class TestSubstitutionContextAwareEmission:
             NONCE,
         )
         if os.name == "nt":
-            assert cmd == f'curl "https://api/$env:{_v("id")}/$env:{_v("action")}"'
+            assert cmd == (
+                'curl "https://api/${env:' + _v("id")
+                + '}/${env:' + _v("action") + '}"'
+            )
         else:
             assert (
                 cmd
