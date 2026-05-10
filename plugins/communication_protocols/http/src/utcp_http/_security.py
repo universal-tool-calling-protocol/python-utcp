@@ -64,6 +64,35 @@ def is_secure_url(url: str) -> bool:
         return False
 
 
+def is_loopback_url(url: str) -> bool:
+    """Return True if ``url``'s host is a literal loopback address.
+
+    Used by the OpenAPI converter to detect the SSRF case where a remote spec
+    declares ``servers: [{ url: "http://127.0.0.1:..." }]`` to redirect tool
+    invocation at the host running the agent. Hostname-based — not a string
+    prefix — so ``http://localhost.evil.com`` returns False.
+    """
+    if not isinstance(url, str) or not url:
+        return False
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+
+    if host in _LOOPBACK_HOSTNAMES:
+        return True
+
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def ensure_secure_url(url: str, *, context: Optional[str] = None) -> None:
     """Raise ``ValueError`` if ``url`` is not safe to fetch.
 
