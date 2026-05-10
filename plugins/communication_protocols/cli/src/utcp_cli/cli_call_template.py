@@ -9,15 +9,41 @@ import traceback
 class CommandStep(BaseModel):
     """REQUIRED
     Configuration for a single command step in a CLI execution flow.
-    
+
     Attributes:
         command: The command string to execute. Can contain UTCP_ARG_argname_UTCP_END
             placeholders that will be replaced with values from tool_args. Can also
             reference previous command outputs using $CMD_0_OUTPUT, $CMD_1_OUTPUT, etc.
+
+            Placeholders are NOT inlined as text. Instead the protocol
+            emits a context-aware shell variable reference (`"$VAR"` /
+            `${VAR}` / `$env:VAR`) and ships the actual `tool_args`
+            value to the subprocess via an environment variable, so the
+            shell expands the value AFTER it has parsed the script.
+            Attacker-controlled bytes therefore cannot inject commands
+            or escape any quoting context.
+
+            A placeholder always substitutes a **single logical value**
+            (never a list of shell words) -- the substituted value
+            cannot be reinterpreted as additional shell syntax. Several
+            placeholders may appear within the same quoted region (e.g.
+            ``"https://api/UTCP_ARG_id_UTCP_END/UTCP_ARG_action_UTCP_END"``)
+            and they compose with the surrounding literal text into one
+            shell argument. Tools that previously relied on a single
+            placeholder splitting into multiple flags (e.g.
+            ``UTCP_ARG_flags_UTCP_END`` -> ``--verbose --debug``) must
+            now use one placeholder per intended flag. 
+
+            PowerShell limitation: a placeholder appearing inside a
+            single-quoted PowerShell string (``'...'``) raises
+            ``ValueError`` at script-build time -- PowerShell does not
+            expand variables inside single quotes, and rewriting the
+            surrounding token is too brittle. Use a double-quoted
+            string (``"..."``) instead.
         append_to_final_output: Whether this command's output should be included
             in the final result. If not specified, defaults to False for all
             commands except the last one.
-    
+
     Examples:
         Basic command step:
         ```json
@@ -26,7 +52,7 @@ class CommandStep(BaseModel):
           "append_to_final_output": true
         }
         ```
-        
+
         Command with argument placeholders and output reference:
         ```json
         {
@@ -36,10 +62,17 @@ class CommandStep(BaseModel):
         ```
     """
     command: str = Field(
-        description="Command string to execute, may contain UTCP_ARG_argname_UTCP_END placeholders"
+        description=(
+            "Command string to execute, may contain UTCP_ARG_argname_UTCP_END "
+            "placeholders. Each placeholder substitutes a single value via "
+            "a shell-variable reference chosen for its surrounding quote "
+            "context; substituted values cannot be reinterpreted as "
+            "additional shell syntax. Several placeholders may appear in "
+            "the same quoted region and compose into one argument."
+        )
     )
     append_to_final_output: Optional[bool] = Field(
-        default=None, 
+        default=None,
         description="Whether to include this command's output in final result. Defaults to False for all except last command"
     )
 
@@ -54,26 +87,90 @@ class CliCallTemplate(CallTemplate):
     **Cross-Platform Script Generation:**
     - **Windows**: Commands are converted to a PowerShell script
     - **Unix/Linux/macOS**: Commands are converted to a Bash script
-    
+
     **Command Syntax Requirements:**
     - Windows: Use PowerShell syntax (e.g., `Get-ChildItem`, `Set-Location`)
     - Unix: Use Bash/shell syntax (e.g., `ls`, `cd`)
-    
+
     **Referencing Previous Command Output:**
     You can reference the output of previous commands using variables:
     - **PowerShell**: `$CMD_0_OUTPUT`, `$CMD_1_OUTPUT`, etc.
     - **Bash**: `$CMD_0_OUTPUT`, `$CMD_1_OUTPUT`, etc.
-    
+
     Example: `echo "Previous result: $CMD_0_OUTPUT"`
+
+    **Argument Substitution:**
+    ``UTCP_ARG_argname_UTCP_END`` placeholders are replaced with a
+    context-aware shell variable reference (``"$VAR"`` outside quotes,
+    ``${VAR}`` inside double quotes, an adjacent-quote concat trick
+    inside single-quoted bash). The actual ``tool_args`` value is
+    shipped to the subprocess via a fresh, per-invocation env var; the
+    shell expands it at runtime AFTER it has parsed the script, so
+    attacker-controlled bytes cannot inject commands or escape any
+    quoting context.
+
+    A placeholder always substitutes a single logical value (never a
+    list of shell words). Several placeholders may appear in one
+    quoted region and compose with the surrounding text into one
+    argument (e.g.
+    ``"https://api/UTCP_ARG_id_UTCP_END/UTCP_ARG_action_UTCP_END"``).
+    If a tool needs multiple separate flags, use one placeholder per
+    flag in bare position. PowerShell single-quoted strings cannot
+    expand variables, so a placeholder inside ``'...'`` on Windows
+    raises ``ValueError`` at script-build time; use a double-quoted
+    string instead. This change closes the command-injection vector
+    tracked as GHSA-33p6-5jxp-p3x4 (and its residual
+    double-quote-context bypass that the inline ``shlex.quote``
+    strategy in 1.1.2 left open).
+
+    **Subprocess Environment (utcp-cli >= 1.1.2):**
+    The CLI subprocess no longer inherits the full host environment.
+    Inheritance is controlled by `inherit_env_vars`:
+      - Omitted / `null`: a built-in default allowlist of host variables
+        is passed through (e.g. `PATH`, `PATHEXT`, `SYSTEMROOT`, `HOME`,
+        `LANG`) so shells and binaries can be located normally.
+      - `[]`: strict mode — nothing from the host environment is
+        inherited; only `env_vars` is propagated.
+      - `["FOO", "BAR"]`: exactly those host variables are passed
+        through. The default allowlist is NOT merged in, so callers that
+        still need `PATH` must list it explicitly.
+    `env_vars` is always applied on top and overrides any inherited
+    value. Values in `env_vars` may be plain strings or `${VARNAME}`
+    style placeholders resolved by the UTCP client's variable
+    substitutor (note: those placeholders are resolved against the UTCP
+    client's variable sources, not against the host shell — to forward
+    a host variable by name use `inherit_env_vars`). This closes the
+    secret-exfiltration vector tracked as GHSA-5v57-8rxj-3p2r.
 
     Attributes:
         call_template_type: The type of the call template. Must be "cli".
         commands: A list of CommandStep objects defining the commands to execute
             in order. Each command can contain UTCP_ARG_argname_UTCP_END placeholders
             that will be replaced with values from tool_args during execution.
+            Placeholders are shell-quoted and therefore expand to exactly one
+            shell token (see class docstring).
         env_vars: A dictionary of environment variables to set for the command's
             execution context. Values can be static strings or placeholders for
-            variables from the UTCP client's variable substitutor.
+            variables from the UTCP client's variable substitutor. Always
+            propagated; overrides anything inherited from the host.
+        inherit_env_vars: Controls which host environment variables are
+            passed through to the subprocess.
+              - `None` (default): the built-in default allowlist
+                (`PATH`, `HOME`, `LANG` on Unix; `PATH`, `PATHEXT`,
+                `SYSTEMROOT`, `USERPROFILE`, etc. on Windows) is
+                inherited so shells and binaries work without extra
+                configuration.
+              - `[]`: strict mode — no host variables are inherited at
+                all. Only `env_vars` reaches the subprocess.
+              - `["FOO", "BAR"]`: exactly those host variables are
+                inherited. The default allowlist is replaced, not
+                extended, so include `PATH` (and any other required
+                shell vars) yourself if needed.
+            Variables named here that are not set on the host are
+            silently skipped. Use this to expose specific host secrets
+            such as `OPENAI_API_KEY`, `AWS_PROFILE`, `PYTHONPATH`, or
+            `NODE_PATH` without putting their values in the call
+            template.
         working_dir: The working directory from which to run the commands. If not
             provided, it defaults to the current process's working directory.
         auth: Authentication details. Not applicable to the CLI protocol, so it
@@ -97,7 +194,7 @@ class CliCallTemplate(CallTemplate):
           ]
         }
         ```
-        
+
         Referencing previous command output:
         ```json
         {
@@ -116,7 +213,7 @@ class CliCallTemplate(CallTemplate):
         }
         ```
 
-        Command with environment variables and placeholders:
+        Command with environment variables, host pass-through, and placeholders:
         ```json
         {
           "name": "python_multi_step_tool",
@@ -133,16 +230,19 @@ class CliCallTemplate(CallTemplate):
           "env_vars": {
             "PYTHONPATH": "/custom/path",
             "API_KEY": "${API_KEY_VAR}"
-          }
+          },
+          "inherit_env_vars": ["OPENAI_API_KEY", "AWS_PROFILE"]
         }
         ```
 
     Security Considerations:
         - Commands are executed in a subprocess. Ensure that the commands
           specified are from a trusted source.
-        - Avoid passing unsanitized user input directly into the command string.
-          Use tool argument validation where possible.
-        - All placeholders are replaced with string values from tool_args.
+        - `tool_args` values are shell-quoted on substitution, but the
+          *command template itself* is not — never assemble it from
+          untrusted input.
+        - The host environment is restricted; secrets are not propagated
+          unless explicitly named in `env_vars` or `inherit_env_vars`.
         - Commands should use the appropriate syntax for the target platform
           (PowerShell on Windows, Bash on Unix).
         - Previous command outputs are available as variables but should be
@@ -151,10 +251,34 @@ class CliCallTemplate(CallTemplate):
 
     call_template_type: Literal["cli"] = "cli"
     commands: List[CommandStep] = Field(
-        description="List of commands to execute in order. Each command can contain UTCP_ARG_argname_UTCP_END placeholders."
+        description=(
+            "List of commands to execute in order. Each command can contain "
+            "UTCP_ARG_argname_UTCP_END placeholders, which substitute a "
+            "single value via a shell-variable reference chosen for the "
+            "surrounding quote context. Substituted values cannot be "
+            "reinterpreted as additional shell syntax. Several placeholders "
+            "may appear in the same quoted region and compose into one "
+            "argument."
+        )
     )
     env_vars: Optional[Dict[str, str]] = Field(
-        default=None, description="Environment variables to set when executing the commands"
+        default=None,
+        description=(
+            "Environment variables to set when executing the commands. Always "
+            "propagated to the subprocess and override values inherited from "
+            "the host."
+        )
+    )
+    inherit_env_vars: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Controls host environment inheritance. None (default) inherits "
+            "a built-in safe allowlist (PATH, HOME / PATHEXT, SYSTEMROOT, "
+            "etc.). [] disables host inheritance entirely. A list of names "
+            "replaces the default allowlist with exactly those variables, so "
+            "include PATH explicitly if your tool needs it. Names not set on "
+            "the host are skipped silently."
+        )
     )
     working_dir: Optional[str] = Field(
         default=None, description="Working directory for command execution"

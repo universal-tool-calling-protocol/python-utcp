@@ -488,23 +488,27 @@ else:
 
 @pytest.mark.asyncio
 async def test_placeholder_substitution():
-    """Test that UTCP_ARG placeholders are properly substituted."""
+    """Test that UTCP_ARG placeholders are properly substituted.
+
+    in the script and ships the actual value via env var.
+    """
     transport = CliCommunicationProtocol()
-    
-    # Test placeholder substitution using the actual method name
+
     command_template = "echo UTCP_ARG_message_UTCP_END --count UTCP_ARG_count_UTCP_END"
     args = {
         "message": "hello world",
-        "count": 42
+        "count": 42,
     }
-    
-    substituted = transport._substitute_utcp_args(command_template, args)
-    
-    # Check that placeholders are properly replaced
+    nonce = "TESTNONCE"
+    substituted, env = transport._substitute_utcp_args(command_template, args, nonce)
+
+    # Placeholder form must be gone from the script.
     assert "UTCP_ARG_message_UTCP_END" not in substituted
     assert "UTCP_ARG_count_UTCP_END" not in substituted
-    assert "hello world" in substituted
-    assert "42" in substituted
+    # Raw values must appear in the env contribution, not the script.
+    assert env[f"__UTCP_ARG_{nonce}_message"] == "hello world"
+    assert env[f"__UTCP_ARG_{nonce}_count"] == "42"
+    assert "hello world" not in substituted
 
 
 @pytest.mark.asyncio
@@ -644,8 +648,8 @@ async def test_command_output_referencing(transport: CliCommunicationProtocol, p
     )
     
     # Build the shell script to verify it contains the expected structure
-    script = transport._build_combined_shell_script(call_template.commands, {})
-    
+    script, _ = transport._build_combined_shell_script(call_template.commands, {})
+
     # Verify the script contains output capture variables
     assert "CMD_0_OUTPUT" in script
     assert "echo generated_value" in script
