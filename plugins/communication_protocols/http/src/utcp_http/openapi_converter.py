@@ -27,6 +27,7 @@ from utcp.data.auth_implementations import ApiKeyAuth, BasicAuth, OAuth2Auth
 from utcp.data.utcp_manual import UtcpManual
 from utcp.data.tool import Tool, JsonSchema
 from utcp_http.http_call_template import HttpCallTemplate
+from utcp_http._security import is_loopback_url
 
 class OpenApiConverter:
     """REQUIRED
@@ -148,9 +149,32 @@ class OpenApiConverter:
         
         # Determine base URL: override > servers > spec_url > fallback
         if self._base_url_override:
+            # Explicit override from UTCP config — caller has accepted the
+            # trust decision, no further validation here.
             base_url = self._base_url_override
         elif self.spec.get("servers"):
             base_url = self.spec["servers"][0].get("url", "/")
+
+            # Rule: a spec fetched from a non-loopback source cannot declare
+            # a loopback server URL. A user pointing the converter at their
+            # own localhost OpenAPI spec is allowed to declare loopback
+            # servers, and an explicit ``base_url`` override always wins
+            # (handled above).
+            if (
+                self.spec_url
+                and not is_loopback_url(self.spec_url)
+                and is_loopback_url(base_url)
+            ):
+                raise ValueError(
+                    "Security error: OpenAPI spec fetched from "
+                    f"{self.spec_url!r} declares a loopback server URL "
+                    f"({base_url!r}). A remote spec is not allowed to "
+                    "redirect tool calls at the agent's own loopback "
+                    "interface — this is the SSRF pattern from "
+                    "GHSA-39j6-4867-gg4w. If you trust this spec, set "
+                    "the call template's ``base_url`` override "
+                    "explicitly to bypass this check."
+                )
         elif self.spec_url:
             parsed_url = urlparse(self.spec_url)
             base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
