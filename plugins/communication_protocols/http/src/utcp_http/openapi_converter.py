@@ -27,7 +27,7 @@ from utcp.data.auth_implementations import ApiKeyAuth, BasicAuth, OAuth2Auth
 from utcp.data.utcp_manual import UtcpManual
 from utcp.data.tool import Tool, JsonSchema
 from utcp_http.http_call_template import HttpCallTemplate
-from utcp_http._security import is_loopback_url
+from utcp_http._security import ensure_secure_url, is_loopback_url
 
 class OpenApiConverter:
     """REQUIRED
@@ -368,6 +368,17 @@ class OpenApiConverter:
                     if flow_type in ["authorizationCode", "accessCode", "clientCredentials", "application"]:
                         token_url = flow_config.get("tokenUrl")
                         if token_url:
+                            # Reject obviously-internal or plain-HTTP
+                            # token URLs at conversion time so an
+                            # attacker-controlled OpenAPI spec cannot
+                            # smuggle a credential-exfiltration sink
+                            # into the generated call template. The
+                            # runtime check in ``_handle_oauth2`` also
+                            # enforces this -- see
+                            # GHSA-8cp3-qxj6-px34.
+                            ensure_secure_url(
+                                token_url, context="OAuth2 tokenUrl in OpenAPI spec"
+                            )
                             # Use the current counter value for both placeholders
                             client_id_placeholder = self._get_placeholder("CLIENT_ID")
                             client_secret_placeholder = self._get_placeholder("CLIENT_SECRET")
@@ -379,12 +390,15 @@ class OpenApiConverter:
                                 client_secret=client_secret_placeholder,
                                 scope=" ".join(flow_config.get("scopes", {}).keys()) or None
                             )
-            
+
             # OpenAPI 2.0 format (flows directly in scheme)
             else:
                 flow_type = scheme.get("flow", "")
                 token_url = scheme.get("tokenUrl")
                 if token_url and flow_type in ["accessCode", "application", "clientCredentials"]:
+                    ensure_secure_url(
+                        token_url, context="OAuth2 tokenUrl in OpenAPI spec"
+                    )
                     # Use the current counter value for both placeholders
                     client_id_placeholder = self._get_placeholder("CLIENT_ID")
                     client_secret_placeholder = self._get_placeholder("CLIENT_SECRET")

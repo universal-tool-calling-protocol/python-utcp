@@ -33,7 +33,7 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 from utcp_http.openapi_converter import OpenApiConverter
-from utcp_http._security import ensure_secure_url
+from utcp_http._security import ensure_secure_url, safe_request_with_redirects
 import logging
 
 logging.basicConfig(
@@ -153,7 +153,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     # Set content-type header if body is provided and header not already set
                     if body_content is not None and "Content-Type" not in request_headers:
                         request_headers["Content-Type"] = manual_call_template.content_type
-                    
+
                     # Prepare body content based on content type
                     data = None
                     json_data = None
@@ -162,20 +162,24 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                             json_data = body_content
                         else:
                             data = body_content
-                    
-                    # Make the request with the call template's HTTP method
-                    method = manual_call_template.http_method.lower()
-                    request_method = getattr(session, method)
-                    
-                    async with request_method(
+
+                    # Re-validate every redirect hop. aiohttp's default
+                    # ``allow_redirects=True`` would otherwise let an
+                    # attacker-controlled discovery URL 302 us into an
+                    # internal service (GHSA-9qhg-99ww-9mqc).
+                    method = manual_call_template.http_method.upper()
+                    async with safe_request_with_redirects(
+                        session,
+                        method,
                         url,
+                        context="manual discovery",
                         params=query_params,
                         headers=request_headers,
                         auth=auth,
                         json=json_data,
                         data=data,
                         cookies=cookies,
-                        timeout=aiohttp.ClientTimeout(total=10.0)
+                        timeout=aiohttp.ClientTimeout(total=10.0),
                     ) as response:
                         response.raise_for_status()  # Raise exception for 4XX/5XX responses
 
@@ -306,19 +310,24 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     else:
                         data = body_content
 
-                # Make the request with the appropriate HTTP method
-                method = tool_call_template.http_method.lower()
-                request_method = getattr(session, method)
-                
-                async with request_method(
+                # Re-validate every redirect hop -- aiohttp's default
+                # ``allow_redirects=True`` would otherwise let an
+                # attacker-controlled tool endpoint 302 us into an
+                # internal service and hand its body back to the
+                # caller (GHSA-9qhg-99ww-9mqc).
+                method = tool_call_template.http_method.upper()
+                async with safe_request_with_redirects(
+                    session,
+                    method,
                     url,
+                    context="tool invocation",
                     params=query_params,
                     headers=request_headers,
                     auth=auth,
                     json=json_data,
                     data=data,
                     cookies=cookies,
-                    timeout=aiohttp.ClientTimeout(total=30.0)
+                    timeout=aiohttp.ClientTimeout(total=30.0),
                 ) as response:
                     response.raise_for_status()
                     
@@ -356,12 +365,26 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         yield result
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
+        """Handle OAuth2 client credentials flow, trying both body and
+        auth header methods.
+
+        The token URL ultimately comes from a call template, and call
+        templates can be sourced from attacker-controlled OpenAPI specs
+        (the ``OpenApiConverter`` copies ``tokenUrl`` from the spec).
+        Validate it before posting credentials so an attacker spec
+        cannot redirect ``client_id`` / ``client_secret`` exfiltration
+        through this protocol -- see GHSA-8cp3-qxj6-px34. The redirect
+        helper also blocks the post-issue redirect SSRF
+        (GHSA-9qhg-99ww-9mqc) on the token endpoint itself.
         """
-        Handles OAuth2 client credentials flow, trying both body and auth header methods."""
         client_id = auth_details.client_id
 
         if client_id in self._oauth_tokens:
             return self._oauth_tokens[client_id]["access_token"]
+
+        # Reject obviously-internal or plain-HTTP non-loopback token
+        # endpoints before any credential bytes leave the process.
+        ensure_secure_url(auth_details.token_url, context="OAuth2 token URL")
 
         async with aiohttp.ClientSession() as session:
             # Method 1: Send credentials in the request body
@@ -373,7 +396,13 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     'client_secret': auth_details.client_secret,
                     'scope': auth_details.scope
                 }
-                async with session.post(auth_details.token_url, data=body_data) as response:
+                async with safe_request_with_redirects(
+                    session,
+                    "POST",
+                    auth_details.token_url,
+                    context="OAuth2 token fetch",
+                    data=body_data,
+                ) as response:
                     response.raise_for_status()
                     token_response = await response.json()
                     self._oauth_tokens[client_id] = token_response
@@ -389,7 +418,14 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     'grant_type': 'client_credentials',
                     'scope': auth_details.scope
                 }
-                async with session.post(auth_details.token_url, data=header_data, auth=header_auth) as response:
+                async with safe_request_with_redirects(
+                    session,
+                    "POST",
+                    auth_details.token_url,
+                    context="OAuth2 token fetch",
+                    data=header_data,
+                    auth=header_auth,
+                ) as response:
                     response.raise_for_status()
                     token_response = await response.json()
                     self._oauth_tokens[client_id] = token_response

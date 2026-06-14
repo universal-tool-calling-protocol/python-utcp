@@ -1,10 +1,16 @@
-"""URL validation shared by every HTTP-based communication protocol.
+"""URL validation for the WebSocket communication protocol.
 
-Centralised so all three HTTP protocols (http, streamable_http, sse) enforce
-the same trust boundary at every network edge — manual discovery AND tool
-invocation. Issue #83 (CVE-class SSRF) was caused by the runtime invocation
-path forgetting the discovery-time check, so this module also provides an
-explicit ``ensure_secure_url`` to call before every aiohttp request.
+Mirror of ``utcp_http._security`` -- intentionally duplicated rather
+than cross-plugin-imported so ``utcp-websocket`` does not gain a
+runtime dependency on ``utcp-http``. Keep in sync when changing the
+validator behavior. Backs GHSA-ppx3-28rw-8fpf (the WebSocket plugin
+was missing the URL check entirely, despite its docstrings claiming
+"WSS or localhost only").
+
+WebSocket URLs use the ``ws://`` and ``wss://`` schemes, so this
+module exposes :func:`is_secure_ws_url` / :func:`ensure_secure_ws_url`
+in addition to the HTTP-scheme helpers. ``wss://`` is always allowed;
+``ws://`` is allowed only for literal loopback hosts.
 """
 
 from __future__ import annotations
@@ -16,6 +22,15 @@ from urllib.parse import urljoin, urlparse
 
 # Hostnames considered safe to talk to over plain HTTP.
 _LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _hostname_is_loopback(host: str) -> bool:
+    if host in _LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def is_secure_url(url: str) -> bool:
@@ -54,15 +69,58 @@ def is_secure_url(url: str) -> bool:
         return True
 
     # http:// is only allowed for loopback.
-    if host in _LOOPBACK_HOSTNAMES:
-        return True
+    return _hostname_is_loopback(host)
 
-    # Catch any other literal loopback IP that urlparse normalised
-    # (e.g. ``http://127.000.000.001``).
+
+def is_secure_ws_url(url: str) -> bool:
+    """Return True if ``url`` is safe to open as a WebSocket connection.
+
+    Allowed:
+        - Any ``wss://`` URL.
+        - ``ws://`` URLs whose host is a literal loopback address.
+
+    Mirrors :func:`is_secure_url` for the WebSocket schemes. Backs the
+    "WSS or localhost only" guarantee that the WebSocket plugin's
+    docstrings advertise but the code did not previously enforce
+    (GHSA-ppx3-28rw-8fpf).
+    """
+    if not isinstance(url, str) or not url:
+        return False
+
     try:
-        return ip_address(host).is_loopback
+        parsed = urlparse(url)
     except ValueError:
         return False
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in {"ws", "wss"}:
+        return False
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+
+    if scheme == "wss":
+        return True
+
+    return _hostname_is_loopback(host)
+
+
+def ensure_secure_ws_url(url: str, *, context: Optional[str] = None) -> None:
+    """Raise ``ValueError`` if ``url`` is not safe to open as a WebSocket.
+
+    Companion to :func:`ensure_secure_url` for WebSocket schemes.
+    """
+    if is_secure_ws_url(url):
+        return
+
+    where = f" during {context}" if context else ""
+    raise ValueError(
+        f"Security error{where}: WebSocket URL must use WSS or be a literal "
+        f"loopback address (ws://localhost / ws://127.0.0.1 / ws://[::1]). "
+        f"Got: {url!r}. Plain WS to any other host is rejected to prevent "
+        "MITM attacks and SSRF into internal services."
+    )
 
 
 def is_loopback_url(url: str) -> bool:

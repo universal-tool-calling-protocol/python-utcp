@@ -1,10 +1,11 @@
-"""URL validation shared by every HTTP-based communication protocol.
+"""URL validation for the GraphQL communication protocol.
 
-Centralised so all three HTTP protocols (http, streamable_http, sse) enforce
-the same trust boundary at every network edge — manual discovery AND tool
-invocation. Issue #83 (CVE-class SSRF) was caused by the runtime invocation
-path forgetting the discovery-time check, so this module also provides an
-explicit ``ensure_secure_url`` to call before every aiohttp request.
+Mirror of ``utcp_http._security`` -- intentionally duplicated rather
+than cross-plugin-imported so ``utcp-gql`` does not gain a runtime
+dependency on ``utcp-http``. Keep the two files in sync when changing
+the validator behavior. Backs GHSA-ppx3-28rw-8fpf (the original CVE
+fix did not reach this plugin) and GHSA-9qhg-99ww-9mqc (redirect
+SSRF on the GraphQL endpoint).
 """
 
 from __future__ import annotations
