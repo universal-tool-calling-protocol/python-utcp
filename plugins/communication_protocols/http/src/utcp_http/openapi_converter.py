@@ -317,6 +317,8 @@ class OpenApiConverter:
         # Handle 'examples' map (OpenAPI 3.0+)
         if "examples" in obj and isinstance(obj["examples"], dict):
             for example_obj in obj["examples"].values():
+                if isinstance(example_obj, dict) and "$ref" in example_obj:
+                    example_obj = self._resolve_ref_obj(example_obj, set()) or {}
                 if isinstance(example_obj, dict):
                     # Example Object can have 'value' or 'externalValue'
                     if "value" in example_obj:
@@ -588,8 +590,12 @@ class OpenApiConverter:
         # Resolve $ref in response schema
         json_schema = self._resolve_ref_obj(json_schema, set()) or {}
 
-        # Extract examples from response media type
-        response_examples = self._extract_examples(media_type_obj) if media_type_obj else None
+        # Extract examples from response media type and schema level
+        response_examples = list(self._extract_examples(media_type_obj) or []) if media_type_obj else []
+        for ex in self._extract_examples(json_schema) or []:
+            if ex not in response_examples:
+                response_examples.append(ex)
+        response_examples = response_examples or None
 
         schema_args = {
             "type": json_schema.get("type", "object"),
