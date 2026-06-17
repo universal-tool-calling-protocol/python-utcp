@@ -220,7 +220,10 @@ def _same_origin(a: str, b: str) -> bool:
         return False
 
 
-def _scrub_cross_origin_credentials(kwargs: dict) -> None:
+def _scrub_cross_origin_credentials(
+    kwargs: dict,
+    extra_auth_header_names: Optional[frozenset] = None,
+) -> None:
     """Strip auth-bearing kwargs in place when crossing origins.
 
     Mirrors ``utcp_http._security._scrub_cross_origin_credentials`` --
@@ -229,11 +232,14 @@ def _scrub_cross_origin_credentials(kwargs: dict) -> None:
     ``data``) so 307/308 redirects cannot resend an OAuth POST body
     to a new origin.
     """
+    extra = extra_auth_header_names or frozenset()
     headers = kwargs.get("headers")
     if headers is not None:
         scrubbed: Dict[str, Any] = {}
         for k, v in dict(headers).items():
             if _header_is_auth_sensitive(k):
+                continue
+            if isinstance(k, str) and k.lower() in extra:
                 continue
             scrubbed[k] = v
         kwargs["headers"] = scrubbed
@@ -254,6 +260,7 @@ async def safe_request_with_redirects(
     *,
     context: str,
     max_redirects: int = 5,
+    auth_header_names: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Any]:
     """Issue an aiohttp request that re-validates every redirect hop.
@@ -290,6 +297,12 @@ async def safe_request_with_redirects(
     ensure_secure_url(url, context=context)
     # We control redirect behavior ourselves; refuse to let callers override.
     kwargs.pop("allow_redirects", None)
+
+    extra_auth_header_names = frozenset(
+        n.lower()
+        for n in (auth_header_names or [])
+        if isinstance(n, str)
+    )
 
     current_url = url
     current_method = method
@@ -335,7 +348,9 @@ async def safe_request_with_redirects(
 
             # Strip auth-bearing kwargs on cross-origin redirect.
             if not _same_origin(current_url, next_url):
-                _scrub_cross_origin_credentials(kwargs)
+                _scrub_cross_origin_credentials(
+                    kwargs, extra_auth_header_names
+                )
 
             if response.status == 303:
                 current_method = "GET"
