@@ -202,11 +202,33 @@ _AUTH_SENSITIVE_HEADERS = frozenset({
     "x-xsrf-token",
     "x-amz-security-token",
     "x-goog-api-key",
+    "x_api_key",
+    "api_key",
+    "x_auth_token",
+    "x_access_token",
+    "x_csrf_token",
+    "x_xsrf_token",
+    "apikey",
+    "xapikey",
+    "authtoken",
+    "xauthtoken",
+    "accesstoken",
+    "xaccesstoken",
+    "bearertoken",
+    "sessionid",
+    "csrftoken",
+    "xsrftoken",
 })
 
 
 _AUTH_HEADER_REGEX = re.compile(
-    r"(^|-)(auth|authn|authz|token|key|secret|bearer|session|sid|api[_-]?key|jwt)(-|$)",
+    r"(?:(?:^|[-_])"
+    r"(?:auth|authn|authz|token|key|secret|bearer|session|sid|"
+    r"api[-_]?key|jwt|csrf|xsrf)"
+    r"(?:[-_]|$))"
+    r"|"
+    r"(?:apikey|authtoken|accesstoken|bearertoken|sessionid|"
+    r"csrftoken|xsrftoken|xapikey|xauthtoken|xaccesstoken|xapitoken)",
     re.IGNORECASE,
 )
 
@@ -232,21 +254,24 @@ def _effective_port(scheme: str, parsed_port: Optional[int]) -> Optional[int]:
 def _same_origin(a: str, b: str) -> bool:
     """Return True iff URLs ``a`` and ``b`` share scheme+host+port.
 
-    Treats omitted ports as the scheme default.
+    Returns ``False`` on any parse failure, including
+    ``urlparse(...).port`` raising for an out-of-range port -- a
+    bogus ``Location`` is treated as cross-origin so credentials
+    are scrubbed instead of letting the ``ValueError`` escape.
     """
     try:
         pa, pb = urlparse(a), urlparse(b)
+        sa = (pa.scheme or "").lower()
+        sb = (pb.scheme or "").lower()
+        if not sa or not sb:
+            return False
+        if sa != sb:
+            return False
+        if (pa.hostname or "").lower() != (pb.hostname or "").lower():
+            return False
+        return _effective_port(sa, pa.port) == _effective_port(sb, pb.port)
     except ValueError:
         return False
-    sa = (pa.scheme or "").lower()
-    sb = (pb.scheme or "").lower()
-    if not sa or not sb:
-        return False
-    if sa != sb:
-        return False
-    if (pa.hostname or "").lower() != (pb.hostname or "").lower():
-        return False
-    return _effective_port(sa, pa.port) == _effective_port(sb, pb.port)
 
 
 def _scrub_cross_origin_credentials(kwargs: dict) -> None:

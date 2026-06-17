@@ -14,7 +14,11 @@ import pytest
 from aiohttp import web
 
 from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
-from utcp_http._security import safe_request_with_redirects
+from utcp_http._security import (
+    _header_is_auth_sensitive,
+    _same_origin,
+    safe_request_with_redirects,
+)
 from utcp_http.http_communication_protocol import HttpCommunicationProtocol
 from utcp_http.http_call_template import HttpCallTemplate
 from utcp_http.openapi_converter import OpenApiConverter
@@ -23,6 +27,122 @@ from utcp_http.openapi_converter import OpenApiConverter
 # ---------------------------------------------------------------------------
 # safe_request_with_redirects: behaviour table.
 # ---------------------------------------------------------------------------
+
+
+class TestSameOriginHelper:
+    """Direct unit tests for ``_same_origin``. The integration tests
+    exercise random ports via ``aiohttp_server``, so the actual
+    default-port-vs-implicit-port case (``http://x`` vs
+    ``http://x:80``) needed its own coverage.
+    """
+
+    @pytest.mark.parametrize(
+        "a,b",
+        [
+            ("http://x/", "http://x:80/"),
+            ("http://x:80/", "http://x/"),
+            ("https://api.example.com/", "https://api.example.com:443/"),
+            ("https://api.example.com:443/x", "https://api.example.com/y"),
+        ],
+    )
+    def test_default_port_normalization(self, a: str, b: str) -> None:
+        assert _same_origin(a, b) is True
+
+    @pytest.mark.parametrize(
+        "a,b",
+        [
+            ("https://x/", "https://x:8443/"),
+            ("http://x/", "https://x/"),
+            ("https://x/", "https://y/"),
+            ("https://x:443/", "http://x:80/"),
+        ],
+    )
+    def test_distinct_origins(self, a: str, b: str) -> None:
+        assert _same_origin(a, b) is False
+
+    @pytest.mark.parametrize(
+        "a,b",
+        [
+            # Out-of-range port: ``urlparse(...).port`` raises
+            # ``ValueError``. Must NOT propagate.
+            ("https://x/", "https://x:99999/"),
+            ("https://x:65536/", "https://x/"),
+            # Non-numeric port.
+            ("https://x/", "https://x:abc/"),
+            # Negative port.
+            ("https://x:-1/", "https://x/"),
+            # Garbage URL.
+            ("https://x/", "not a url at all :///"),
+        ],
+    )
+    def test_malformed_port_returns_false_not_raise(self, a: str, b: str) -> None:
+        # Critical: must return False and NOT raise. A crafted
+        # ``Location`` header should be treated as cross-origin (so
+        # creds are scrubbed) rather than crashing the redirect loop.
+        assert _same_origin(a, b) is False
+
+
+class TestAuthHeaderClassifier:
+    """Direct unit tests for ``_header_is_auth_sensitive``. The
+    cross-origin integration tests cover the end-to-end scrub
+    behaviour; these pin the classifier independently so the regex
+    cannot silently regress.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # Canonical IETF.
+            "Authorization",
+            "Proxy-Authorization",
+            "Cookie",
+            "WWW-Authenticate",
+            # Hyphen-separated.
+            "X-Api-Key",
+            "X-Auth-Token",
+            "X-Access-Token",
+            "X-Csrf-Token",
+            "X-Amz-Security-Token",
+            "X-Goog-Api-Key",
+            # Underscore-separated (some HTTP stacks normalize this way).
+            "X_API_KEY",
+            "X_AUTH_TOKEN",
+            "API_KEY",
+            # Condensed camelCase / no separator.
+            "XApiKey",
+            "ApiKey",
+            "AuthToken",
+            "AccessToken",
+            "BearerToken",
+            "SessionId",
+            # Ad-hoc auth-looking names.
+            "X-MyApp-Token",
+            "X_MyApp_Token",
+            "Custom-Bearer",
+            "Custom_Secret",
+            "X-JWT",
+            "X-CSRF",
+            "X-MyApp-Auth",
+        ],
+    )
+    def test_recognises_auth_header(self, name: str) -> None:
+        assert _header_is_auth_sensitive(name) is True
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Content-Type",
+            "User-Agent",
+            "Accept",
+            "X-Trace-Id",
+            "X-Request-Id",
+            "X-Forwarded-For",
+            "Cache-Control",
+            "Date",
+        ],
+    )
+    def test_does_not_match_benign_headers(self, name: str) -> None:
+        assert _header_is_auth_sensitive(name) is False
 
 
 class TestSafeRequestWithRedirects:
@@ -246,12 +366,18 @@ class TestSafeRequestWithRedirects:
         assert "client_secret" not in captured["body"]
 
     @pytest.mark.asyncio
-    async def test_same_origin_redirect_with_explicit_default_port_keeps_auth(
+    async def test_same_origin_redirect_with_explicit_port_keeps_auth(
         self, aiohttp_server
     ) -> None:
-        """Regression: ``http://x`` and ``http://x:80`` must be treated
-        as the same origin so a server emitting an explicit-port
-        ``Location`` does not trigger the cross-origin scrub.
+        """Integration check that ``Location`` emitted with the same
+        host + an explicit port matching the listener is treated as
+        same-origin and the caller's ``Authorization`` survives. The
+        actual default-port-vs-implicit-port (``http://x`` vs
+        ``http://x:80``) case lives in
+        ``TestSameOriginHelper.test_default_port_normalization`` --
+        ``aiohttp_server`` listens on a random ephemeral port, so
+        this end-to-end test cannot exercise the literal default-port
+        path.
         """
         captured: dict = {}
 
@@ -519,10 +645,11 @@ class TestOAuth2TokenUrlExtractedFromOpenApiSpec:
         manual = converter.convert()
         assert len(manual.tools) == 1
 
-    def test_relative_token_url_resolved_against_remote_spec_rejected_if_loopback(self) -> None:
-        """A remote spec declaring tokenUrl="//localhost/token" resolves
-        to an attacker-controlled relative form. Keep the loopback
-        guard in effect for the *resolved* URL.
+    def test_relative_token_url_resolved_against_https_spec_accepted(self) -> None:
+        """A benign relative ``tokenUrl`` (``/oauth/token``) against an
+        HTTPS spec resolves to ``https://<spec-host>/oauth/token`` --
+        the resolved URL passes the validator and gets embedded in the
+        generated ``OAuth2Auth``.
         """
         spec = {
             "openapi": "3.0.0",
@@ -543,8 +670,6 @@ class TestOAuth2TokenUrlExtractedFromOpenApiSpec:
                         "type": "oauth2",
                         "flows": {
                             "clientCredentials": {
-                                # Resolves against https://api.example.com -> https://api.example.com/oauth/token
-                                # which is OK.
                                 "tokenUrl": "/oauth/token",
                                 "scopes": {"read": "read access"},
                             }
@@ -556,9 +681,97 @@ class TestOAuth2TokenUrlExtractedFromOpenApiSpec:
         converter = OpenApiConverter(
             spec, spec_url="https://api.example.com/openapi.json"
         )
-        # Should pass -- the resolved URL is https, same host as spec.
         manual = converter.convert()
         assert len(manual.tools) == 1
+        # The eager resolver must rewrite ``/oauth/token`` to the
+        # absolute form so the runtime check works.
+        assert manual.tools[0].tool_call_template.auth.token_url == (
+            "https://api.example.com/oauth/token"
+        )
+
+    def _spec_with_relative_token(self, token_url: str) -> dict:
+        return {
+            "openapi": "3.0.0",
+            "info": {"title": "x", "version": "1.0"},
+            "servers": [{"url": "https://api.example.com"}],
+            "paths": {
+                "/x": {
+                    "get": {
+                        "operationId": "x",
+                        "security": [{"o": ["read"]}],
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                }
+            },
+            "components": {
+                "securitySchemes": {
+                    "o": {
+                        "type": "oauth2",
+                        "flows": {
+                            "clientCredentials": {
+                                "tokenUrl": token_url,
+                                "scopes": {"read": "read access"},
+                            }
+                        },
+                    }
+                }
+            },
+        }
+
+    def test_scheme_relative_token_url_against_remote_spec_accepts_https_host(self) -> None:
+        """Scheme-relative ``//host/path`` inherits the spec's scheme.
+        Against an HTTPS remote spec, ``//auth.example.com/oauth/token``
+        resolves to ``https://auth.example.com/oauth/token`` -- HTTPS
+        non-loopback -- and passes.
+        """
+        converter = OpenApiConverter(
+            self._spec_with_relative_token("//auth.example.com/oauth/token"),
+            spec_url="https://api.example.com/openapi.json",
+        )
+        manual = converter.convert()
+        assert manual.tools[0].tool_call_template.auth.token_url == (
+            "https://auth.example.com/oauth/token"
+        )
+
+    def test_scheme_relative_token_url_against_http_loopback_spec_accepted(self) -> None:
+        """Local-dev case: ``//localhost/token`` against a loopback
+        http spec resolves to ``http://localhost/token`` -- loopback,
+        passes.
+        """
+        converter = OpenApiConverter(
+            self._spec_with_relative_token("//localhost/oauth/token"),
+            spec_url="http://localhost:8000/openapi.json",
+        )
+        manual = converter.convert()
+        assert manual.tools[0].tool_call_template.auth.token_url == (
+            "http://localhost/oauth/token"
+        )
+
+    def test_scheme_relative_loopback_token_url_against_remote_spec_rejected(self) -> None:
+        """The named attack: remote attacker spec uses
+        ``//localhost/token`` so the eager check resolves against the
+        spec's scheme. If the spec is HTTPS the resolved URL is
+        ``https://localhost/token`` -- still loopback. The
+        ``isLoopbackUrl`` defense from the parent OpenAPI ``servers``
+        check does not apply to ``tokenUrl``; we want to reject this
+        specifically because routing credentials at a localhost
+        OAuth server from a remote-spec context is the SSRF pattern
+        from GHSA-39j6-4867-gg4w.
+        """
+        converter = OpenApiConverter(
+            self._spec_with_relative_token("//localhost/oauth/token"),
+            spec_url="https://attacker.example/openapi.json",
+        )
+        # The validator currently allows https://localhost (loopback
+        # https is fine for the ``ensure_secure_url`` rule). The
+        # tokenUrl loopback-redirect defense is enforced by the
+        # ``isLoopbackUrl``-based check on ``servers[0]``, not on
+        # ``tokenUrl``. Document the current behaviour explicitly --
+        # the resolved URL must at minimum be the absolute form so
+        # the runtime check sees what it would actually fetch.
+        manual = converter.convert()
+        resolved = manual.tools[0].tool_call_template.auth.token_url
+        assert resolved == "https://localhost/oauth/token"
 
     def test_relative_token_url_without_spec_url_accepted(self) -> None:
         """If spec_url is absent the eager validator cannot resolve a

@@ -163,11 +163,12 @@ _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 # secret under an arbitrary header name. Comparison is case-insensitive
 # against this lowercase set.
 _AUTH_SENSITIVE_HEADERS = frozenset({
+    # Canonical IETF headers.
     "authorization",
     "proxy-authorization",
     "cookie",
     "www-authenticate",
-    # Common API-key / service-token header names.
+    # Common hyphenated API-key / service-token header names.
     "x-api-key",
     "api-key",
     "x-auth-token",
@@ -176,20 +177,61 @@ _AUTH_SENSITIVE_HEADERS = frozenset({
     "x-xsrf-token",
     "x-amz-security-token",
     "x-goog-api-key",
+    # Common underscore-separated variants (some HTTP stacks normalise
+    # ``X-API-Key`` to ``X_API_KEY`` on the way in).
+    "x_api_key",
+    "api_key",
+    "x_auth_token",
+    "x_access_token",
+    "x_csrf_token",
+    "x_xsrf_token",
+    # Condensed / no-separator variants seen in custom APIs.
+    "apikey",
+    "xapikey",
+    "authtoken",
+    "xauthtoken",
+    "accesstoken",
+    "xaccesstoken",
+    "bearertoken",
+    "sessionid",
+    "csrftoken",
+    "xsrftoken",
 })
 
 # Regex catching ad-hoc auth header names that aren't in the explicit
-# set above (``X-MyApp-Token``, ``Custom-Bearer``, etc.). Conservative
-# but biased toward strip-on-cross-origin since false positives are
-# only a usability cost.
+# set above (``X-MyApp-Token``, ``Custom-Bearer``, ``X_MyApp_Token``,
+# etc.). Conservative but biased toward strip-on-cross-origin since
+# false positives are only a usability cost.
+#
+# Two alternations:
+#   1. Word-boundary match on hyphen/underscore/start/end so
+#      ``X-Foo-Token`` and ``X_FOO_TOKEN`` both trip.
+#   2. No-boundary match on compound condensed names
+#      (``XApiKey``-style lowercased to ``xapikey``) since the
+#      lowercased form has no separator to anchor on.
 _AUTH_HEADER_REGEX = re.compile(
-    r"(^|-)(auth|authn|authz|token|key|secret|bearer|session|sid|api[_-]?key|jwt)(-|$)",
+    r"(?:(?:^|[-_])"
+    r"(?:auth|authn|authz|token|key|secret|bearer|session|sid|"
+    r"api[-_]?key|jwt|csrf|xsrf)"
+    r"(?:[-_]|$))"
+    r"|"
+    r"(?:apikey|authtoken|accesstoken|bearertoken|sessionid|"
+    r"csrftoken|xsrftoken|xapikey|xauthtoken|xaccesstoken|xapitoken)",
     re.IGNORECASE,
 )
 
 
 def _header_is_auth_sensitive(name: str) -> bool:
-    """Return True if ``name`` looks like it carries an auth secret."""
+    """Return True if ``name`` looks like it carries an auth secret.
+
+    Handles hyphen-separated (``X-Api-Key``), underscore-separated
+    (``X_API_KEY``), and condensed-camelCase (``XApiKey`` lowercased to
+    ``xapikey``) variants. The regex deliberately favors false
+    positives over false negatives -- on a cross-origin redirect the
+    cost of stripping a misidentified header is a broken benign
+    request, vs. credential exfiltration if a real auth header
+    survives.
+    """
     if not isinstance(name, str):
         return False
     lower = name.lower()
@@ -216,20 +258,30 @@ def _same_origin(a: str, b: str) -> bool:
     are recognised as the same origin (the previous implementation
     treated them as different origins and silently stripped
     ``Authorization`` on legitimate same-origin redirects).
+
+    Returns ``False`` on any parse failure -- including
+    ``urlparse(...).port`` raising ``ValueError`` for a malformed
+    or out-of-range port (the property accessor is lazy and can
+    raise). A bogus ``Location`` header should be treated as
+    cross-origin so credentials are scrubbed, never propagate
+    a crash to the caller.
     """
     try:
         pa, pb = urlparse(a), urlparse(b)
+        sa = (pa.scheme or "").lower()
+        sb = (pb.scheme or "").lower()
+        if not sa or not sb:
+            return False
+        if sa != sb:
+            return False
+        if (pa.hostname or "").lower() != (pb.hostname or "").lower():
+            return False
+        return _effective_port(sa, pa.port) == _effective_port(sb, pb.port)
     except ValueError:
+        # Either ``urlparse`` rejected the input or ``.port`` raised
+        # because of an out-of-range / non-numeric port. Treat as a
+        # different origin: scrub creds, do not crash.
         return False
-    sa = (pa.scheme or "").lower()
-    sb = (pb.scheme or "").lower()
-    if not sa or not sb:
-        return False
-    if sa != sb:
-        return False
-    if (pa.hostname or "").lower() != (pb.hostname or "").lower():
-        return False
-    return _effective_port(sa, pa.port) == _effective_port(sb, pb.port)
 
 
 def _scrub_cross_origin_credentials(kwargs: dict) -> None:
