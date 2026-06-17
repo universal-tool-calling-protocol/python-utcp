@@ -21,13 +21,13 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 import sys
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from utcp.data.auth import Auth
 from utcp.data.auth_implementations import ApiKeyAuth, BasicAuth, OAuth2Auth
 from utcp.data.utcp_manual import UtcpManual
 from utcp.data.tool import Tool, JsonSchema
 from utcp_http.http_call_template import HttpCallTemplate
-from utcp_http._security import is_loopback_url
+from utcp_http._security import ensure_secure_url, is_loopback_url
 
 class OpenApiConverter:
     """REQUIRED
@@ -191,6 +191,52 @@ class OpenApiConverter:
                         tools.append(tool)
 
         return UtcpManual(tools=tools)
+
+    def _validate_token_url_eagerly(self, token_url: str) -> str:
+        """Validate (and, when relative, resolve) an OpenAPI OAuth2
+        ``tokenUrl`` at conversion time. Returns the absolute URL
+        that should be embedded in the generated ``OAuth2Auth`` so
+        the runtime check in ``_handle_oauth2`` sees a usable value
+        instead of an unresolved relative reference. Backs
+        GHSA-8cp3-qxj6-px34.
+
+        OpenAPI 3.0 / 3.1 explicitly allow ``tokenUrl`` to be a
+        relative reference resolved against the spec's own location.
+        Behaviour:
+
+          * Absolute URL: run ``ensure_secure_url`` and return as-is.
+          * Relative URL with ``spec_url`` available: resolve against
+            ``spec_url``, run ``ensure_secure_url`` on the resolved
+            URL, and return the resolved URL so the runtime check
+            (which doesn't have ``spec_url`` context) can validate it.
+            This is also what closes the ``"tokenUrl": "//host/token"``
+            scheme-relative bypass: the resolved URL inherits the
+            spec's scheme.
+          * Relative URL without ``spec_url``: cannot validate eagerly
+            (no base to resolve against). Return the original string
+            unchanged; the runtime check will reject it later.
+        """
+        parsed = urlparse(token_url)
+        is_absolute = bool(parsed.scheme) and bool(parsed.netloc)
+
+        if is_absolute:
+            ensure_secure_url(token_url, context="OAuth2 tokenUrl in OpenAPI spec")
+            return token_url
+
+        if self.spec_url:
+            try:
+                resolved = urljoin(self.spec_url, token_url)
+            except Exception:
+                return token_url
+            resolved_parsed = urlparse(resolved)
+            if resolved_parsed.scheme and resolved_parsed.netloc:
+                ensure_secure_url(
+                    resolved,
+                    context="OAuth2 tokenUrl in OpenAPI spec (resolved from relative URL)",
+                )
+                return resolved
+
+        return token_url
 
     def _extract_auth(self, operation: Dict[str, Any]) -> Optional[Auth]:
         """
@@ -368,6 +414,16 @@ class OpenApiConverter:
                     if flow_type in ["authorizationCode", "accessCode", "clientCredentials", "application"]:
                         token_url = flow_config.get("tokenUrl")
                         if token_url:
+                            # Reject obviously-internal or plain-HTTP
+                            # token URLs at conversion time AND resolve
+                            # relative URLs against ``spec_url`` so the
+                            # runtime check in ``_handle_oauth2`` sees
+                            # an absolute URL (otherwise an OpenAPI
+                            # 3.0 spec with ``"tokenUrl":
+                            # "/oauth/token"`` would pass conversion
+                            # but fail at runtime). Backs
+                            # GHSA-8cp3-qxj6-px34.
+                            token_url = self._validate_token_url_eagerly(token_url)
                             # Use the current counter value for both placeholders
                             client_id_placeholder = self._get_placeholder("CLIENT_ID")
                             client_secret_placeholder = self._get_placeholder("CLIENT_SECRET")
@@ -379,12 +435,13 @@ class OpenApiConverter:
                                 client_secret=client_secret_placeholder,
                                 scope=" ".join(flow_config.get("scopes", {}).keys()) or None
                             )
-            
+
             # OpenAPI 2.0 format (flows directly in scheme)
             else:
                 flow_type = scheme.get("flow", "")
                 token_url = scheme.get("tokenUrl")
                 if token_url and flow_type in ["accessCode", "application", "clientCredentials"]:
+                    token_url = self._validate_token_url_eagerly(token_url)
                     # Use the current counter value for both placeholders
                     client_id_placeholder = self._get_placeholder("CLIENT_ID")
                     client_secret_placeholder = self._get_placeholder("CLIENT_SECRET")
