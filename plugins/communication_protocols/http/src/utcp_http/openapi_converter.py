@@ -18,7 +18,7 @@ defined by OpenAPI specifications, providing a bridge between OpenAPI and UTCP.
 """
 
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Literal, cast
 import sys
 import uuid
 from urllib.parse import urlparse
@@ -248,14 +248,14 @@ class OpenApiConverter:
             
         # For API Key auth, check header name and location compatibility
         if hasattr(openapi_auth, 'var_name') and hasattr(auth_tools, 'var_name'):
-            openapi_var = openapi_auth.var_name.lower() if openapi_auth.var_name else ""
-            tools_var = auth_tools.var_name.lower() if auth_tools.var_name else ""
+            openapi_var = getattr(openapi_auth, 'var_name', "").lower() if getattr(openapi_auth, 'var_name', None) else ""
+            tools_var = getattr(auth_tools, 'var_name', "").lower() if getattr(auth_tools, 'var_name', None) else ""
             
             if openapi_var != tools_var:
                 return False
                 
             if hasattr(openapi_auth, 'location') and hasattr(auth_tools, 'location'):
-                if openapi_auth.location != auth_tools.location:
+                if getattr(openapi_auth, 'location', None) != getattr(auth_tools, 'location', None):
                     return False
         
         return True
@@ -300,6 +300,30 @@ class OpenApiConverter:
         if isinstance(obj, dict) and "$ref" in obj:
             return self._resolve_ref_path(obj["$ref"], visited)
         return obj
+
+    def _extract_examples(self, obj: Dict[str, Any]) -> Optional[List[Any]]:
+        """
+        Extract examples from an OpenAPI parameter or Media Type Object (Parameter, Media Type, Schema).
+        
+        Supports both 'example' (single value) and 'examples' (map of Example Objects).
+        Returns a list of example values suitable for JSON Schema 'examples' keyword.
+        """
+        examples = []
+        
+        # Handle single 'example' field
+        if "example" in obj and obj["example"] is not None:
+            examples.append(obj["example"])
+        
+        # Handle 'examples' map (OpenAPI 3.0+)
+        if "examples" in obj and isinstance(obj["examples"], dict):
+            for example_obj in obj["examples"].values():
+                if isinstance(example_obj, dict):
+                    # Example Object can have 'value' or 'externalValue'
+                    if "value" in example_obj:
+                        examples.append(example_obj["value"])
+                    # Note: externalValue is a URI reference, we skip it as it's not inline
+        
+        return examples if examples else None
     
     def _create_auth_from_scheme(self, scheme: Dict[str, Any], scheme_name: str) -> Optional[Auth]:
         """Creates an Auth object from an OpenAPI security scheme."""
@@ -417,7 +441,7 @@ class OpenApiConverter:
 
         call_template = HttpCallTemplate(
             name=self.call_template_name,
-            http_method=method.upper(),
+            http_method=cast(Literal["GET", "POST", "PUT", "DELETE", "PATCH"], method.upper()),
             url=full_url,
             body_field=body_field if body_field else None,
             header_fields=header_fields if header_fields else None,
@@ -466,10 +490,18 @@ class OpenApiConverter:
             if param.get("in") == "body":
                 body_field = "body"
                 json_schema = self._resolve_ref_obj(param.get("schema", {}), set()) or {}
-                properties[body_field] = {
+                
+                # Extract examples from body parameter
+                body_examples = self._extract_examples(param)
+                
+                prop = {
                     "description": param.get("description", "Request body"),
                     **json_schema,
                 }
+                if body_examples:
+                    prop["examples"] = body_examples
+                
+                properties[body_field] = prop
                 if param.get("required"):
                     required.append(body_field)
                 continue
@@ -484,10 +516,18 @@ class OpenApiConverter:
                     schema["items"] = param.get("items")
                 if "enum" in param:
                     schema["enum"] = param.get("enum")
-            properties[param_name] = {
+            
+            # Extract examples from parameter
+            param_examples = self._extract_examples(param)
+            
+            prop = {
                 "description": param.get("description", ""),
                 **schema,
             }
+            if param_examples:
+                prop["examples"] = param_examples
+            
+            properties[param_name] = prop
             if param.get("required"):
                 required.append(param_name)
 
@@ -497,13 +537,22 @@ class OpenApiConverter:
             content = request_body.get("content", {})
             json_schema = content.get("application/json", {}).get("schema")
             json_schema = self._resolve_ref_obj(json_schema, set()) if json_schema else None
+            
+            # Extract examples from request body media type
+            media_type_obj = content.get("application/json", {})
+            body_examples = self._extract_examples(media_type_obj)
+            
             if json_schema:
                 # Add a single 'body' field to represent the request body
                 body_field = "body"
-                properties[body_field] = {
+                prop = {
                     "description": json_schema.get("description", "Request body"),
                     **json_schema
                 }
+                if body_examples:
+                    prop["examples"] = body_examples
+                
+                properties[body_field] = prop
                 if json_schema.get("required"):
                     required.append(body_field)
 
@@ -518,14 +567,17 @@ class OpenApiConverter:
             return JsonSchema()
 
         json_schema = None
+        media_type_obj = None
         if "content" in success_response:
             content = success_response.get("content", {})
             json_schema = content.get("application/json", {}).get("schema")
+            media_type_obj = content.get("application/json", {})
             # Fallback to any content type if application/json missing
             if json_schema is None and isinstance(content, dict):
                 for v in content.values():
                     if isinstance(v, dict) and "schema" in v:
                         json_schema = v.get("schema")
+                        media_type_obj = v
                         break
         elif "schema" in success_response:  # OpenAPI 2.0
             json_schema = success_response.get("schema")
@@ -535,6 +587,9 @@ class OpenApiConverter:
 
         # Resolve $ref in response schema
         json_schema = self._resolve_ref_obj(json_schema, set()) or {}
+
+        # Extract examples from response media type
+        response_examples = self._extract_examples(media_type_obj) if media_type_obj else None
 
         schema_args = {
             "type": json_schema.get("type", "object"),
@@ -552,5 +607,9 @@ class OpenApiConverter:
         for attr in ["enum", "minimum", "maximum", "format"]:
             if attr in json_schema:
                 schema_args[attr] = json_schema.get(attr)
+        
+        # Add examples if present
+        if response_examples:
+            schema_args["examples"] = response_examples
                 
         return JsonSchema(**schema_args)
