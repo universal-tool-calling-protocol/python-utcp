@@ -76,33 +76,84 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         self._sessions: Dict[str, ClientSession] = {}
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 
-    def _substitute_placeholders(self, template: Any, arguments: Dict[str, Any]) -> Any:
-        """Recursively substitute UTCP_ARG_arg_name_UTCP_ARG placeholders in template.
+    def _substitute_placeholders(
+        self,
+        template: Any,
+        arguments: Dict[str, Any],
+        *,
+        json_string_context: bool = False,
+    ) -> Any:
+        """Recursively substitute ``UTCP_ARG_<arg>_UTCP_ARG`` placeholders.
 
         Args:
-            template: Template (string, dict, or list) with UTCP_ARG_arg_name_UTCP_ARG placeholders
-            arguments: Arguments to substitute
+            template: Template (string, dict, or list) containing the
+                placeholders.
+            arguments: Arguments to substitute.
+            json_string_context: When True, string-valued arguments are
+                JSON-string-escaped before substitution. Use this when
+                the template is a string that the caller will treat as
+                JSON (e.g. ``'{"q": "UTCP_ARG_q_UTCP_ARG"}'``) so a
+                user-supplied ``"`` character cannot break out of the
+                surrounding JSON string and inject extra fields. Dict /
+                list templates are JSON-serialised by the caller after
+                substitution, so each leaf-string value goes through
+                ``json.dumps`` naturally -- no extra escaping needed
+                for those.
 
         Returns:
-            Template with placeholders replaced
+            Template with placeholders replaced.
         """
         if isinstance(template, str):
-            # Replace UTCP_ARG_arg_name_UTCP_ARG placeholders
             result = template
             for arg_name, arg_value in arguments.items():
                 placeholder = f"UTCP_ARG_{arg_name}_UTCP_ARG"
                 if placeholder in result:
                     if isinstance(arg_value, str):
-                        result = result.replace(placeholder, arg_value)
+                        if json_string_context:
+                            # ``json.dumps`` of a string returns the
+                            # value wrapped in quotes; ``[1:-1]`` peels
+                            # them off, leaving the inner-escaped form
+                            # safe to embed inside an existing JSON
+                            # string literal.
+                            escaped = json.dumps(arg_value)[1:-1]
+                            result = result.replace(placeholder, escaped)
+                        else:
+                            result = result.replace(placeholder, arg_value)
                     else:
                         result = result.replace(placeholder, json.dumps(arg_value))
             return result
         elif isinstance(template, dict):
-            return {k: self._substitute_placeholders(v, arguments) for k, v in template.items()}
+            # Each leaf value is recursed individually; the surrounding
+            # dict gets JSON-serialised by the caller, which will
+            # correctly escape any ``"`` in those leaves. No
+            # ``json_string_context`` propagation needed.
+            return {
+                k: self._substitute_placeholders(v, arguments)
+                for k, v in template.items()
+            }
         elif isinstance(template, list):
-            return [self._substitute_placeholders(item, arguments) for item in template]
+            return [
+                self._substitute_placeholders(item, arguments)
+                for item in template
+            ]
         else:
             return template
+
+    @staticmethod
+    def _string_template_looks_like_json(template: str) -> bool:
+        """Heuristic: does this raw string template look like JSON?
+
+        Used to opt the JSON-string-context substitution path on for
+        callers who pass a JSON-shaped string template (vs. the
+        recommended dict template). If the template starts with ``{``
+        or ``[`` after whitespace, we assume it's structured and
+        escape string substitutions accordingly. False positives
+        (template happens to start with ``{`` but isn't JSON) cost only
+        extra backslashes in the output; false negatives would
+        re-introduce the injection bug.
+        """
+        stripped = template.lstrip()
+        return bool(stripped) and stripped[0] in "{["
 
     def _format_tool_call_message(
         self,
@@ -128,7 +179,21 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         """
         # Priority 1: Use message template if provided (most flexible - supports any format)
         if call_template.message is not None:
-            substituted = self._substitute_placeholders(call_template.message, arguments)
+            # If the template is a JSON-shaped string, escape string
+            # substitutions so a user-controlled ``"`` cannot break
+            # out and inject extra JSON fields. Dict templates are
+            # naturally safe because the surrounding ``json.dumps``
+            # below escapes leaf strings.
+            template = call_template.message
+            json_string_context = (
+                isinstance(template, str)
+                and self._string_template_looks_like_json(template)
+            )
+            substituted = self._substitute_placeholders(
+                template,
+                arguments,
+                json_string_context=json_string_context,
+            )
             # If it's a dict, convert to JSON string
             if isinstance(substituted, dict):
                 return json.dumps(substituted)
@@ -228,15 +293,16 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         self._sessions[provider_key] = session
 
         try:
+            # ``ws_connect`` does not expose ``allow_redirects`` -- aiohttp
+            # treats the upgrade handshake as one-shot, so a 3xx response
+            # naturally fails the handshake instead of being followed.
+            # The URL itself was already validated by ``ensure_secure_ws_url``
+            # above. There is no second hop to harden.
             ws = await session.ws_connect(
                 call_template.url,
                 headers=headers,
                 protocols=[call_template.protocol] if call_template.protocol else None,
                 heartbeat=30 if call_template.keep_alive else None,
-                # aiohttp's ws_connect defaults to following HTTP
-                # redirects on the upgrade handshake; refuse so a
-                # 3xx response cannot land us on a different host.
-                allow_redirects=False,
             )
             self._connections[provider_key] = ws
             logger.info(f"WebSocket connected to {call_template.url}")

@@ -10,9 +10,10 @@ SSRF on the GraphQL endpoint).
 
 from __future__ import annotations
 
+import re
 from contextlib import asynccontextmanager
-from ipaddress import ip_address
-from typing import Any, AsyncIterator, Optional
+from ipaddress import IPv6Address, ip_address
+from typing import Any, AsyncIterator, Dict, Optional
 from urllib.parse import urljoin, urlparse
 
 # Hostnames considered safe to talk to over plain HTTP.
@@ -66,13 +67,30 @@ def is_secure_url(url: str) -> bool:
         return False
 
 
-def is_loopback_url(url: str) -> bool:
-    """Return True if ``url``'s host is a literal loopback address.
+def _ip_is_loopback_like(host: str) -> bool:
+    """Mirror of ``utcp_http._security._ip_is_loopback_like``. See that
+    module for the full rationale -- covers 127.0.0.0/8, ::1, 0.0.0.0,
+    ::, and IPv4-mapped IPv6 loopback addresses.
+    """
+    if host in {"0.0.0.0", "::"}:
+        return True
+    try:
+        addr = ip_address(host)
+    except ValueError:
+        return False
+    if addr.is_loopback:
+        return True
+    if isinstance(addr, IPv6Address):
+        mapped = addr.ipv4_mapped
+        if mapped is not None and mapped.is_loopback:
+            return True
+    return False
 
-    Used by the OpenAPI converter to detect the SSRF case where a remote spec
-    declares ``servers: [{ url: "http://127.0.0.1:..." }]`` to redirect tool
-    invocation at the host running the agent. Hostname-based — not a string
-    prefix — so ``http://localhost.evil.com`` returns False.
+
+def is_loopback_url(url: str) -> bool:
+    """Return True if ``url``'s host is a literal loopback-or-equivalent
+    address. Hostname-based; covers ``0.0.0.0``, ``::`` and IPv4-mapped
+    IPv6 loopback forms in addition to the obvious set.
     """
     if not isinstance(url, str) or not url:
         return False
@@ -89,10 +107,7 @@ def is_loopback_url(url: str) -> bool:
     if host in _LOOPBACK_HOSTNAMES:
         return True
 
-    try:
-        return ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return _ip_is_loopback_like(host)
 
 
 def ensure_secure_url(url: str, *, context: Optional[str] = None) -> None:
@@ -118,6 +133,93 @@ def ensure_secure_url(url: str, *, context: Optional[str] = None) -> None:
 # against the URL given in the ``Location`` header. 303 forces a GET; the
 # rest preserve the original method.
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+_AUTH_SENSITIVE_HEADERS = frozenset({
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "www-authenticate",
+    "x-api-key",
+    "api-key",
+    "x-auth-token",
+    "x-access-token",
+    "x-csrf-token",
+    "x-xsrf-token",
+    "x-amz-security-token",
+    "x-goog-api-key",
+})
+
+
+_AUTH_HEADER_REGEX = re.compile(
+    r"(^|-)(auth|authn|authz|token|key|secret|bearer|session|sid|api[_-]?key|jwt)(-|$)",
+    re.IGNORECASE,
+)
+
+
+def _header_is_auth_sensitive(name: str) -> bool:
+    if not isinstance(name, str):
+        return False
+    lower = name.lower()
+    if lower in _AUTH_SENSITIVE_HEADERS:
+        return True
+    return _AUTH_HEADER_REGEX.search(lower) is not None
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+
+
+def _effective_port(scheme: str, parsed_port: Optional[int]) -> Optional[int]:
+    if parsed_port is not None:
+        return parsed_port
+    return _DEFAULT_PORTS.get((scheme or "").lower())
+
+
+def _same_origin(a: str, b: str) -> bool:
+    """Return True iff URLs ``a`` and ``b`` share scheme+host+port.
+
+    Treats omitted ports as the scheme default so default-port URLs
+    are not falsely flagged as different origins.
+    """
+    try:
+        pa, pb = urlparse(a), urlparse(b)
+    except ValueError:
+        return False
+    sa = (pa.scheme or "").lower()
+    sb = (pb.scheme or "").lower()
+    if not sa or not sb:
+        return False
+    if sa != sb:
+        return False
+    if (pa.hostname or "").lower() != (pb.hostname or "").lower():
+        return False
+    return _effective_port(sa, pa.port) == _effective_port(sb, pb.port)
+
+
+def _scrub_cross_origin_credentials(kwargs: dict) -> None:
+    """Strip auth-bearing kwargs in place when crossing origins.
+
+    Mirrors ``utcp_http._security._scrub_cross_origin_credentials`` --
+    drops auth-looking headers, ``auth=`` / ``proxy_auth=``,
+    ``cookies``, ``params``, and the request body (``json`` /
+    ``data``) so 307/308 redirects cannot resend an OAuth POST body
+    to a new origin.
+    """
+    headers = kwargs.get("headers")
+    if headers is not None:
+        scrubbed: Dict[str, Any] = {}
+        for k, v in dict(headers).items():
+            if _header_is_auth_sensitive(k):
+                continue
+            scrubbed[k] = v
+        kwargs["headers"] = scrubbed
+
+    kwargs.pop("auth", None)
+    kwargs.pop("proxy_auth", None)
+    kwargs.pop("cookies", None)
+    kwargs.pop("params", None)
+    kwargs.pop("json", None)
+    kwargs.pop("data", None)
 
 
 @asynccontextmanager
@@ -206,6 +308,11 @@ async def safe_request_with_redirects(
                 raise
 
             response.release()
+
+            # Strip auth-bearing kwargs on cross-origin redirect.
+            if not _same_origin(current_url, next_url):
+                _scrub_cross_origin_credentials(kwargs)
+
             if response.status == 303:
                 current_method = "GET"
                 kwargs.pop("json", None)

@@ -207,6 +207,9 @@ class SseCommunicationProtocol(CommunicationProtocol):
             request_headers["Authorization"] = f"Bearer {token}"
         
         session = aiohttp.ClientSession()
+        # Always close the session, success or failure. The previous
+        # version only closed on the except path, leaking the session
+        # on the (typical) success path.
         try:
             method = "POST" if body_content is not None else "GET"
             data = body_content if "application/json" not in request_headers.get("Content-Type", "") else None
@@ -236,9 +239,10 @@ class SseCommunicationProtocol(CommunicationProtocol):
             async for event in self._process_sse_stream(response, tool_call_template.event_type):
                 yield event
         except Exception as e:
-            await session.close()
             logger.error(f"Error establishing SSE connection to '{tool_call_template.name}': {e}")
             raise
+        finally:
+            await session.close()
 
     async def _process_sse_stream(self, response: aiohttp.ClientResponse, event_type=None):
         """Process the SSE stream and yield events."""

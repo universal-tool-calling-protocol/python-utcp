@@ -95,6 +95,230 @@ class TestSafeRequestWithRedirects:
         assert payload == {"hop": "final"}
 
     @pytest.mark.asyncio
+    async def test_cross_origin_redirect_strips_authorization_header(
+        self, aiohttp_server
+    ) -> None:
+        """Mirror browser / requests behaviour: an Authorization header
+        configured on the initial request must NOT be forwarded to a
+        new origin after a redirect. Backs the cross-origin credential
+        leak gap reported against ``safe_request_with_redirects``.
+        """
+        captured: dict = {}
+
+        async def _capture(request: web.Request) -> web.Response:
+            captured["authorization"] = request.headers.get("Authorization")
+            captured["cookie"] = request.headers.get("Cookie")
+            return web.json_response({"ok": True})
+
+        target_app = web.Application()
+        target_app.router.add_get("/landed", _capture)
+        target = await aiohttp_server(target_app)
+
+        async def _redirect(request: web.Request) -> web.Response:
+            raise web.HTTPFound(str(target.make_url("/landed")))
+
+        attacker_app = web.Application()
+        attacker_app.router.add_get("/tool", _redirect)
+        attacker = await aiohttp_server(attacker_app)
+
+        # The two aiohttp_server fixtures listen on different ports on
+        # localhost -> different origin (same host, different port).
+        assert attacker.port != target.port
+
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with safe_request_with_redirects(
+                session,
+                "GET",
+                str(attacker.make_url("/tool")),
+                context="tool invocation",
+                headers={"Authorization": "Bearer victim-secret"},
+                cookies={"session": "victim-session"},
+            ):
+                pass
+
+        assert captured["authorization"] is None, (
+            "Authorization header leaked across origin -- redirect helper "
+            "must strip it (CWE-200)."
+        )
+        assert captured["cookie"] is None
+
+    @pytest.mark.asyncio
+    async def test_cross_origin_redirect_strips_custom_api_key_header(
+        self, aiohttp_server
+    ) -> None:
+        """Post-audit hardening: callers can put an API key under an
+        arbitrary header name via ``ApiKeyAuth``. The scrub must catch
+        common forms (``X-Api-Key``) and ad-hoc auth-like names.
+        """
+        captured: dict = {}
+
+        async def _capture(request: web.Request) -> web.Response:
+            captured["x_api_key"] = request.headers.get("X-Api-Key")
+            captured["custom_token"] = request.headers.get("X-MyApp-Token")
+            captured["benign"] = request.headers.get("X-Trace-Id")
+            return web.json_response({"ok": True})
+
+        target_app = web.Application()
+        target_app.router.add_get("/landed", _capture)
+        target = await aiohttp_server(target_app)
+
+        async def _redirect(request: web.Request) -> web.Response:
+            raise web.HTTPFound(str(target.make_url("/landed")))
+
+        attacker_app = web.Application()
+        attacker_app.router.add_get("/tool", _redirect)
+        attacker = await aiohttp_server(attacker_app)
+
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with safe_request_with_redirects(
+                session,
+                "GET",
+                str(attacker.make_url("/tool")),
+                context="tool invocation",
+                headers={
+                    "X-Api-Key": "secret-key",
+                    "X-MyApp-Token": "secret-token",
+                    "X-Trace-Id": "trace-keep-this",
+                },
+            ):
+                pass
+
+        assert captured["x_api_key"] is None
+        assert captured["custom_token"] is None, (
+            "Ad-hoc auth-like header name leaked cross-origin -- regex "
+            "scrub missed it."
+        )
+        # Non-auth header should still propagate.
+        assert captured["benign"] == "trace-keep-this"
+
+    @pytest.mark.asyncio
+    async def test_cross_origin_redirect_drops_request_body(
+        self, aiohttp_server
+    ) -> None:
+        """307 / 308 preserve method+body. A redirect from an
+        attacker-controlled token endpoint must NOT resend the OAuth
+        POST body (which contains client_secret) to the new origin.
+        """
+        captured: dict = {}
+
+        async def _capture(request: web.Request) -> web.Response:
+            captured["body"] = (await request.read()).decode("utf-8", errors="replace")
+            return web.json_response({"ok": True})
+
+        target_app = web.Application()
+        target_app.router.add_post("/landed", _capture)
+        target = await aiohttp_server(target_app)
+
+        async def _redirect(request: web.Request) -> web.Response:
+            # 307 preserves method and (per RFC 7231) body. Browsers
+            # prompt; we have no user, so we strip.
+            raise web.HTTPTemporaryRedirect(str(target.make_url("/landed")))
+
+        attacker_app = web.Application()
+        attacker_app.router.add_post("/token", _redirect)
+        attacker = await aiohttp_server(attacker_app)
+
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with safe_request_with_redirects(
+                session,
+                "POST",
+                str(attacker.make_url("/token")),
+                context="OAuth2 token fetch",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": "victim-id",
+                    "client_secret": "victim-SECRET",
+                },
+            ):
+                pass
+
+        assert "victim-SECRET" not in captured["body"], (
+            "Cross-origin 307 forwarded the OAuth POST body to the new "
+            "origin -- request body must be scrubbed on cross-origin "
+            "redirect (CWE-200)."
+        )
+        assert "client_secret" not in captured["body"]
+
+    @pytest.mark.asyncio
+    async def test_same_origin_redirect_with_explicit_default_port_keeps_auth(
+        self, aiohttp_server
+    ) -> None:
+        """Regression: ``http://x`` and ``http://x:80`` must be treated
+        as the same origin so a server emitting an explicit-port
+        ``Location`` does not trigger the cross-origin scrub.
+        """
+        captured: dict = {}
+
+        async def _capture(request: web.Request) -> web.Response:
+            captured["authorization"] = request.headers.get("Authorization")
+            return web.json_response({"ok": True})
+
+        async def _redirect(request: web.Request) -> web.Response:
+            # Same-host same-port but with explicit ``:<port>``.
+            raise web.HTTPFound(
+                f"http://127.0.0.1:{request.host.split(':')[-1]}/landed"
+            )
+
+        app = web.Application()
+        app.router.add_get("/start", _redirect)
+        app.router.add_get("/landed", _capture)
+        server = await aiohttp_server(app)
+
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with safe_request_with_redirects(
+                session,
+                "GET",
+                str(server.make_url("/start")),
+                context="tool invocation",
+                headers={"Authorization": "Bearer keep-me"},
+            ):
+                pass
+
+        # Within the same server (same scheme/host/port whether port is
+        # implicit or explicit) the Authorization header should survive.
+        assert captured["authorization"] == "Bearer keep-me"
+
+    @pytest.mark.asyncio
+    async def test_same_origin_redirect_keeps_authorization_header(
+        self, aiohttp_server
+    ) -> None:
+        captured: dict = {}
+
+        async def _capture(request: web.Request) -> web.Response:
+            captured["authorization"] = request.headers.get("Authorization")
+            return web.json_response({"ok": True})
+
+        async def _redirect(request: web.Request) -> web.Response:
+            raise web.HTTPFound("/landed")
+
+        app = web.Application()
+        app.router.add_get("/start", _redirect)
+        app.router.add_get("/landed", _capture)
+        server = await aiohttp_server(app)
+
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with safe_request_with_redirects(
+                session,
+                "GET",
+                str(server.make_url("/start")),
+                context="tool invocation",
+                headers={"Authorization": "Bearer same-origin-ok"},
+            ):
+                pass
+
+        assert captured["authorization"] == "Bearer same-origin-ok"
+
+    @pytest.mark.asyncio
     async def test_redirect_loop_is_capped(self, aiohttp_server) -> None:
         async def _redirect(request: web.Request) -> web.Response:
             raise web.HTTPFound("/loop")
@@ -255,6 +479,122 @@ class TestOAuth2TokenUrlExtractedFromOpenApiSpec:
         )
         with pytest.raises(ValueError, match="OAuth2 tokenUrl"):
             converter.convert()
+
+    def test_relative_token_url_with_loopback_spec_accepted(self) -> None:
+        """OpenAPI 3.0 allows tokenUrl to be a relative reference,
+        resolved against the spec's own location. Make sure the
+        eager validator does NOT reject a benign relative URL whose
+        absolute form happens to be a loopback dev URL.
+        """
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "good", "version": "1.0"},
+            "servers": [{"url": "http://localhost:8000"}],
+            "paths": {
+                "/x": {
+                    "get": {
+                        "operationId": "x",
+                        "security": [{"goodOAuth2": ["read"]}],
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                }
+            },
+            "components": {
+                "securitySchemes": {
+                    "goodOAuth2": {
+                        "type": "oauth2",
+                        "flows": {
+                            "clientCredentials": {
+                                "tokenUrl": "/oauth/token",
+                                "scopes": {"read": "read access"},
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        converter = OpenApiConverter(
+            spec, spec_url="http://localhost:8000/openapi.json"
+        )
+        manual = converter.convert()
+        assert len(manual.tools) == 1
+
+    def test_relative_token_url_resolved_against_remote_spec_rejected_if_loopback(self) -> None:
+        """A remote spec declaring tokenUrl="//localhost/token" resolves
+        to an attacker-controlled relative form. Keep the loopback
+        guard in effect for the *resolved* URL.
+        """
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "x", "version": "1.0"},
+            "servers": [{"url": "https://api.example.com"}],
+            "paths": {
+                "/x": {
+                    "get": {
+                        "operationId": "x",
+                        "security": [{"o": ["read"]}],
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                }
+            },
+            "components": {
+                "securitySchemes": {
+                    "o": {
+                        "type": "oauth2",
+                        "flows": {
+                            "clientCredentials": {
+                                # Resolves against https://api.example.com -> https://api.example.com/oauth/token
+                                # which is OK.
+                                "tokenUrl": "/oauth/token",
+                                "scopes": {"read": "read access"},
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        converter = OpenApiConverter(
+            spec, spec_url="https://api.example.com/openapi.json"
+        )
+        # Should pass -- the resolved URL is https, same host as spec.
+        manual = converter.convert()
+        assert len(manual.tools) == 1
+
+    def test_relative_token_url_without_spec_url_accepted(self) -> None:
+        """If spec_url is absent the eager validator cannot resolve a
+        relative tokenUrl, so it must leave the URL intact and defer
+        to the runtime check in ``_handle_oauth2``.
+        """
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "x", "version": "1.0"},
+            "servers": [{"url": "https://api.example.com"}],
+            "paths": {
+                "/x": {
+                    "get": {
+                        "operationId": "x",
+                        "security": [{"o": ["read"]}],
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                }
+            },
+            "components": {
+                "securitySchemes": {
+                    "o": {
+                        "type": "oauth2",
+                        "flows": {
+                            "clientCredentials": {
+                                "tokenUrl": "/oauth/token",
+                                "scopes": {"read": "read access"},
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        converter = OpenApiConverter(spec)  # no spec_url
+        manual = converter.convert()
+        assert len(manual.tools) == 1
 
     def test_legitimate_https_token_url_accepted(self) -> None:
         good_spec = {

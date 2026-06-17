@@ -21,7 +21,7 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 import sys
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from utcp.data.auth import Auth
 from utcp.data.auth_implementations import ApiKeyAuth, BasicAuth, OAuth2Auth
 from utcp.data.utcp_manual import UtcpManual
@@ -191,6 +191,42 @@ class OpenApiConverter:
                         tools.append(tool)
 
         return UtcpManual(tools=tools)
+
+    def _validate_token_url_eagerly(self, token_url: str) -> None:
+        """Run ``ensure_secure_url`` on an OpenAPI OAuth2 ``tokenUrl``
+        at conversion time so an attacker-controlled spec cannot
+        smuggle a credential-exfiltration sink into the generated
+        ``HttpCallTemplate``. Backs GHSA-8cp3-qxj6-px34.
+
+        OpenAPI 3.0 / 3.1 explicitly allow ``tokenUrl`` to be a
+        relative reference resolved against the spec's own location.
+        Reject only **absolute** URLs that fail the validator here;
+        relative URLs are resolved against ``spec_url`` if available
+        (so the validator still applies to the effective URL), and
+        otherwise are left intact for ``_handle_oauth2`` to validate
+        at runtime (after any variable substitution). This avoids
+        rejecting legitimate specs that use ``"tokenUrl": "/oauth/token"``.
+        """
+        parsed = urlparse(token_url)
+        is_absolute = bool(parsed.scheme) and bool(parsed.netloc)
+
+        if is_absolute:
+            ensure_secure_url(token_url, context="OAuth2 tokenUrl in OpenAPI spec")
+            return
+
+        if self.spec_url:
+            try:
+                resolved = urljoin(self.spec_url, token_url)
+            except Exception:
+                # If we cannot resolve, fall through and let the
+                # runtime check handle it.
+                return
+            resolved_parsed = urlparse(resolved)
+            if resolved_parsed.scheme and resolved_parsed.netloc:
+                ensure_secure_url(
+                    resolved,
+                    context="OAuth2 tokenUrl in OpenAPI spec (resolved from relative URL)",
+                )
 
     def _extract_auth(self, operation: Dict[str, Any]) -> Optional[Auth]:
         """
@@ -376,9 +412,7 @@ class OpenApiConverter:
                             # runtime check in ``_handle_oauth2`` also
                             # enforces this -- see
                             # GHSA-8cp3-qxj6-px34.
-                            ensure_secure_url(
-                                token_url, context="OAuth2 tokenUrl in OpenAPI spec"
-                            )
+                            self._validate_token_url_eagerly(token_url)
                             # Use the current counter value for both placeholders
                             client_id_placeholder = self._get_placeholder("CLIENT_ID")
                             client_secret_placeholder = self._get_placeholder("CLIENT_SECRET")
@@ -396,9 +430,7 @@ class OpenApiConverter:
                 flow_type = scheme.get("flow", "")
                 token_url = scheme.get("tokenUrl")
                 if token_url and flow_type in ["accessCode", "application", "clientCredentials"]:
-                    ensure_secure_url(
-                        token_url, context="OAuth2 tokenUrl in OpenAPI spec"
-                    )
+                    self._validate_token_url_eagerly(token_url)
                     # Use the current counter value for both placeholders
                     client_id_placeholder = self._get_placeholder("CLIENT_ID")
                     client_secret_placeholder = self._get_placeholder("CLIENT_SECRET")

@@ -7,7 +7,11 @@ decisions so the bypass never silently regresses.
 
 import pytest
 
-from utcp_http._security import ensure_secure_url, is_secure_url
+from utcp_http._security import (
+    ensure_secure_url,
+    is_loopback_url,
+    is_secure_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -161,3 +165,75 @@ def test_converter_allows_remote_server_from_remote_spec() -> None:
     )
     manual = converter.convert()
     assert len(manual.tools) == 1
+
+
+# ---------------------------------------------------------------------------
+# Extended loopback detection -- post-audit hardening for the OpenAPI
+# converter's loopback check. The narrow set (``localhost`` / 127.0.0.1
+# / ::1) missed wildcard binds (``0.0.0.0`` / ``::``), the rest of the
+# 127.0.0.0/8 range, and IPv4-mapped IPv6 loopback forms, all of which
+# the kernel routes to local services.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://0.0.0.0/",
+        "http://[::]/",
+        "http://127.0.0.2/",
+        "http://127.255.255.254/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[::ffff:7f00:1]/",
+        "https://0.0.0.0/",
+        "https://[::ffff:127.0.0.5]/",
+    ],
+)
+def test_is_loopback_url_catches_wildcard_and_v4_mapped(url: str) -> None:
+    assert is_loopback_url(url) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://10.0.0.1/",
+        "http://192.168.1.1/",
+        "http://203.0.113.5/",
+        "http://[2001:db8::1]/",
+        "http://[::ffff:8.8.8.8]/",
+    ],
+)
+def test_is_loopback_url_rejects_non_loopback(url: str) -> None:
+    assert is_loopback_url(url) is False
+
+
+def test_converter_rejects_wildcard_server_from_remote_spec() -> None:
+    """``0.0.0.0`` on Linux is reachable as localhost -- treat it like
+    a loopback declaration for SSRF defense purposes."""
+    converter = OpenApiConverter(
+        _spec_with_server("http://0.0.0.0:9090"),
+        spec_url="https://attacker.example/openapi.json",
+    )
+    with pytest.raises(ValueError) as exc:
+        converter.convert()
+    assert "loopback" in str(exc.value).lower()
+
+
+def test_converter_rejects_v4_mapped_loopback_from_remote_spec() -> None:
+    converter = OpenApiConverter(
+        _spec_with_server("http://[::ffff:127.0.0.1]:9090"),
+        spec_url="https://attacker.example/openapi.json",
+    )
+    with pytest.raises(ValueError) as exc:
+        converter.convert()
+    assert "loopback" in str(exc.value).lower()
+
+
+def test_converter_rejects_127_x_x_x_from_remote_spec() -> None:
+    converter = OpenApiConverter(
+        _spec_with_server("http://127.0.0.2:9090"),
+        spec_url="https://attacker.example/openapi.json",
+    )
+    with pytest.raises(ValueError) as exc:
+        converter.convert()
+    assert "loopback" in str(exc.value).lower()

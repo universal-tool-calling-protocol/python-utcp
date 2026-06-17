@@ -9,6 +9,8 @@ the OAuth2 / redirect halves of GHSA-8cp3-qxj6-px34 and
 GHSA-9qhg-99ww-9mqc.
 """
 
+import json
+
 import pytest
 
 from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
@@ -159,6 +161,82 @@ class TestOAuth2TokenUrlValidation:
 # Sanity: the HTTP-scheme validator is also re-exported (the OAuth2
 # token endpoint goes over HTTP/HTTPS).
 # ---------------------------------------------------------------------------
+
+
+class TestJsonInjectionInMessageTemplate:
+    """The ``message`` field of ``WebSocketCallTemplate`` accepts both a
+    dict (recommended) and a raw string (legacy / fully-flexible). A
+    string template that the caller WROTE as JSON used to pass
+    user-supplied ``"`` chars through unescaped, letting tool args
+    inject extra fields. Dict templates were already safe because
+    ``json.dumps`` runs at the end.
+    """
+
+    def test_json_string_template_escapes_tool_arg(self):
+        proto = WebSocketCommunicationProtocol()
+        # Template is a JSON-shaped STRING -- our heuristic should kick
+        # in and json-escape every string substitution.
+        tpl = WebSocketCallTemplate.model_construct(
+            name="ws",
+            url="wss://example.com/socket",
+            call_template_type="websocket",
+            keep_alive=True,
+            timeout=30,
+            message='{"q": "UTCP_ARG_q_UTCP_ARG"}',
+        )
+        msg = proto._format_tool_call_message(
+            "x",
+            {"q": '", "isAdmin": true, "x": "'},
+            tpl,
+            "req-1",
+        )
+        # Parsed payload should have exactly one field whose value is
+        # the literal attacker payload -- no smuggled isAdmin.
+        parsed = json.loads(msg)
+        assert set(parsed.keys()) == {"q"}
+        assert parsed["q"] == '", "isAdmin": true, "x": "'
+
+    def test_dict_template_escapes_tool_arg(self):
+        """Dict template path: already safe; pin the behaviour."""
+        proto = WebSocketCommunicationProtocol()
+        tpl = WebSocketCallTemplate.model_construct(
+            name="ws",
+            url="wss://example.com/socket",
+            call_template_type="websocket",
+            keep_alive=True,
+            timeout=30,
+            message={"q": "UTCP_ARG_q_UTCP_ARG"},
+        )
+        msg = proto._format_tool_call_message(
+            "x",
+            {"q": '", "isAdmin": true, "x": "'},
+            tpl,
+            "req-1",
+        )
+        parsed = json.loads(msg)
+        assert set(parsed.keys()) == {"q"}
+        assert parsed["q"] == '", "isAdmin": true, "x": "'
+
+    def test_non_json_string_template_substitutes_raw(self):
+        """Non-JSON-shaped string template should NOT escape (back-
+        compat -- e.g. a template like ``GET /x?q=UTCP_ARG_q_UTCP_ARG``).
+        """
+        proto = WebSocketCommunicationProtocol()
+        tpl = WebSocketCallTemplate.model_construct(
+            name="ws",
+            url="wss://example.com/socket",
+            call_template_type="websocket",
+            keep_alive=True,
+            timeout=30,
+            message="GET /x?q=UTCP_ARG_q_UTCP_ARG",
+        )
+        msg = proto._format_tool_call_message(
+            "x",
+            {"q": "value"},
+            tpl,
+            "req-1",
+        )
+        assert msg == "GET /x?q=value"
 
 
 class TestHttpUrlValidator:

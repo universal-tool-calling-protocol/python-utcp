@@ -29,6 +29,35 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class _SecureAIOHTTPTransport(AIOHTTPTransport):
+    """``AIOHTTPTransport`` subclass that patches the underlying
+    aiohttp ``ClientSession`` to refuse redirects as soon as it is
+    created during ``connect()``.
+
+    The previous fix patched the session AFTER entering the
+    ``GqlClient`` context, but when ``fetch_schema_from_transport=
+    True`` the schema introspection request is issued inside the
+    ``GqlClient.__aenter__`` call -- BEFORE the patch could land.
+    That left the very first GraphQL request unprotected and
+    re-introduced the redirect-SSRF / credential-leak window.
+    Patching inside ``connect()`` guarantees every outbound POST
+    from this transport (introspection included) skips redirects.
+    """
+
+    async def connect(self) -> None:  # type: ignore[override]
+        await super().connect()
+        session = getattr(self, "session", None)
+        if session is None:
+            return
+        original_post = session.post
+
+        def _no_redirect_post(*args: Any, **kwargs: Any):
+            kwargs["allow_redirects"] = False
+            return original_post(*args, **kwargs)
+
+        session.post = _no_redirect_post  # type: ignore[method-assign]
+
+
 class GraphQLCommunicationProtocol(CommunicationProtocol):
     """GraphQL protocol implementation for UTCP 1.0.
 
@@ -100,28 +129,6 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
 
         return headers
 
-    @staticmethod
-    def _disable_transport_redirects(transport: AIOHTTPTransport) -> None:
-        """Patch the underlying aiohttp session used by AIOHTTPTransport
-        so its ``session.post`` refuses to follow 3xx responses.
-
-        gql's AIOHTTPTransport does not expose ``allow_redirects`` and
-        the default ClientSession setting would let an attacker-
-        controlled GraphQL endpoint 302 the client into an internal
-        service after the URL had already passed ``ensure_secure_url``.
-        See GHSA-9qhg-99ww-9mqc / GHSA-ppx3-28rw-8fpf.
-        """
-        aio_session = getattr(transport, "session", None)
-        if aio_session is None:
-            return
-        original_post = aio_session.post
-
-        def _no_redirect_post(*args: Any, **kwargs: Any):
-            kwargs["allow_redirects"] = False
-            return original_post(*args, **kwargs)
-
-        aio_session.post = _no_redirect_post  # type: ignore[method-assign]
-
     async def register_manual(
         self, caller: "UtcpClient", manual_call_template: CallTemplate
     ) -> RegisterManualResult:
@@ -136,9 +143,8 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
 
         try:
             headers = await self._prepare_headers(manual_call_template)
-            transport = AIOHTTPTransport(url=manual_call_template.url, headers=headers)
+            transport = _SecureAIOHTTPTransport(url=manual_call_template.url, headers=headers)
             async with GqlClient(transport=transport, fetch_schema_from_transport=True) as session:
-                self._disable_transport_redirects(transport)
                 schema = session.client.schema
                 tools: List[Tool] = []
 
@@ -217,9 +223,8 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
         )
 
         headers = await self._prepare_headers(tool_call_template, tool_args)
-        transport = AIOHTTPTransport(url=tool_call_template.url, headers=headers)
+        transport = _SecureAIOHTTPTransport(url=tool_call_template.url, headers=headers)
         async with GqlClient(transport=transport, fetch_schema_from_transport=True) as session:
-            self._disable_transport_redirects(transport)
             # Filter out header fields from GraphQL variables; these are sent via HTTP headers
             header_fields = tool_call_template.header_fields or []
             filtered_args = {k: v for k, v in tool_args.items() if k not in header_fields}
