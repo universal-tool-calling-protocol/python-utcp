@@ -76,20 +76,45 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         self._session: Optional[aiohttp.ClientSession] = None
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
     
+    @staticmethod
+    def _assert_no_crlf(value: Optional[str], field_name: str) -> None:
+        """Refuse CR/LF in attacker-influenceable strings that will land
+        in HTTP headers. aiohttp blocks these at request time, but
+        keeping the trust boundary inside UTCP means a transport swap
+        cannot silently regress.
+        """
+        if not isinstance(value, str):
+            return
+        if "\r" in value or "\n" in value:
+            raise ValueError(
+                f"Refusing to construct request: {field_name} contains CR/LF, "
+                f"which would enable HTTP header injection."
+            )
+
     def _apply_auth(self, provider: HttpCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
-        
+
         Returns:
-            tuple: (auth_obj, cookies) where auth_obj is for aiohttp basic auth and cookies is a dict
+            tuple ``(auth_obj, cookies, auth_header_names)``:
+              * ``auth_obj``: aiohttp BasicAuth for HTTP basic, or None.
+              * ``cookies``: dict of cookies to attach.
+              * ``auth_header_names``: list of header names that
+                received a secret. Threaded into
+                ``safe_request_with_redirects`` so a custom-named auth
+                header (e.g. ``ApiKeyAuth(var_name="X-MyApp")``) is
+                also stripped on cross-origin redirect.
         """
         auth = None
         cookies = {}
-        
+        auth_header_names: List[str] = []
+
         if provider.auth:
             if isinstance(provider.auth, ApiKeyAuth):
                 if provider.auth.api_key:
+                    self._assert_no_crlf(provider.auth.var_name, "ApiKeyAuth.var_name")
                     if provider.auth.location == "header":
                         headers[provider.auth.var_name] = provider.auth.api_key
+                        auth_header_names.append(provider.auth.var_name)
                     elif provider.auth.location == "query":
                         query_params[provider.auth.var_name] = provider.auth.api_key
                     elif provider.auth.location == "cookie":
@@ -97,16 +122,19 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                 else:
                     logger.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
-            
+
             elif isinstance(provider.auth, BasicAuth):
                 auth = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
-            
+
             elif isinstance(provider.auth, OAuth2Auth):
                 # OAuth2 tokens are always sent in the Authorization header
-                # We'll handle this separately since it requires async token retrieval
-                pass
-        
-        return auth, cookies
+                # We'll handle this separately since it requires async token retrieval.
+                # We DO declare ``Authorization`` here so the scrubber treats
+                # the resulting bearer header as cross-origin-sensitive even
+                # if it slipped past the regex.
+                auth_header_names.append("Authorization")
+
+        return auth, cookies, auth_header_names
 
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
         """REQUIRED
@@ -136,7 +164,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
             query_params = {}
             
             # Handle authentication
-            auth, cookies = self._apply_auth(manual_call_template, request_headers, query_params)
+            auth, cookies, auth_header_names = self._apply_auth(manual_call_template, request_headers, query_params)
             
             # Handle OAuth2 separately since it requires async token retrieval
             if manual_call_template.auth and isinstance(manual_call_template.auth, OAuth2Auth):
@@ -180,6 +208,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                         data=data,
                         cookies=cookies,
                         timeout=aiohttp.ClientTimeout(total=10.0),
+                        auth_header_names=auth_header_names,
                     ) as response:
                         response.raise_for_status()  # Raise exception for 4XX/5XX responses
 
@@ -288,7 +317,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         query_params = remaining_args
 
         # Handle authentication
-        auth, cookies = self._apply_auth(tool_call_template, request_headers, query_params)
+        auth, cookies, auth_header_names = self._apply_auth(tool_call_template, request_headers, query_params)
         
         # Handle OAuth2 separately since it requires async token retrieval
         if tool_call_template.auth and isinstance(tool_call_template.auth, OAuth2Auth):
@@ -328,6 +357,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     data=data,
                     cookies=cookies,
                     timeout=aiohttp.ClientTimeout(total=30.0),
+                    auth_header_names=auth_header_names,
                 ) as response:
                     response.raise_for_status()
                     

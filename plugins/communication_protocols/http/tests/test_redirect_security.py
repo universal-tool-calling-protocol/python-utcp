@@ -82,6 +82,88 @@ class TestSameOriginHelper:
         assert _same_origin(a, b) is False
 
 
+class TestAuthHeaderNamesThreadedToScrub:
+    """Pin the explicit ``auth_header_names`` channel that lets the
+    redirect helper strip caller-configured auth header names (e.g.
+    ``ApiKeyAuth(var_name="X-MyApp")``) on cross-origin redirect --
+    such names don't match the auth-pattern regex and would otherwise
+    survive the scrub.
+    """
+
+    @pytest.mark.asyncio
+    async def test_custom_auth_header_name_stripped_via_explicit_list(
+        self, aiohttp_server
+    ) -> None:
+        captured: dict = {}
+
+        async def _capture(request: web.Request) -> web.Response:
+            captured["x_myapp"] = request.headers.get("X-MyApp")
+            return web.json_response({"ok": True})
+
+        target_app = web.Application()
+        target_app.router.add_get("/landed", _capture)
+        target = await aiohttp_server(target_app)
+
+        async def _redirect(request: web.Request) -> web.Response:
+            raise web.HTTPFound(str(target.make_url("/landed")))
+
+        attacker_app = web.Application()
+        attacker_app.router.add_get("/tool", _redirect)
+        attacker = await aiohttp_server(attacker_app)
+
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with safe_request_with_redirects(
+                session,
+                "GET",
+                str(attacker.make_url("/tool")),
+                context="tool invocation",
+                headers={"X-MyApp": "secret-key"},
+                auth_header_names=["X-MyApp"],
+            ):
+                pass
+
+        assert captured["x_myapp"] is None, (
+            "Caller-declared auth header name leaked cross-origin -- the "
+            "explicit auth_header_names channel did not extend the scrub."
+        )
+
+    @pytest.mark.asyncio
+    async def test_custom_auth_header_kept_on_same_origin(
+        self, aiohttp_server
+    ) -> None:
+        captured: dict = {}
+
+        async def _capture(request: web.Request) -> web.Response:
+            captured["x_myapp"] = request.headers.get("X-MyApp")
+            return web.json_response({"ok": True})
+
+        async def _redirect(request: web.Request) -> web.Response:
+            raise web.HTTPFound("/landed")
+
+        app = web.Application()
+        app.router.add_get("/start", _redirect)
+        app.router.add_get("/landed", _capture)
+        server = await aiohttp_server(app)
+
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with safe_request_with_redirects(
+                session,
+                "GET",
+                str(server.make_url("/start")),
+                context="tool invocation",
+                headers={"X-MyApp": "secret-key"},
+                auth_header_names=["X-MyApp"],
+            ):
+                pass
+
+        # Same-origin: keep the auth header.
+        assert captured["x_myapp"] == "secret-key"
+
+
 class TestAuthHeaderClassifier:
     """Direct unit tests for ``_header_is_auth_sensitive``. The
     cross-origin integration tests cover the end-to-end scrub
@@ -505,6 +587,40 @@ class TestCallToolRedirectExfiltration:
 # OAuth2 token URL must be validated before any credential bytes leave
 # the process.
 # ---------------------------------------------------------------------------
+
+
+class TestCrlfHeaderInjectionRejected:
+    """Defense-in-depth: refuse CR/LF in attacker-influenceable strings
+    that will land in HTTP headers. aiohttp blocks these at request
+    time, but enforcing inside UTCP means a transport swap cannot
+    silently regress.
+    """
+
+    @pytest.mark.parametrize(
+        "var_name",
+        [
+            "X-Api-Key\r\nX-Injected: yes",
+            "X-Foo\nX-Other: bar",
+            "X-Foo\rX-Other: bar",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_apikey_with_crlf_var_name_rejected(self, var_name: str) -> None:
+        from utcp.data.auth_implementations.api_key_auth import ApiKeyAuth
+
+        proto = HttpCommunicationProtocol()
+        tpl = HttpCallTemplate(
+            name="x",
+            url="https://api.example.com/x",
+            http_method="GET",
+            auth=ApiKeyAuth(
+                api_key="secret",
+                var_name=var_name,
+                location="header",
+            ),
+        )
+        with pytest.raises(ValueError, match="CR/LF"):
+            await proto.call_tool(None, "x", {}, tpl)
 
 
 class TestOAuth2TokenUrlValidation:

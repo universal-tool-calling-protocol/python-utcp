@@ -284,7 +284,10 @@ def _same_origin(a: str, b: str) -> bool:
         return False
 
 
-def _scrub_cross_origin_credentials(kwargs: dict) -> None:
+def _scrub_cross_origin_credentials(
+    kwargs: dict,
+    extra_auth_header_names: Optional[frozenset] = None,
+) -> None:
     """Strip auth-bearing kwargs in place when crossing origins.
 
     Aligns the redirect helper with browser / requests / curl
@@ -314,6 +317,7 @@ def _scrub_cross_origin_credentials(kwargs: dict) -> None:
     Callers invoke this BEFORE issuing the next hop, only when the
     redirect target's origin differs from the current URL's origin.
     """
+    extra = extra_auth_header_names or frozenset()
     headers = kwargs.get("headers")
     if headers is not None:
         # Build a new dict so we never mutate the caller's headers
@@ -321,6 +325,11 @@ def _scrub_cross_origin_credentials(kwargs: dict) -> None:
         scrubbed: Dict[str, Any] = {}
         for k, v in dict(headers).items():
             if _header_is_auth_sensitive(k):
+                continue
+            # Strip caller-configured custom auth header names
+            # (e.g. ``ApiKeyAuth`` with ``var_name="X-MyApp"``)
+            # that don't match the auth-pattern regex on their own.
+            if isinstance(k, str) and k.lower() in extra:
                 continue
             scrubbed[k] = v
         kwargs["headers"] = scrubbed
@@ -351,6 +360,7 @@ async def safe_request_with_redirects(
     *,
     context: str,
     max_redirects: int = 5,
+    auth_header_names: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Any]:
     """Issue an aiohttp request that re-validates every redirect hop.
@@ -387,6 +397,22 @@ async def safe_request_with_redirects(
     ensure_secure_url(url, context=context)
     # We control redirect behavior ourselves; refuse to let callers override.
     kwargs.pop("allow_redirects", None)
+
+    # Pull caller-configured auth header names so the cross-origin
+    # scrub can strip them too. Private contract -- callers attach
+    # this via ``_apply_auth`` to declare which header names they
+    # populated with a secret. Never sent on the wire.
+    # ``auth_header_names`` is the explicit declaration of which
+    # header names the caller populated with a secret. Used to extend
+    # the cross-origin scrub beyond the canonical set so a
+    # custom-named API-key header (e.g. ``X-MyApp``) configured via
+    # ``ApiKeyAuth`` / ``OAuth2UserAuth`` is also stripped on
+    # cross-origin redirect.
+    extra_auth_header_names = frozenset(
+        n.lower()
+        for n in (auth_header_names or [])
+        if isinstance(n, str)
+    )
 
     current_url = url
     current_method = method
@@ -437,7 +463,9 @@ async def safe_request_with_redirects(
             # API key would be forwarded along. Mirrors browser /
             # requests / curl behaviour.
             if not _same_origin(current_url, next_url):
-                _scrub_cross_origin_credentials(kwargs)
+                _scrub_cross_origin_credentials(
+                    kwargs, extra_auth_header_names
+                )
 
             if response.status == 303:
                 current_method = "GET"

@@ -35,20 +35,33 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
     def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 
+    @staticmethod
+    def _assert_no_crlf(value: Optional[str], field_name: str) -> None:
+        if not isinstance(value, str):
+            return
+        if "\r" in value or "\n" in value:
+            raise ValueError(
+                f"Refusing to construct request: {field_name} contains CR/LF, "
+                f"which would enable HTTP header injection."
+            )
+
     def _apply_auth(self, provider: StreamableHttpCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
-        
+
         Returns:
-            tuple: (auth_obj, cookies) where auth_obj is for aiohttp basic auth and cookies is a dict
+            tuple ``(auth_obj, cookies, auth_header_names)``.
         """
         auth = None
         cookies = {}
-        
+        auth_header_names: List[str] = []
+
         if provider.auth:
             if isinstance(provider.auth, ApiKeyAuth):
                 if provider.auth.api_key:
+                    self._assert_no_crlf(provider.auth.var_name, "ApiKeyAuth.var_name")
                     if provider.auth.location == "header":
                         headers[provider.auth.var_name] = provider.auth.api_key
+                        auth_header_names.append(provider.auth.var_name)
                     elif provider.auth.location == "query":
                         query_params[provider.auth.var_name] = provider.auth.api_key
                     elif provider.auth.location == "cookie":
@@ -56,16 +69,14 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 else:
                     logger.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
-            
+
             elif isinstance(provider.auth, BasicAuth):
                 auth = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
-            
+
             elif isinstance(provider.auth, OAuth2Auth):
-                # OAuth2 tokens are always sent in the Authorization header
-                # We'll handle this separately since it requires async token retrieval
-                pass
-        
-        return auth, cookies
+                auth_header_names.append("Authorization")
+
+        return auth, cookies, auth_header_names
 
     async def close(self):
         """Close all active connections and clear internal state."""
@@ -93,7 +104,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             
             # Handle authentication
             query_params: Dict[str, Any] = {}
-            auth, cookies = self._apply_auth(manual_call_template, request_headers, query_params)
+            auth, cookies, auth_header_names = self._apply_auth(manual_call_template, request_headers, query_params)
             
             # Handle OAuth2 separately as it's async
             if isinstance(manual_call_template.auth, OAuth2Auth):
@@ -136,6 +147,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     json=json_data,
                     data=data,
                     timeout=aiohttp.ClientTimeout(total=10.0),
+                    auth_header_names=auth_header_names,
                 ) as response:
                     response.raise_for_status()
                     response_data = await response.json()
@@ -228,7 +240,9 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         query_params = remaining_args
 
         # Handle authentication
-        auth_handler, cookies = self._apply_auth(tool_call_template, request_headers, query_params)
+        # ``auth_header_names`` unused here -- streaming handshake uses
+        # ``allow_redirects=False`` (no redirect chain to scrub).
+        auth_handler, cookies, _auth_header_names = self._apply_auth(tool_call_template, request_headers, query_params)
 
         # Handle OAuth2 separately as it's async
         if isinstance(tool_call_template.auth, OAuth2Auth):
