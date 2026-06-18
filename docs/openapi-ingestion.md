@@ -53,6 +53,40 @@ async def load_remote_spec(url):
 manual = await load_remote_spec("https://api.example.com/openapi.json")
 ```
 
+### Xquik API Example
+
+Xquik publishes an OpenAPI 3.1 specification for its X data API at
+`https://xquik.com/openapi.json`. It can be loaded the same way as any other
+remote OpenAPI document:
+
+```python
+manual = await load_remote_spec("https://xquik.com/openapi.json")
+
+print(f"Generated {len(manual.tools)} Xquik tools")
+```
+
+When calling authenticated endpoints, provide the API key through the
+`x-api-key` header and keep the value in an injected variable:
+
+```python
+config = {
+    "manual_call_templates": [
+        {
+            "name": "xquik",
+            "call_template_type": "http",
+            "url": "https://xquik.com/openapi.json",
+            "http_method": "GET",
+            "auth": {
+                "auth_type": "api_key",
+                "api_key": "${XQUIK_API_KEY}",
+                "var_name": "x-api-key",
+                "location": "header"
+            }
+        }
+    ]
+}
+```
+
 ## Method 3: UTCP Client Configuration
 
 Include OpenAPI specs directly in your UTCP client configuration.
