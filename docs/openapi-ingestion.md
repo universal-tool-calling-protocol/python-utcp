@@ -1,6 +1,6 @@
 # OpenAPI Ingestion Methods in python-utcp
 
-UTCP automatically converts OpenAPI 2.0/3.0/3.1 specifications into UTCP tools, enabling AI agents to interact with REST APIs without requiring server modifications or additional infrastructure.
+UTCP automatically converts OpenAPI 2.0/3.0 specifications, plus compatible OpenAPI 3.1 specifications, into UTCP tools, enabling AI agents to interact with REST APIs without requiring server modifications or additional infrastructure.
 
 ## Method 1: Direct OpenAPI Converter
 
@@ -170,7 +170,8 @@ OpenAPI security schemes automatically convert to UTCP auth objects:
 - `oauth2` → `OAuth2Auth`
 
 ### Multi-format Support
-- **OpenAPI 2.0, 3.0 & 3.1**: Full compatibility
+- **OpenAPI 2.0 & 3.0**: Full compatibility
+- **OpenAPI 3.1**: Compatible specifications can be loaded, but verify 3.1-specific schema features against the converter
 - **JSON & YAML**: Automatic format detection
 - **Local & Remote**: Files or URLs
 
