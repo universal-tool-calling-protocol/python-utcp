@@ -316,3 +316,57 @@ def test_openapi_converter_schema_level_examples_normalized():
     assert "example" not in body_param.model_dump(by_alias=True)
 
     assert tool.outputs.examples == [{"id": "w_1"}]
+
+
+def test_openapi_converter_array_form_schema_examples():
+    """Array-form (JSON Schema / OpenAPI 3.1) schema 'examples' are preserved, not dropped."""
+    openapi_spec = {
+        "openapi": "3.1.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/gadgets": {
+                "post": {
+                    "operationId": "createGadget",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {"name": {"type": "string"}},
+                                    # JSON Schema 'examples' keyword: a list of values
+                                    "examples": [{"name": "Gadget A"}, {"name": "Gadget B"}],
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "string",
+                                        "examples": ["ok", "done"],
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+
+    tool = next((t for t in manual.tools if t.name == "createGadget"), None)
+    assert tool is not None
+
+    body_param = tool.inputs.properties.get("body")
+    assert body_param is not None
+    assert body_param.examples == [{"name": "Gadget A"}, {"name": "Gadget B"}]
+    # examples surface in the normalized field on serialization
+    assert body_param.model_dump(by_alias=True).get("examples") == [{"name": "Gadget A"}, {"name": "Gadget B"}]
+
+    assert tool.outputs.examples == ["ok", "done"]
