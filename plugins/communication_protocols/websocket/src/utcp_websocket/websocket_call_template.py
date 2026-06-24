@@ -83,10 +83,23 @@ class WebSocketCallTemplate(CallTemplate):
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: str) -> str:
-        """Validate WebSocket URL format."""
-        if not (v.startswith("wss://") or v.startswith("ws://localhost") or v.startswith("ws://127.0.0.1")):
+        """Validate WebSocket URL format.
+
+        Uses the hostname-based ``is_secure_ws_url`` helper rather than
+        a ``startswith`` prefix match: the prefix form let
+        ``ws://localhost.evil.com`` and ``ws://127.0.0.1.attacker.example``
+        through, which is the bypass tracked in GHSA-ppx3-28rw-8fpf.
+        """
+        # Local import keeps the call-template module free of an
+        # always-on import of the validator (and matches how the HTTP
+        # plugins handle the same concern).
+        from utcp_websocket._security import is_secure_ws_url
+
+        if not is_secure_ws_url(v):
             raise ValueError(
-                f"WebSocket URL must use wss:// or start with ws://localhost or ws://127.0.0.1. Got: {v}"
+                f"WebSocket URL must use wss:// or be a literal loopback "
+                f"address (ws://localhost / ws://127.0.0.1 / ws://[::1]). "
+                f"Got: {v!r}."
             )
         return v
 

@@ -17,7 +17,7 @@ from utcp.data.auth_implementations.basic_auth import BasicAuth
 from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.sse_call_template import SseCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
-from utcp_http._security import ensure_secure_url
+from utcp_http._security import ensure_secure_url, safe_request_with_redirects
 import traceback
 import logging
 
@@ -38,20 +38,33 @@ class SseCommunicationProtocol(CommunicationProtocol):
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 
+    @staticmethod
+    def _assert_no_crlf(value: Optional[str], field_name: str) -> None:
+        if not isinstance(value, str):
+            return
+        if "\r" in value or "\n" in value:
+            raise ValueError(
+                f"Refusing to construct request: {field_name} contains CR/LF, "
+                f"which would enable HTTP header injection."
+            )
+
     def _apply_auth(self, provider: SseCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
-        
+
         Returns:
-            tuple: (auth_obj, cookies) where auth_obj is for aiohttp basic auth and cookies is a dict
+            tuple ``(auth_obj, cookies, auth_header_names)``.
         """
         auth = None
         cookies = {}
-        
+        auth_header_names: List[str] = []
+
         if provider.auth:
             if isinstance(provider.auth, ApiKeyAuth):
                 if provider.auth.api_key:
+                    self._assert_no_crlf(provider.auth.var_name, "ApiKeyAuth.var_name")
                     if provider.auth.location == "header":
                         headers[provider.auth.var_name] = provider.auth.api_key
+                        auth_header_names.append(provider.auth.var_name)
                     elif provider.auth.location == "query":
                         query_params[provider.auth.var_name] = provider.auth.api_key
                     elif provider.auth.location == "cookie":
@@ -59,16 +72,16 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 else:
                     logger.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
-            
+
             elif isinstance(provider.auth, BasicAuth):
                 auth = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
-            
+
             elif isinstance(provider.auth, OAuth2Auth):
-                # OAuth2 tokens are always sent in the Authorization header
-                # We'll handle this separately since it requires async token retrieval
-                pass
-        
-        return auth, cookies
+                # OAuth2 tokens are always sent in the Authorization header.
+                # Declared so cross-origin scrub recognises it.
+                auth_header_names.append("Authorization")
+
+        return auth, cookies, auth_header_names
 
     async def register_manual(self, caller, manual_call_template: CallTemplate) -> RegisterManualResult:
         """REQUIRED
@@ -90,7 +103,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
             
             # Handle authentication
             query_params: Dict[str, Any] = {}
-            auth, cookies = self._apply_auth(manual_call_template, request_headers, query_params)
+            auth, cookies, auth_header_names = self._apply_auth(manual_call_template, request_headers, query_params)
 
             # Handle OAuth2 separately as it's async
             if isinstance(manual_call_template.auth, OAuth2Auth):
@@ -116,19 +129,24 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     else:
                         data = body_content
                 
-                # Make the request (typically GET for discovery, but respect configuration)
+                # Re-validate every redirect hop. aiohttp's default
+                # ``allow_redirects=True`` would otherwise let an
+                # attacker-controlled discovery URL 302 us into an
+                # internal service (GHSA-9qhg-99ww-9mqc).
                 method = "GET"  # Default to GET for discovery
-                request_method = getattr(session, method.lower())
-                
-                async with request_method(
+                async with safe_request_with_redirects(
+                    session,
+                    method,
                     url,
+                    context="manual discovery",
                     headers=request_headers,
                     auth=auth,
                     params=query_params,
                     cookies=cookies,
                     json=json_data,
                     data=data,
-                    timeout=aiohttp.ClientTimeout(total=10.0)
+                    timeout=aiohttp.ClientTimeout(total=10.0),
+                    auth_header_names=auth_header_names,
                 ) as response:
                     response.raise_for_status()
                     response_data = await response.json()
@@ -195,7 +213,11 @@ class SseCommunicationProtocol(CommunicationProtocol):
         query_params = remaining_args
 
         # Handle authentication
-        auth, cookies = self._apply_auth(tool_call_template, request_headers, query_params)
+        # ``auth_header_names`` unused in the streaming path because
+        # SSE handshake uses ``allow_redirects=False`` -- there is no
+        # redirect chain to scrub. Reserved for future use if
+        # streaming ever supports per-hop validation.
+        auth, cookies, _auth_header_names = self._apply_auth(tool_call_template, request_headers, query_params)
 
         # Handle OAuth2 separately as it's async
         if isinstance(tool_call_template.auth, OAuth2Auth):
@@ -203,22 +225,42 @@ class SseCommunicationProtocol(CommunicationProtocol):
             request_headers["Authorization"] = f"Bearer {token}"
         
         session = aiohttp.ClientSession()
+        # Always close the session, success or failure. The previous
+        # version only closed on the except path, leaking the session
+        # on the (typical) success path.
         try:
             method = "POST" if body_content is not None else "GET"
             data = body_content if "application/json" not in request_headers.get("Content-Type", "") else None
             json_data = body_content if "application/json" in request_headers.get("Content-Type", "") else None
 
+            # SSE handshake must not follow redirects: the streaming
+            # response has to stay open for the lifetime of the tool
+            # call, which is incompatible with the per-hop validator's
+            # release semantics, and SSE redirects are pathological in
+            # practice. Reject 3xx outright so an attacker-controlled
+            # endpoint cannot redirect the handshake into an internal
+            # service (GHSA-9qhg-99ww-9mqc).
             response = await session.request(
                 method, url, params=query_params, headers=request_headers,
-                auth=auth, cookies=cookies, json=json_data, data=data, timeout=None
+                auth=auth, cookies=cookies, json=json_data, data=data,
+                timeout=None, allow_redirects=False,
             )
+            if 300 <= response.status < 400:
+                response.release()
+                raise RuntimeError(
+                    f"SSE endpoint at {url!r} returned a {response.status} "
+                    f"redirect. Redirects are not followed during SSE "
+                    f"handshakes; update the call template to point at "
+                    f"the final URL directly."
+                )
             response.raise_for_status()
             async for event in self._process_sse_stream(response, tool_call_template.event_type):
                 yield event
         except Exception as e:
-            await session.close()
             logger.error(f"Error establishing SSE connection to '{tool_call_template.name}': {e}")
             raise
+        finally:
+            await session.close()
 
     async def _process_sse_stream(self, response: aiohttp.ClientResponse, event_type=None):
         """Process the SSE stream and yield events."""
@@ -275,26 +317,52 @@ class SseCommunicationProtocol(CommunicationProtocol):
             pass # Session is managed and closed by deregister_tool_provider
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
-        """Handles OAuth2 client credentials flow, trying both body and auth header methods."""
+        """Handle OAuth2 client credentials flow, trying both body and
+        auth header methods.
+
+        Validates the token URL before posting credentials so an
+        attacker-controlled OpenAPI spec cannot redirect ``client_id`` /
+        ``client_secret`` exfiltration through this protocol
+        (GHSA-8cp3-qxj6-px34). The redirect helper also blocks the
+        post-issue redirect SSRF (GHSA-9qhg-99ww-9mqc) on the token
+        endpoint itself.
+        """
         client_id = auth_details.client_id
         if client_id in self._oauth_tokens:
             return self._oauth_tokens[client_id]["access_token"]
 
+        # Reject obviously-internal or plain-HTTP non-loopback token
+        # endpoints before any credential bytes leave the process.
+        ensure_secure_url(auth_details.token_url, context="OAuth2 token URL")
+
         async with aiohttp.ClientSession() as session:
             try: # Method 1: Credentials in body
                 body_data = {'grant_type': 'client_credentials', 'client_id': client_id, 'client_secret': auth_details.client_secret, 'scope': auth_details.scope}
-                async with session.post(auth_details.token_url, data=body_data) as response:
+                async with safe_request_with_redirects(
+                    session,
+                    "POST",
+                    auth_details.token_url,
+                    context="OAuth2 token fetch",
+                    data=body_data,
+                ) as response:
                     response.raise_for_status()
                     token_response = await response.json()
                     self._oauth_tokens[client_id] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with body failed: {e}. Trying Basic Auth.")
-            
+
             try: # Method 2: Credentials in header
                 header_auth = aiohttp.BasicAuth(client_id, auth_details.client_secret)
                 header_data = {'grant_type': 'client_credentials', 'scope': auth_details.scope}
-                async with session.post(auth_details.token_url, data=header_data, auth=header_auth) as response:
+                async with safe_request_with_redirects(
+                    session,
+                    "POST",
+                    auth_details.token_url,
+                    context="OAuth2 token fetch",
+                    data=header_data,
+                    auth=header_auth,
+                ) as response:
                     response.raise_for_status()
                     token_response = await response.json()
                     self._oauth_tokens[client_id] = token_response

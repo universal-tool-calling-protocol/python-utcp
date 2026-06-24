@@ -1,10 +1,11 @@
-"""URL validation shared by every HTTP-based communication protocol.
+"""URL validation for the GraphQL communication protocol.
 
-Centralised so all three HTTP protocols (http, streamable_http, sse) enforce
-the same trust boundary at every network edge — manual discovery AND tool
-invocation. Issue #83 (CVE-class SSRF) was caused by the runtime invocation
-path forgetting the discovery-time check, so this module also provides an
-explicit ``ensure_secure_url`` to call before every aiohttp request.
+Mirror of ``utcp_http._security`` -- intentionally duplicated rather
+than cross-plugin-imported so ``utcp-gql`` does not gain a runtime
+dependency on ``utcp-http``. Keep the two files in sync when changing
+the validator behavior. Backs GHSA-ppx3-28rw-8fpf (the original CVE
+fix did not reach this plugin) and GHSA-9qhg-99ww-9mqc (redirect
+SSRF on the GraphQL endpoint).
 """
 
 from __future__ import annotations
@@ -67,23 +68,9 @@ def is_secure_url(url: str) -> bool:
 
 
 def _ip_is_loopback_like(host: str) -> bool:
-    """Return True if ``host`` is an IP literal that the local kernel will
-    route to the host running the agent.
-
-    Wider than Python's stdlib ``ip_address(...).is_loopback`` because we
-    must also defend against:
-
-    * ``0.0.0.0`` -- on Linux a TCP connect to 0.0.0.0 lands on 127.0.0.1.
-    * ``::`` -- the IPv6 equivalent of ``0.0.0.0``.
-    * IPv4-mapped IPv6 forms of any 127.0.0.0/8 address (e.g.
-      ``::ffff:127.0.0.1``, ``::ffff:127.0.0.2``) -- ``ipaddress`` does
-      not treat these as loopback per RFC 4291, but the dual-stack
-      socket layer routes them to the v4 loopback.
-
-    Used by the OpenAPI converter to detect attacker-controlled
-    ``servers[0].url`` values that point at the agent's own loopback
-    interface (the GHSA-39j6-4867-gg4w SSRF pattern). Hostname-based,
-    never prefix-based.
+    """Mirror of ``utcp_http._security._ip_is_loopback_like``. See that
+    module for the full rationale -- covers 127.0.0.0/8, ::1, 0.0.0.0,
+    ::, and IPv4-mapped IPv6 loopback addresses.
     """
     if host in {"0.0.0.0", "::"}:
         return True
@@ -93,8 +80,6 @@ def _ip_is_loopback_like(host: str) -> bool:
         return False
     if addr.is_loopback:
         return True
-    # IPv4-mapped IPv6 loopback (``::ffff:127.0.0.1`` etc.) -- the
-    # ``ipv4_mapped`` accessor surfaces the embedded v4 address.
     if isinstance(addr, IPv6Address):
         mapped = addr.ipv4_mapped
         if mapped is not None and mapped.is_loopback:
@@ -103,14 +88,9 @@ def _ip_is_loopback_like(host: str) -> bool:
 
 
 def is_loopback_url(url: str) -> bool:
-    """Return True if ``url``'s host is a literal loopback address.
-
-    Used by the OpenAPI converter to detect the SSRF case where a remote spec
-    declares ``servers: [{ url: "http://127.0.0.1:..." }]`` to redirect tool
-    invocation at the host running the agent. Hostname-based — not a string
-    prefix — so ``http://localhost.evil.com`` returns False. Also covers the
-    "wildcard" and "IPv4-mapped" loopback forms that bypass Python's stdlib
-    ``is_loopback`` check (see ``_ip_is_loopback_like``).
+    """Return True if ``url``'s host is a literal loopback-or-equivalent
+    address. Hostname-based; covers ``0.0.0.0``, ``::`` and IPv4-mapped
+    IPv6 loopback forms in addition to the obvious set.
     """
     if not isinstance(url, str) or not url:
         return False
@@ -155,20 +135,11 @@ def ensure_secure_url(url: str, *, context: Optional[str] = None) -> None:
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 
-# HTTP headers that carry authentication or session material and must be
-# stripped when a redirect crosses to a different origin. Includes the
-# canonical IETF names (``Authorization`` / ``Cookie`` /
-# ``Proxy-Authorization``) PLUS a curated list of common API-key /
-# service-token names because UTCP's ``ApiKeyAuth`` lets callers put a
-# secret under an arbitrary header name. Comparison is case-insensitive
-# against this lowercase set.
 _AUTH_SENSITIVE_HEADERS = frozenset({
-    # Canonical IETF headers.
     "authorization",
     "proxy-authorization",
     "cookie",
     "www-authenticate",
-    # Common hyphenated API-key / service-token header names.
     "x-api-key",
     "api-key",
     "x-auth-token",
@@ -177,15 +148,12 @@ _AUTH_SENSITIVE_HEADERS = frozenset({
     "x-xsrf-token",
     "x-amz-security-token",
     "x-goog-api-key",
-    # Common underscore-separated variants (some HTTP stacks normalise
-    # ``X-API-Key`` to ``X_API_KEY`` on the way in).
     "x_api_key",
     "api_key",
     "x_auth_token",
     "x_access_token",
     "x_csrf_token",
     "x_xsrf_token",
-    # Condensed / no-separator variants seen in custom APIs.
     "apikey",
     "xapikey",
     "authtoken",
@@ -198,17 +166,7 @@ _AUTH_SENSITIVE_HEADERS = frozenset({
     "xsrftoken",
 })
 
-# Regex catching ad-hoc auth header names that aren't in the explicit
-# set above (``X-MyApp-Token``, ``Custom-Bearer``, ``X_MyApp_Token``,
-# etc.). Conservative but biased toward strip-on-cross-origin since
-# false positives are only a usability cost.
-#
-# Two alternations:
-#   1. Word-boundary match on hyphen/underscore/start/end so
-#      ``X-Foo-Token`` and ``X_FOO_TOKEN`` both trip.
-#   2. No-boundary match on compound condensed names
-#      (``XApiKey``-style lowercased to ``xapikey``) since the
-#      lowercased form has no separator to anchor on.
+
 _AUTH_HEADER_REGEX = re.compile(
     r"(?:(?:^|[-_])"
     r"(?:auth|authn|authz|token|key|secret|bearer|session|sid|"
@@ -222,16 +180,6 @@ _AUTH_HEADER_REGEX = re.compile(
 
 
 def _header_is_auth_sensitive(name: str) -> bool:
-    """Return True if ``name`` looks like it carries an auth secret.
-
-    Handles hyphen-separated (``X-Api-Key``), underscore-separated
-    (``X_API_KEY``), and condensed-camelCase (``XApiKey`` lowercased to
-    ``xapikey``) variants. The regex deliberately favors false
-    positives over false negatives -- on a cross-origin redirect the
-    cost of stripping a misidentified header is a broken benign
-    request, vs. credential exfiltration if a real auth header
-    survives.
-    """
     if not isinstance(name, str):
         return False
     lower = name.lower()
@@ -244,7 +192,6 @@ _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 
 
 def _effective_port(scheme: str, parsed_port: Optional[int]) -> Optional[int]:
-    """Return the port a URL actually targets, filling in scheme defaults."""
     if parsed_port is not None:
         return parsed_port
     return _DEFAULT_PORTS.get((scheme or "").lower())
@@ -253,18 +200,10 @@ def _effective_port(scheme: str, parsed_port: Optional[int]) -> Optional[int]:
 def _same_origin(a: str, b: str) -> bool:
     """Return True iff URLs ``a`` and ``b`` share scheme+host+port.
 
-    Treats omitted ports as the scheme default, so
-    ``https://api.example.com/`` and ``https://api.example.com:443/``
-    are recognised as the same origin (the previous implementation
-    treated them as different origins and silently stripped
-    ``Authorization`` on legitimate same-origin redirects).
-
-    Returns ``False`` on any parse failure -- including
-    ``urlparse(...).port`` raising ``ValueError`` for a malformed
-    or out-of-range port (the property accessor is lazy and can
-    raise). A bogus ``Location`` header should be treated as
-    cross-origin so credentials are scrubbed, never propagate
-    a crash to the caller.
+    Returns ``False`` on any parse failure, including
+    ``urlparse(...).port`` raising for an out-of-range port -- a
+    bogus ``Location`` is treated as cross-origin so credentials
+    are scrubbed instead of letting the ``ValueError`` escape.
     """
     try:
         pa, pb = urlparse(a), urlparse(b)
@@ -278,9 +217,6 @@ def _same_origin(a: str, b: str) -> bool:
             return False
         return _effective_port(sa, pa.port) == _effective_port(sb, pb.port)
     except ValueError:
-        # Either ``urlparse`` rejected the input or ``.port`` raised
-        # because of an out-of-range / non-numeric port. Treat as a
-        # different origin: scrub creds, do not crash.
         return False
 
 
@@ -290,64 +226,28 @@ def _scrub_cross_origin_credentials(
 ) -> None:
     """Strip auth-bearing kwargs in place when crossing origins.
 
-    Aligns the redirect helper with browser / requests / curl
-    behaviour: do not forward credential-bearing material to a new
-    origin. Covers:
-
-    * ``Authorization`` and other canonical auth headers
-      (``Proxy-Authorization``, ``Cookie``, ``WWW-Authenticate``);
-    * common API-key / service-token header names
-      (``X-Api-Key``, ``X-Auth-Token``, ``X-Csrf-Token``,
-      ``X-Amz-Security-Token``, etc.);
-    * ad-hoc header names matching auth-like substrings (e.g.
-      ``X-MyApp-Bearer``, ``Custom-Token``) -- see
-      ``_AUTH_HEADER_REGEX``;
-    * the aiohttp ``auth=`` Basic-credentials kwarg;
-    * the ``proxy_auth=`` Basic-credentials kwarg;
-    * ``cookies``;
-    * ``params`` (API keys configured via ``ApiKeyAuth`` with
-      ``location="query"`` end up here);
-    * the request body (``json``, ``data``) -- a 307/308 redirect
-      preserves method+body, and the body of e.g. an OAuth2 token
-      POST contains the very credentials we're trying to protect.
-      Browsers prompt the user before forwarding a cross-origin
-      307/308 body; we are headless and have no user, so refuse
-      instead.
-
-    Callers invoke this BEFORE issuing the next hop, only when the
-    redirect target's origin differs from the current URL's origin.
+    Mirrors ``utcp_http._security._scrub_cross_origin_credentials`` --
+    drops auth-looking headers, ``auth=`` / ``proxy_auth=``,
+    ``cookies``, ``params``, and the request body (``json`` /
+    ``data``) so 307/308 redirects cannot resend an OAuth POST body
+    to a new origin.
     """
     extra = extra_auth_header_names or frozenset()
     headers = kwargs.get("headers")
     if headers is not None:
-        # Build a new dict so we never mutate the caller's headers
-        # object across iterations / shared references.
         scrubbed: Dict[str, Any] = {}
         for k, v in dict(headers).items():
             if _header_is_auth_sensitive(k):
                 continue
-            # Strip caller-configured custom auth header names
-            # (e.g. ``ApiKeyAuth`` with ``var_name="X-MyApp"``)
-            # that don't match the auth-pattern regex on their own.
             if isinstance(k, str) and k.lower() in extra:
                 continue
             scrubbed[k] = v
         kwargs["headers"] = scrubbed
 
-    # aiohttp's per-request basic-auth credentials.
     kwargs.pop("auth", None)
-    # aiohttp's per-request proxy basic-auth credentials.
     kwargs.pop("proxy_auth", None)
-    # Cookie jar / dict.
     kwargs.pop("cookies", None)
-    # Query-string params commonly carry API keys (``ApiKeyAuth`` with
-    # ``location="query"``). Drop the whole dict on cross-origin --
-    # the cost of a broken non-auth query param is small compared to
-    # the risk of leaking a token.
     kwargs.pop("params", None)
-    # Request body. 307/308 would otherwise preserve and resend it to
-    # the new origin -- the OAuth token-POST case is the headline
-    # exploit.
     kwargs.pop("json", None)
     kwargs.pop("data", None)
 
@@ -398,16 +298,6 @@ async def safe_request_with_redirects(
     # We control redirect behavior ourselves; refuse to let callers override.
     kwargs.pop("allow_redirects", None)
 
-    # Pull caller-configured auth header names so the cross-origin
-    # scrub can strip them too. Private contract -- callers attach
-    # this via ``_apply_auth`` to declare which header names they
-    # populated with a secret. Never sent on the wire.
-    # ``auth_header_names`` is the explicit declaration of which
-    # header names the caller populated with a secret. Used to extend
-    # the cross-origin scrub beyond the canonical set so a
-    # custom-named API-key header (e.g. ``X-MyApp``) configured via
-    # ``ApiKeyAuth`` / ``OAuth2UserAuth`` is also stripped on
-    # cross-origin redirect.
     extra_auth_header_names = frozenset(
         n.lower()
         for n in (auth_header_names or [])
@@ -456,12 +346,7 @@ async def safe_request_with_redirects(
 
             response.release()
 
-            # Strip auth-bearing kwargs when the redirect crosses to a
-            # different origin. Without this an attacker-controlled
-            # endpoint could 302 us to their own server and our
-            # Authorization header / Basic auth / cookies / query
-            # API key would be forwarded along. Mirrors browser /
-            # requests / curl behaviour.
+            # Strip auth-bearing kwargs on cross-origin redirect.
             if not _same_origin(current_url, next_url):
                 _scrub_cross_origin_credentials(
                     kwargs, extra_auth_header_names

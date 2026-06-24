@@ -15,7 +15,7 @@ from utcp.data.auth_implementations import BasicAuth
 from utcp.data.auth_implementations import OAuth2Auth
 from utcp_http.streamable_http_call_template import StreamableHttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth, ClientResponse
-from utcp_http._security import ensure_secure_url
+from utcp_http._security import ensure_secure_url, safe_request_with_redirects
 import logging
 
 logging.basicConfig(
@@ -35,20 +35,33 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
     def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
 
+    @staticmethod
+    def _assert_no_crlf(value: Optional[str], field_name: str) -> None:
+        if not isinstance(value, str):
+            return
+        if "\r" in value or "\n" in value:
+            raise ValueError(
+                f"Refusing to construct request: {field_name} contains CR/LF, "
+                f"which would enable HTTP header injection."
+            )
+
     def _apply_auth(self, provider: StreamableHttpCallTemplate, headers: Dict[str, str], query_params: Dict[str, Any]) -> tuple:
         """Apply authentication to the request based on the provider's auth configuration.
-        
+
         Returns:
-            tuple: (auth_obj, cookies) where auth_obj is for aiohttp basic auth and cookies is a dict
+            tuple ``(auth_obj, cookies, auth_header_names)``.
         """
         auth = None
         cookies = {}
-        
+        auth_header_names: List[str] = []
+
         if provider.auth:
             if isinstance(provider.auth, ApiKeyAuth):
                 if provider.auth.api_key:
+                    self._assert_no_crlf(provider.auth.var_name, "ApiKeyAuth.var_name")
                     if provider.auth.location == "header":
                         headers[provider.auth.var_name] = provider.auth.api_key
+                        auth_header_names.append(provider.auth.var_name)
                     elif provider.auth.location == "query":
                         query_params[provider.auth.var_name] = provider.auth.api_key
                     elif provider.auth.location == "cookie":
@@ -56,16 +69,14 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 else:
                     logger.error("API key not found for ApiKeyAuth.")
                     raise ValueError("API key for ApiKeyAuth not found.")
-            
+
             elif isinstance(provider.auth, BasicAuth):
                 auth = AiohttpBasicAuth(provider.auth.username, provider.auth.password)
-            
+
             elif isinstance(provider.auth, OAuth2Auth):
-                # OAuth2 tokens are always sent in the Authorization header
-                # We'll handle this separately since it requires async token retrieval
-                pass
-        
-        return auth, cookies
+                auth_header_names.append("Authorization")
+
+        return auth, cookies, auth_header_names
 
     async def close(self):
         """Close all active connections and clear internal state."""
@@ -93,7 +104,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             
             # Handle authentication
             query_params: Dict[str, Any] = {}
-            auth, cookies = self._apply_auth(manual_call_template, request_headers, query_params)
+            auth, cookies, auth_header_names = self._apply_auth(manual_call_template, request_headers, query_params)
             
             # Handle OAuth2 separately as it's async
             if isinstance(manual_call_template.auth, OAuth2Auth):
@@ -119,19 +130,24 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     else:
                         data = body_content
                 
-                # Make the request with the template's HTTP method
-                method = manual_call_template.http_method.lower()
-                request_method = getattr(session, method)
-                
-                async with request_method(
+                # Re-validate every redirect hop. aiohttp's default
+                # ``allow_redirects=True`` would otherwise let an
+                # attacker-controlled discovery URL 302 us into an
+                # internal service (GHSA-9qhg-99ww-9mqc).
+                method = manual_call_template.http_method.upper()
+                async with safe_request_with_redirects(
+                    session,
+                    method,
                     url,
+                    context="manual discovery",
                     headers=request_headers,
                     auth=auth,
                     params=query_params,
                     cookies=cookies,
                     json=json_data,
                     data=data,
-                    timeout=aiohttp.ClientTimeout(total=10.0)
+                    timeout=aiohttp.ClientTimeout(total=10.0),
+                    auth_header_names=auth_header_names,
                 ) as response:
                     response.raise_for_status()
                     response_data = await response.json()
@@ -224,7 +240,9 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         query_params = remaining_args
 
         # Handle authentication
-        auth_handler, cookies = self._apply_auth(tool_call_template, request_headers, query_params)
+        # ``auth_header_names`` unused here -- streaming handshake uses
+        # ``allow_redirects=False`` (no redirect chain to scrub).
+        auth_handler, cookies, _auth_header_names = self._apply_auth(tool_call_template, request_headers, query_params)
 
         # Handle OAuth2 separately as it's async
         if isinstance(tool_call_template.auth, OAuth2Auth):
@@ -248,6 +266,12 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 else:
                     data = body_content
 
+            # Streaming handshake must not follow redirects: the
+            # response has to stay open for the lifetime of the tool
+            # call, which is incompatible with the per-hop validator's
+            # release semantics. Reject 3xx outright so an
+            # attacker-controlled endpoint cannot redirect us into an
+            # internal service (GHSA-9qhg-99ww-9mqc).
             response = await session.request(
                 method=tool_call_template.http_method,
                 url=url,
@@ -257,8 +281,17 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 cookies=cookies,
                 json=json_data,
                 data=data,
-                timeout=timeout
+                timeout=timeout,
+                allow_redirects=False,
             )
+            if 300 <= response.status < 400:
+                response.release()
+                raise RuntimeError(
+                    f"Streamable HTTP endpoint at {url!r} returned a "
+                    f"{response.status} redirect. Redirects are not "
+                    f"followed during streaming handshakes; update the "
+                    f"call template to point at the final URL directly."
+                )
             response.raise_for_status()
 
             async for chunk in self._process_http_stream(response, tool_call_template.chunk_size, tool_call_template.name):
@@ -314,16 +347,40 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             pass
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
-        """Handles OAuth2 client credentials flow, trying both body and auth header methods."""
+        """Handle OAuth2 client credentials flow, trying both body and
+        auth header methods.
+
+        Validates the token URL before posting credentials so an
+        attacker-controlled OpenAPI spec cannot redirect ``client_id`` /
+        ``client_secret`` exfiltration through this protocol
+        (GHSA-8cp3-qxj6-px34). The redirect helper also blocks the
+        post-issue redirect SSRF (GHSA-9qhg-99ww-9mqc) on the token
+        endpoint itself.
+        """
         client_id = auth_details.client_id
         if client_id in self._oauth_tokens:
             return self._oauth_tokens[client_id]["access_token"]
+
+        # Reject obviously-internal or plain-HTTP non-loopback token
+        # endpoints before any credential bytes leave the process.
+        ensure_secure_url(auth_details.token_url, context="OAuth2 token URL")
 
         async with aiohttp.ClientSession() as session:
             # Method 1: Credentials in body
             try:
                 logger.info(f"Attempting OAuth2 token fetch for '{client_id}' with credentials in body.")
-                async with session.post(auth_details.token_url, data={'grant_type': 'client_credentials', 'client_id': client_id, 'client_secret': auth_details.client_secret, 'scope': auth_details.scope}) as response:
+                async with safe_request_with_redirects(
+                    session,
+                    "POST",
+                    auth_details.token_url,
+                    context="OAuth2 token fetch",
+                    data={
+                        'grant_type': 'client_credentials',
+                        'client_id': client_id,
+                        'client_secret': auth_details.client_secret,
+                        'scope': auth_details.scope,
+                    },
+                ) as response:
                     response.raise_for_status()
                     token_data = await response.json()
                     self._oauth_tokens[client_id] = token_data
@@ -335,7 +392,17 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
             try:
                 logger.info(f"Attempting OAuth2 token fetch for '{client_id}' with Basic Auth header.")
                 auth = AiohttpBasicAuth(client_id, auth_details.client_secret)
-                async with session.post(auth_details.token_url, data={'grant_type': 'client_credentials', 'scope': auth_details.scope}, auth=auth) as response:
+                async with safe_request_with_redirects(
+                    session,
+                    "POST",
+                    auth_details.token_url,
+                    context="OAuth2 token fetch",
+                    data={
+                        'grant_type': 'client_credentials',
+                        'scope': auth_details.scope,
+                    },
+                    auth=auth,
+                ) as response:
                     response.raise_for_status()
                     token_data = await response.json()
                     self._oauth_tokens[client_id] = token_data
