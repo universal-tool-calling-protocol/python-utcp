@@ -220,7 +220,7 @@ def test_openapi_converter_parameter_examples():
     assert example_value["email"] == "jane@example.com"
 
 
-def test_openapi_converter_skips_unsupported_methods():
+def test_openapi_converter_skips_unsupported_methods(capsys):
     """Operations with HTTP methods HttpCallTemplate cannot represent are skipped, not crashed on."""
     openapi_spec = {
         "openapi": "3.0.0",
@@ -253,6 +253,13 @@ def test_openapi_converter_skips_unsupported_methods():
 
     tool_names = {tool.name for tool in manual.tools}
     assert tool_names == {"listThings"}
+
+    # Unsupported operations must reach _create_tool and emit a skip warning,
+    # not be silently dropped by the loop filter.
+    stderr = capsys.readouterr().err
+    assert "optionsThings" in stderr
+    assert "headThings" in stderr
+    assert "traceThings" in stderr
 
 
 def test_openapi_converter_schema_level_examples_normalized():
