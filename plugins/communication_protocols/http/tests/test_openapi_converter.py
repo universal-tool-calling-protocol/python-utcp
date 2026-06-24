@@ -218,3 +218,94 @@ def test_openapi_converter_parameter_examples():
     example_value = body_param.examples[0]
     assert example_value["name"] == "Jane Smith"
     assert example_value["email"] == "jane@example.com"
+
+
+def test_openapi_converter_skips_unsupported_methods():
+    """Operations with HTTP methods HttpCallTemplate cannot represent are skipped, not crashed on."""
+    openapi_spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/things": {
+                "get": {
+                    "operationId": "listThings",
+                    "responses": {"200": {"description": "ok"}},
+                },
+                # OPTIONS/HEAD/TRACE are valid OpenAPI but not in the call template Literal
+                "options": {
+                    "operationId": "optionsThings",
+                    "responses": {"200": {"description": "ok"}},
+                },
+                "head": {
+                    "operationId": "headThings",
+                    "responses": {"200": {"description": "ok"}},
+                },
+                "trace": {
+                    "operationId": "traceThings",
+                    "responses": {"200": {"description": "ok"}},
+                },
+            }
+        },
+    }
+
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+
+    tool_names = {tool.name for tool in manual.tools}
+    assert tool_names == {"listThings"}
+
+
+def test_openapi_converter_schema_level_examples_normalized():
+    """Examples declared at the schema level (not the media type) are normalized into 'examples'."""
+    openapi_spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/widgets": {
+                "post": {
+                    "operationId": "createWidget",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {"name": {"type": "string"}},
+                                    # schema-level example, not a media-type 'examples' map
+                                    "example": {"name": "Widget A"},
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"id": {"type": "string"}},
+                                        "example": {"id": "w_1"},
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+
+    tool = next((t for t in manual.tools if t.name == "createWidget"), None)
+    assert tool is not None
+
+    body_param = tool.inputs.properties.get("body")
+    assert body_param is not None
+    # schema-level example surfaces in the normalized 'examples' keyword
+    assert body_param.examples == [{"name": "Widget A"}]
+    # raw 'example' key must not leak through as an extra field
+    assert "example" not in body_param.model_dump(by_alias=True)
+
+    assert tool.outputs.examples == [{"id": "w_1"}]
