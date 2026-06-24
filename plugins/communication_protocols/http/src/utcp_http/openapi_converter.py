@@ -29,9 +29,15 @@ from utcp.data.tool import Tool, JsonSchema
 from utcp_http.http_call_template import HttpCallTemplate
 from utcp_http._security import ensure_secure_url, is_loopback_url
 
-# HTTP methods that HttpCallTemplate.http_method accepts. Kept as the single
-# source of truth for both the operation loop filter and per-operation
-# validation so the two can never drift apart.
+# All HTTP methods that OpenAPI defines as operation fields on a Path Item
+# Object. The conversion loop uses this to tell operations apart from the other
+# path-item keys (parameters, summary, $ref, servers, ...), so that genuinely
+# unsupported operations still reach _create_tool and get a warning rather than
+# being silently dropped by the loop.
+OPENAPI_OPERATION_METHODS: Tuple[str, ...] = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
+
+# The subset of HTTP methods that HttpCallTemplate.http_method accepts.
+# _create_tool validates against this and skips anything else with a warning.
 SUPPORTED_HTTP_METHODS: Tuple[str, ...] = ("GET", "POST", "PUT", "DELETE", "PATCH")
 
 class OpenApiConverter:
@@ -190,7 +196,7 @@ class OpenApiConverter:
 
         for path, path_item in self.spec.get("paths", {}).items():
             for method, operation in path_item.items():
-                if method.upper() in SUPPORTED_HTTP_METHODS:
+                if method.lower() in OPENAPI_OPERATION_METHODS:
                     tool = self._create_tool(path, method, operation, base_url)
                     if tool:
                         tools.append(tool)
