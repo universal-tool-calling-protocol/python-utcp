@@ -401,13 +401,21 @@ class OpenApiConverter:
         Used to combine examples that can appear at more than one level for the
         same value, e.g. a Media Type Object and the Schema Object beneath it.
         Returns a list suitable for the JSON Schema 'examples' keyword, or None.
+
+        De-duplication uses a canonical JSON serialization (sorted keys) as the
+        identity. This is order-insensitive for objects and type-aware, so it
+        does not collapse semantically distinct examples the way Python's ``==``
+        would (``True == 1``, ``False == 0``, ``1 == 1.0``).
         """
         merged: List[Any] = []
+        seen: set = set()
         for obj in objs:
             if not isinstance(obj, dict):
                 continue
             for ex in self._extract_examples(obj) or []:
-                if ex not in merged:
+                key = json.dumps(ex, sort_keys=True, default=str)
+                if key not in seen:
+                    seen.add(key)
                     merged.append(ex)
         return merged or None
 
