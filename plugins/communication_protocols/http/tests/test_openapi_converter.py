@@ -316,3 +316,110 @@ def test_openapi_converter_schema_level_examples_normalized():
     assert "example" not in body_param.model_dump(by_alias=True)
 
     assert tool.outputs.examples == [{"id": "w_1"}]
+
+
+def test_openapi_converter_array_form_schema_examples():
+    """Array-form (JSON Schema / OpenAPI 3.1) schema 'examples' are preserved, not dropped."""
+    openapi_spec = {
+        "openapi": "3.1.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/gadgets": {
+                "post": {
+                    "operationId": "createGadget",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {"name": {"type": "string"}},
+                                    # JSON Schema 'examples' keyword: a list of values
+                                    "examples": [{"name": "Gadget A"}, {"name": "Gadget B"}],
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "string",
+                                        "examples": ["ok", "done"],
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+
+    tool = next((t for t in manual.tools if t.name == "createGadget"), None)
+    assert tool is not None
+
+    body_param = tool.inputs.properties.get("body")
+    assert body_param is not None
+    assert body_param.examples == [{"name": "Gadget A"}, {"name": "Gadget B"}]
+    # examples surface in the normalized field on serialization
+    assert body_param.model_dump(by_alias=True).get("examples") == [{"name": "Gadget A"}, {"name": "Gadget B"}]
+
+    assert tool.outputs.examples == ["ok", "done"]
+
+
+def test_openapi_converter_example_dedup_is_type_aware_and_order_insensitive():
+    """De-dup keeps distinct JSON types (true vs 1) and collapses key-reordered objects."""
+    openapi_spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/items": {
+                "post": {
+                    "operationId": "createItem",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                # media-type example with one key order...
+                                "examples": {"e1": {"value": {"a": 1, "b": 2}}},
+                                "schema": {
+                                    "type": "object",
+                                    # ...schema example with the other key order -> collapses to one
+                                    "examples": [{"b": 2, "a": 1}],
+                                },
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        # true and 1 are distinct; duplicate true removed
+                                        "examples": [True, 1, True],
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+
+    tool = next((t for t in manual.tools if t.name == "createItem"), None)
+    assert tool is not None
+
+    # {a:1,b:2} and {b:2,a:1} are the same example -> collapsed to one
+    assert tool.inputs.properties.get("body").examples == [{"a": 1, "b": 2}]
+    # True vs 1 kept distinct (== would have collapsed them); duplicate True removed
+    assert tool.outputs.examples == [True, 1]

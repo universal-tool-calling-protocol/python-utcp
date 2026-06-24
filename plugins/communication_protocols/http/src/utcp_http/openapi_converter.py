@@ -360,20 +360,30 @@ class OpenApiConverter:
 
     def _extract_examples(self, obj: Dict[str, Any]) -> Optional[List[Any]]:
         """
-        Extract examples from an OpenAPI parameter or Media Type Object (Parameter, Media Type, Schema).
-        
-        Supports both 'example' (single value) and 'examples' (map of Example Objects).
+        Extract examples from an OpenAPI Parameter, Media Type, or Schema object.
+
+        Handles all three shapes the spec allows:
+          - 'example' (single value) - OpenAPI Parameter / Media Type / 3.0 Schema.
+          - 'examples' as a map of named Example Objects - OpenAPI Parameter /
+            Media Type Object (each entry carries an inline 'value').
+          - 'examples' as a list of literal values - JSON Schema / OpenAPI 3.1
+            Schema Object.
+
         Returns a list of example values suitable for JSON Schema 'examples' keyword.
         """
         examples = []
-        
+
         # Handle single 'example' field
         if "example" in obj and obj["example"] is not None:
             examples.append(obj["example"])
-        
-        # Handle 'examples' map (OpenAPI 3.0+)
-        if "examples" in obj and isinstance(obj["examples"], dict):
-            for example_obj in obj["examples"].values():
+
+        examples_obj = obj.get("examples")
+        if isinstance(examples_obj, list):
+            # JSON Schema / OpenAPI 3.1 Schema form: a plain list of example values.
+            examples.extend(examples_obj)
+        elif isinstance(examples_obj, dict):
+            # OpenAPI 3.0 form: a map of named Example Objects.
+            for example_obj in examples_obj.values():
                 if isinstance(example_obj, dict) and "$ref" in example_obj:
                     example_obj = self._resolve_ref_obj(example_obj, set()) or {}
                 if isinstance(example_obj, dict):
@@ -391,13 +401,21 @@ class OpenApiConverter:
         Used to combine examples that can appear at more than one level for the
         same value, e.g. a Media Type Object and the Schema Object beneath it.
         Returns a list suitable for the JSON Schema 'examples' keyword, or None.
+
+        De-duplication uses a canonical JSON serialization (sorted keys) as the
+        identity. This is order-insensitive for objects and type-aware, so it
+        does not collapse semantically distinct examples the way Python's ``==``
+        would (``True == 1``, ``False == 0``, ``1 == 1.0``).
         """
         merged: List[Any] = []
+        seen: set = set()
         for obj in objs:
             if not isinstance(obj, dict):
                 continue
             for ex in self._extract_examples(obj) or []:
-                if ex not in merged:
+                key = json.dumps(ex, sort_keys=True, default=str)
+                if key not in seen:
+                    seen.add(key)
                     merged.append(ex)
         return merged or None
 
