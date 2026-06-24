@@ -38,6 +38,7 @@ class JsonSchema(BaseModel):
         default: Optional schema default value.
         format: Optional schema format.
         additionalProperties: Optional schema additional properties.
+        examples: Optional list of example values for the schema.
     """
     schema_: Optional[str] = Field(None, alias="$schema")
     id_: Optional[str] = Field(None, alias="$id")
@@ -50,6 +51,7 @@ class JsonSchema(BaseModel):
     enum: Optional[List[JsonType]] = None
     const: Optional[JsonType] = None
     default: Optional[JsonType] = None
+    examples: Optional[List[JsonType]] = None
     format: Optional[str] = None
     additionalProperties: Optional[Union[bool, "JsonSchema"]] = None
     pattern: Optional[str] = None
