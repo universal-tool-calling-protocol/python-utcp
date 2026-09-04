@@ -7,6 +7,7 @@ was discarded, so a refused call or discovery surfaced as nothing more than a
 status code. Mirrors the TypeScript SDK's ``_normalizeToolError``.
 """
 import json
+import re
 from typing import Optional
 
 import aiohttp
@@ -22,6 +23,16 @@ MAX_DETAIL_CHARS = 2000
 MAX_BODY_READ_BYTES = 64 * 1024
 
 _DETAIL_KEYS = ("error", "message", "detail")
+
+# Control characters (newlines, ANSI escape introducers, NUL) are collapsed so
+# server-controlled text folded into an exception message or a log line cannot
+# forge extra log records or terminal escape sequences.
+# C0 and C1 control ranges: C1 (U+0080..U+009F) carries escape introducers too.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+
+
+def _clean(text: str) -> str:
+    return _CONTROL_CHARS.sub(" ", text).strip()[:MAX_DETAIL_CHARS]
 
 
 def error_detail_from_body(text: str) -> Optional[str]:
@@ -39,8 +50,10 @@ def error_detail_from_body(text: str) -> Optional[str]:
         return None
     try:
         data = json.loads(body)
-    except ValueError:
-        return body[:MAX_DETAIL_CHARS]
+    except (ValueError, RecursionError):
+        # RecursionError: a deeply nested body ("[[[[...") within the read cap
+        # can exceed the parser's recursion limit; it is still just text.
+        return _clean(body)
     if isinstance(data, dict):
         for key in _DETAIL_KEYS:
             if key not in data or data[key] is None:
@@ -48,11 +61,11 @@ def error_detail_from_body(text: str) -> Optional[str]:
             value = data[key]
             if isinstance(value, str):
                 if value.strip():
-                    return value.strip()[:MAX_DETAIL_CHARS]
+                    return _clean(value)
                 continue
             # Structured error: show it rather than a later generic string.
-            return body[:MAX_DETAIL_CHARS]
-    return body[:MAX_DETAIL_CHARS]
+            return _clean(body)
+    return _clean(body)
 
 
 async def _read_body_bounded(response: aiohttp.ClientResponse, limit: int) -> str:
@@ -69,11 +82,9 @@ async def _read_body_bounded(response: aiohttp.ClientResponse, limit: int) -> st
     # body was read directly, so aiohttp's own buffered-body machinery must not
     # be relied on, and an unknown charset name must not lose the detail.
     try:
-        encoding = response.charset or "utf-8"
-        raw.decode(encoding, errors="replace")
+        return raw.decode(response.charset or "utf-8", errors="replace")
     except (LookupError, RuntimeError, ValueError):
-        encoding = "utf-8"
-    return raw.decode(encoding, errors="replace")
+        return raw.decode("utf-8", errors="replace")
 
 
 async def raise_for_status_with_body(response: aiohttp.ClientResponse) -> None:

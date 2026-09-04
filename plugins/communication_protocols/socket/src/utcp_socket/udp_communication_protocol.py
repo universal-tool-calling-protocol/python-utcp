@@ -327,10 +327,6 @@ class UDPTransport(CommunicationProtocol):
             raise
 
     # Copilot AI (5 days ago):
-    # The call_tool_streaming method wraps a generator function but doesn't use the async def syntax for the method itself.
-    # While this works, it's inconsistent with the other implementation in tcp_communication_protocol.py (lines 384-387) which properly uses async def with an inner generator.
-    # For consistency and clarity, this should also use async def directly:
-    #
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """REQUIRED
         Streaming variant: the UDP protocol does not natively stream, so the full result is yielded as a single chunk."""

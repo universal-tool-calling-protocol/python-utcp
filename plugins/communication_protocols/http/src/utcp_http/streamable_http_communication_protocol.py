@@ -293,7 +293,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     f"followed during streaming handshakes; update the "
                     f"call template to point at the final URL directly."
                 )
-            response.raise_for_status()
+            await raise_for_status_with_body(response)
 
             async for chunk in self._process_http_stream(response, tool_call_template.chunk_size, tool_call_template.name):
                 yield chunk
@@ -310,7 +310,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
     async def _process_http_stream(self, response: ClientResponse, chunk_size: Optional[int], provider_name: str) -> AsyncIterator[Any]:
         """Process the HTTP stream and yield chunks based on content type."""
         try:
-            content_type = response.headers.get('Content-Type', '')
+            content_type = response.headers.get('Content-Type', '').lower()
 
             if 'application/x-ndjson' in content_type:
                 async for line in response.content:

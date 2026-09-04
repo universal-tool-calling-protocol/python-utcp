@@ -174,6 +174,12 @@ async def app():
         return web.Response(status=403, body=b'{"error": "odd charset"}', content_type="application/json", charset="x-unknown-charset")
 
     app.router.add_route('*', '/forbidden-no-charset', forbidden_no_charset_handler)
+
+    # A body nested deeper than the JSON parser's recursion limit.
+    async def forbidden_deep_handler(request):
+        return web.Response(status=503, body=b"[" * 20000, content_type="application/json")
+
+    app.router.add_route('*', '/forbidden-deep', forbidden_deep_handler)
     app.router.add_route('*', '/forbidden-bad-charset', forbidden_bad_charset_handler)
     
     return app
@@ -866,3 +872,18 @@ async def test_error_body_is_surfaced_without_a_usable_charset(http_transport, a
     with pytest.raises(aiohttp.ClientResponseError) as excinfo:
         await http_transport.call_tool(None, "t.tool", {}, call_template)
     assert expected in excinfo.value.message
+
+
+@pytest.mark.asyncio
+async def test_deeply_nested_error_body_still_raises_client_response_error(http_transport, aiohttp_client, app):
+    """A body that overflows the JSON parser's recursion limit must not escape as RecursionError."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-deep", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert excinfo.value.status == 503
+
+
+def test_error_detail_collapses_control_characters():
+    from utcp_http._errors import error_detail_from_body
+    assert error_detail_from_body('{"error": "line one\\nline two\\u001b[31m"}') == "line one line two [31m"

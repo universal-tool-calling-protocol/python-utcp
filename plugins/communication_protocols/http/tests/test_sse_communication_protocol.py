@@ -106,6 +106,10 @@ async def error_handler(request):
     return web.Response(status=500, text="Internal Server Error")
 
 
+async def refused_handler(request):
+    return web.Response(status=503, text="streaming refused: backend down")
+
+
 async def forbidden_discovery_handler(request):
     return web.Response(status=403, text="discovery refused: tenant is not provisioned for streaming")
 
@@ -141,7 +145,10 @@ async def flaky_503_events_handler(request):
     await response.prepare(request)
     if state["connections"] == 1:
         await response.write(SAMPLE_SSE_EVENTS[0].encode('utf-8'))
-        await asyncio.sleep(0.01)
+        # Make sure the event has left the socket before dropping it: on Windows the
+        # data and the close otherwise arrive together and aiohttp raises before
+        # delivering the event.
+        await asyncio.sleep(0.1)
         request.transport.close()
         return response
     for event in SAMPLE_SSE_EVENTS[1:]:
@@ -150,8 +157,9 @@ async def flaky_503_events_handler(request):
 
 
 async def slow_handshake_handler(request):
-    """Accepts the connection but does not send response headers for a long time."""
-    await asyncio.sleep(5)
+    """Accepts the connection but does not send response headers until well past
+    the (patched) handshake timeout."""
+    await asyncio.sleep(1)
     return web.Response(status=204)
 
 
@@ -163,11 +171,55 @@ async def huge_retry_events_handler(request):
     await response.prepare(request)
     if state["connections"] == 1:
         await response.write(b'id: 1\nretry: 100000\ndata: {"seq": 1}\n\n')
-        await asyncio.sleep(0.01)
+        # Make sure the event has left the socket before dropping it: on Windows the
+        # data and the close otherwise arrive together and aiohttp raises before
+        # delivering the event.
+        await asyncio.sleep(0.1)
         request.transport.close()
         return response
     await response.write(b'id: 2\ndata: {"seq": 2}\n\n')
     return response
+
+async def bad_retry_events_handler(request):
+    """A retry field that is not made of digits must be ignored; the stream then
+    ends in the middle of an event, which must not be dispatched."""
+    response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
+    await response.prepare(request)
+    await response.write(b'retry: -1\ndata: {"seq": 1}\n\nretry: 20ms\n\ndata: {"seq": 2}')
+    return response
+
+
+async def cr_eof_events_handler(request):
+    """A complete event whose closing blank line ends in a lone CR at end of stream."""
+    response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
+    await response.prepare(request)
+    await response.write(b'data: {"seq": 1}\n\r')
+    return response
+
+
+async def json_not_sse_handler(request):
+    """A 200 that is not an event stream at all."""
+    return web.json_response({"error": "not a stream"})
+
+
+async def empty_id_events_handler(request):
+    """Sets an id, then resets it with an empty id, then drops the connection."""
+    state = request.app["empty_id"]
+    state["connections"] += 1
+    state["last_event_ids"].append(request.headers.get("Last-Event-ID"))
+    response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
+    await response.prepare(request)
+    if state["connections"] == 1:
+        await response.write(b'id: 1\ndata: {"seq": 1}\n\nid\ndata: {"seq": 2}\n\n')
+        # Make sure the event has left the socket before dropping it: on Windows the
+        # data and the close otherwise arrive together and aiohttp raises before
+        # delivering the event.
+        await asyncio.sleep(0.1)
+        request.transport.close()
+        return response
+    await response.write(b'data: {"seq": 3}\n\n')
+    return response
+
 
 async def flaky_events_handler(request):
     """Serves the first event then drops the TCP connection on the first connection
@@ -182,7 +234,10 @@ async def flaky_events_handler(request):
 
     if state["always_drop"] or state["connections"] == 1:
         await response.write(SAMPLE_SSE_EVENTS[0].encode('utf-8'))
-        await asyncio.sleep(0.01)
+        # Make sure the event has left the socket before dropping it: on Windows the
+        # data and the close otherwise arrive together and aiohttp raises before
+        # delivering the event.
+        await asyncio.sleep(0.1)
         request.transport.close()
         return response
 
@@ -203,9 +258,16 @@ def app():
     app = web.Application()
     app.router.add_get("/tools", tools_handler)
     app.router.add_route('*', '/events', events_handler)
+    app.router.add_post("/flaky_events", flaky_events_handler)
+    app.router.add_get("/json_not_sse", json_not_sse_handler)
+    app.router.add_get("/bad_retry_events", bad_retry_events_handler)
+    app.router.add_get("/cr_eof_events", cr_eof_events_handler)
+    app.router.add_get("/empty_id_events", empty_id_events_handler)
+    app["empty_id"] = {"connections": 0, "last_event_ids": []}
     app.router.add_post("/token", token_handler)
     app.router.add_post("/token_header_auth", token_header_auth_handler)
     app.router.add_get("/error", error_handler)
+    app.router.add_get("/refused", refused_handler)
     app.router.add_get("/forbidden-discovery", forbidden_discovery_handler)
     app.router.add_get("/flaky_events", flaky_events_handler)
     app["flaky"] = {"connections": 0, "last_event_ids": [], "always_drop": False}
@@ -596,3 +658,79 @@ async def test_register_manual_surfaces_server_error_body(sse_transport, aiohttp
     assert result.success is False
     assert "discovery refused: tenant is not provisioned for streaming" in result.errors[0]
     assert "403" in result.errors[0]
+
+
+# --- Spec conformance follow-ups ---
+
+@pytest.mark.asyncio
+async def test_event_type_message_matches_events_without_an_event_field(sse_transport, aiohttp_client, app):
+    """Per the SSE spec an event block without `event:` has the type "message"."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/events")), event_type="message")
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
+    assert results == [{"message": "First part"}]
+
+
+@pytest.mark.asyncio
+async def test_empty_id_resets_last_event_id(sse_transport, aiohttp_client, app):
+    """An empty `id` line resets the last event ID, so no Last-Event-ID header is sent on reconnect."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/empty_id_events")), reconnect=True, retry_timeout=10)
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
+    assert results == [{"seq": 1}, {"seq": 2}, {"seq": 3}]
+    assert app["empty_id"]["last_event_ids"] == [None, None]
+
+
+@pytest.mark.asyncio
+async def test_non_event_stream_response_raises(sse_transport, aiohttp_client, app):
+    """A 200 that is not text/event-stream fails instead of yielding zero events."""
+    from utcp_http.sse_communication_protocol import SseProtocolError
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/json_not_sse")))
+    with pytest.raises(SseProtocolError):
+        async for _ in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_post_stream_is_not_reconnected(sse_transport, aiohttp_client, app):
+    """A dropped POST stream is not re-issued: that could re-execute a non-idempotent tool."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(
+        name="test-sse", url=str(client.make_url("/flaky_events")), reconnect=True, retry_timeout=10, body_field="payload"
+    )
+    received = []
+    with pytest.raises(aiohttp.ClientError):
+        async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {"payload": {"n": 1}}, call_template):
+            received.append(e)
+    assert received == [{"message": "First part"}]
+    assert app["flaky"]["connections"] == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_retry_does_not_abort_and_unterminated_trailing_event_is_dropped(sse_transport, aiohttp_client, app):
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/bad_retry_events")))
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
+    assert results == [{"seq": 1}]
+
+
+@pytest.mark.asyncio
+async def test_final_blank_line_ending_in_lone_cr_completes_last_event(sse_transport, aiohttp_client, app):
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/cr_eof_events")))
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
+    assert results == [{"seq": 1}]
+
+
+@pytest.mark.asyncio
+async def test_streaming_call_error_surfaces_server_body(sse_transport, aiohttp_client, app):
+    """A refused stream carries the server's body, like discovery does."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/refused")))
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        async for _ in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template):
+            pass
+    assert excinfo.value.status == 503
+    # Distinct from the reason phrase, so only a surfaced body satisfies this.
+    assert "streaming refused: backend down" in excinfo.value.message

@@ -252,7 +252,11 @@ class SseCommunicationProtocol(CommunicationProtocol):
         data = body_content if "application/json" not in content_type else None
         json_data = body_content if "application/json" in content_type else None
 
-        reconnect = bool(tool_call_template.reconnect)
+        # Never re-send a request body: a reconnect re-issues the request, and for
+        # a POST that would re-execute a possibly non-idempotent tool.
+        reconnect = bool(tool_call_template.reconnect) and body_content is None
+        if tool_call_template.reconnect and body_content is not None:
+            logger.info(f"Reconnection is disabled for '{tool_call_template.name}' because the call sends a request body.")
         retry_delay_ms = tool_call_template.retry_timeout
         last_event_id: Optional[str] = None
         reconnect_attempts = 0
@@ -260,8 +264,9 @@ class SseCommunicationProtocol(CommunicationProtocol):
 
         while True:
             attempt_headers = dict(request_headers)
-            if last_event_id is not None:
-                # Let the server resume from where we left off (SSE spec).
+            if last_event_id:
+                # Let the server resume from where we left off (SSE spec). An empty
+                # last event ID means "none": the header is not sent.
                 attempt_headers["Last-Event-ID"] = last_event_id
 
             session = aiohttp.ClientSession()
@@ -292,7 +297,22 @@ class SseCommunicationProtocol(CommunicationProtocol):
                             f"handshakes; update the call template to point at "
                             f"the final URL directly."
                         )
-                    response.raise_for_status()
+                    # The error-body read is bounded like the handshake, so a server that
+                    # answers 4xx/5xx and then stalls cannot hang the call either.
+                    await asyncio.wait_for(raise_for_status_with_body(response), timeout=self.HANDSHAKE_TIMEOUT_SECONDS)
+                    # Anything but an event stream would be parsed into silence: a
+                    # JSON error document, say, yields zero events and a "successful" call.
+                    content_type = response.headers.get("Content-Type", "")
+                    # Compare the media type exactly (parameters such as charset allowed),
+                    # so "text/event-stream-invalid" does not pass a substring check.
+                    media_type = content_type.split(";", 1)[0].strip().lower()
+                    if media_type != "text/event-stream":
+                        response.release()
+                        raise SseProtocolError(
+                            f"Expected a text/event-stream response but got {content_type or 'no Content-Type'!r}"
+                        )
+                except SseProtocolError:
+                    raise
                 except Exception as e:
                     if reconnect_attempts == 0:
                         # The initial handshake failing (refused, timed out, non-2xx) is a
@@ -315,13 +335,16 @@ class SseCommunicationProtocol(CommunicationProtocol):
 
                 try:
                     async for event in self._iter_sse_events(response):
-                        if event.get("id") is not None:
+                        # Per the SSE spec an id containing NUL is ignored, and an empty id
+                        # resets the last event ID.
+                        if event.get("id") is not None and "\x00" not in event["id"]:
                             last_event_id = event["id"]
                         if event.get("retry") is not None:
                             retry_delay_ms = event["retry"]
                         if "data" not in event:
                             continue
-                        if tool_call_template.event_type and event.get("event") != tool_call_template.event_type:
+                        # An event block without an ``event:`` field has the type "message".
+                        if tool_call_template.event_type and (event.get("event") or "message") != tool_call_template.event_type:
                             continue
                         yield self._parse_event_data(event["data"])
                     # The server ended the stream cleanly: the tool call is complete.
@@ -375,10 +398,11 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 elif field == 'id':
                     current_event['id'] = value
                 elif field == 'retry':
-                    try:
+                    # Spec: only a value made of ASCII digits sets the reconnection time.
+                    # Anything longer than 18 digits is absurd (and would be capped anyway);
+                    # bounding the length keeps the conversion cheap whatever the interpreter.
+                    if value.isascii() and value.isdigit() and len(value) <= 18:
                         current_event['retry'] = int(value)
-                    except ValueError:
-                        pass
             if data_lines:
                 current_event['data'] = '\n'.join(data_lines)
             return current_event or None
@@ -413,13 +437,25 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     f"SSE event exceeded {self.MAX_EVENT_BUFFER_CHARS} characters without a blank-line delimiter"
                 )
 
-        # Flush a trailing event that was not terminated by a blank line.
+        # At end of stream, a held-back CR is a real line terminator and may
+        # complete the closing blank line of the last event. Dispatch whatever is
+        # fully delimited; per spec, an event still incomplete after that (no
+        # final blank line) is discarded.
         buffer += normalise(decoder.decode(b"", final=True))
         if pending_cr:
             buffer += "\n"
-        event = flush(buffer)
-        if event is not None:
-            yield event
+            pending_cr = False
+        while "\n\n" in buffer:
+            event_string, buffer = buffer.split("\n\n", 1)
+            event = flush(event_string)
+            if event is not None:
+                yield event
+        # The residual (discarded) buffer is still subject to the cap, so an
+        # over-limit malformed stream fails the same way at end of stream.
+        if len(buffer) > self.MAX_EVENT_BUFFER_CHARS:
+            raise SseProtocolError(
+                f"SSE event exceeded {self.MAX_EVENT_BUFFER_CHARS} characters without a blank-line delimiter"
+            )
 
     @staticmethod
     def _parse_event_data(data: str) -> Any:
