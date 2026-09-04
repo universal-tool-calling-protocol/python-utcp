@@ -109,6 +109,9 @@ def app():
     async def error_endpoint(request):
         return web.Response(status=500, text="Internal Server Error")
 
+    async def forbidden_discovery(request):
+        return web.Response(status=403, text="discovery refused: tenant is not provisioned for streaming")
+
     app = web.Application()
     app.add_routes([
         web.get('/discover', discover),
@@ -120,6 +123,7 @@ def app():
         web.post('/token', oauth_token_handler),
         web.post('/token-header', oauth_token_header_handler),
         web.get('/error', error_endpoint),
+        web.get('/forbidden-discovery', forbidden_discovery),
     ])
     return app
 
@@ -341,3 +345,14 @@ async def test_call_tool_with_oauth2_header_fallback_nonstream(streamable_http_t
     result = await streamable_http_transport.call_tool(None, "test_tool", {}, call_template)
     
     assert result == SAMPLE_NDJSON_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_register_manual_surfaces_server_error_body(streamable_http_transport, aiohttp_client, app):
+    """A refused discovery reports the server's body in errors[], not just the status."""
+    client = await aiohttp_client(app)
+    call_template = StreamableHttpCallTemplate(name="test-provider", url=f"{client.make_url('/forbidden-discovery')}")
+    result = await streamable_http_transport.register_manual(None, call_template)
+    assert result.success is False
+    assert "discovery refused: tenant is not provisioned for streaming" in result.errors[0]
+    assert "403" in result.errors[0]

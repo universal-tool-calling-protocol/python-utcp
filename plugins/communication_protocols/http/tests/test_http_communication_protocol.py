@@ -139,6 +139,17 @@ async def app():
     app.router.add_post('/token', token_handler)
     app.router.add_post('/token_header_auth', token_header_auth_handler)
     app.router.add_get('/error', error_handler)
+
+    # Non-2xx with a descriptive body, like a real API refusing a call.
+    async def forbidden_handler(request):
+        return web.json_response({"error": "You are not allowed to do that, and here is exactly why."}, status=403)
+
+    # Some APIs nest an object under `error`; the message must show its JSON.
+    async def forbidden_object_handler(request):
+        return web.json_response({"error": {"code": "INVALID_FIELD", "reason": "value out of range"}}, status=422)
+
+    app.router.add_route('*', '/forbidden', forbidden_handler)
+    app.router.add_route('*', '/forbidden-object', forbidden_object_handler)
     
     return app
 
@@ -736,3 +747,40 @@ def test_auth_tools_integration():
     serialized = serializer.to_dict(call_template)
     assert "auth_tools" in serialized
     assert serialized["auth_tools"]["auth_type"] == "api_key"
+
+
+# --- Server error bodies are surfaced, not just status codes ---
+
+@pytest.mark.asyncio
+async def test_call_tool_surfaces_server_error_body(http_transport, aiohttp_client, app):
+    """A refused call carries the server's reason, not only "403, message='Forbidden'"."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {"param1": "value1"}, call_template)
+    assert excinfo.value.status == 403
+    assert "You are not allowed to do that, and here is exactly why." in str(excinfo.value)
+    assert '"error"' in excinfo.value.body
+
+
+@pytest.mark.asyncio
+async def test_call_tool_surfaces_object_valued_error_field(http_transport, aiohttp_client, app):
+    """An object under `error` shows its JSON structure in the message."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-object", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert excinfo.value.status == 422
+    assert "INVALID_FIELD" in str(excinfo.value)
+    assert "value out of range" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_register_manual_surfaces_server_error_body(http_transport, aiohttp_client, app):
+    """A refused discovery reports the server's reason in errors[]."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden", http_method="GET")
+    result = await http_transport.register_manual(None, call_template)
+    assert result.success is False
+    assert "You are not allowed to do that, and here is exactly why." in result.errors[0]
+    assert "403" in result.errors[0]

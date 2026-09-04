@@ -34,6 +34,7 @@ from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 from utcp_http.openapi_converter import OpenApiConverter
 from utcp_http._security import ensure_secure_url, safe_request_with_redirects
+from utcp_http._errors import raise_for_status_with_body
 import logging
 
 logging.basicConfig(
@@ -210,7 +211,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                         timeout=aiohttp.ClientTimeout(total=10.0),
                         auth_header_names=auth_header_names,
                     ) as response:
-                        response.raise_for_status()  # Raise exception for 4XX/5XX responses
+                        await raise_for_status_with_body(response)  # 4XX/5XX, with the server's body in the message
 
                         # Check content type to determine how to parse the response
                         content_type = response.headers.get('Content-Type', '')
@@ -359,7 +360,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     timeout=aiohttp.ClientTimeout(total=30.0),
                     auth_header_names=auth_header_names,
                 ) as response:
-                    response.raise_for_status()
+                    await raise_for_status_with_body(response)
                     
                     content_type = response.headers.get('Content-Type', '').lower()
                     if 'application/json' in content_type:
