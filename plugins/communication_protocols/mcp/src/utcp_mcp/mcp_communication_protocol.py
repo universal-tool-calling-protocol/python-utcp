@@ -179,6 +179,29 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 raise
             return session
 
+    async def _release_manual_client(self, manual_call_template: 'McpCallTemplate') -> None:
+        """Drop this manual's claim on its client. The client's sessions are closed
+        only when no manual references that configuration any more; two manuals
+        with identical configurations share one client, and deregistering one
+        must not tear down the other's sessions."""
+        key = self._config_key(manual_call_template)
+        manual_name = manual_call_template.name or key
+        async with self._clients_lock:
+            if self._manual_config_keys.get(manual_name) == key:
+                del self._manual_config_keys[manual_name]
+            if key in self._manual_config_keys.values():
+                return
+            client = self._mcp_clients.pop(key, None)
+        if client is None:
+            return
+        try:
+            await client.close_all_sessions()
+            self._log_info(f"Closed the MCP client of manual '{manual_call_template.name}'")
+        except Exception as e:
+            # Keep it so close() can retry rather than leaking its processes.
+            self._mcp_clients[key] = client
+            self._log_warning(f"Failed to close sessions of the MCP client of manual '{manual_call_template.name}': {e}")
+
     async def _cleanup_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
         """Clean up a specific session of the client serving this manual."""
         client = self._mcp_clients.get(self._config_key(manual_call_template))
@@ -602,11 +625,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
             
         self._log_info(f"Deregistering manual '{manual_call_template.name}' and cleaning up sessions")
         
-        # Clean up sessions for all servers in this manual
+        # Release this manual's claim on its client; the client's sessions are
+        # closed only when no other manual shares that configuration.
         if manual_call_template.config and manual_call_template.config.mcpServers:
-            for server_name, server_config in manual_call_template.config.mcpServers.items():
-                await self._cleanup_session(server_name, manual_call_template)
-                self._log_info(f"Cleaned up session for server '{server_name}'")
+            await self._release_manual_client(manual_call_template)
 
     async def close(self) -> None:
         """Close all active sessions and clean up resources."""

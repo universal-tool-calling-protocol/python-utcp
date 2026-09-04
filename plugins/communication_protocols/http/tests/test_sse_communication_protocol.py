@@ -106,6 +106,10 @@ async def error_handler(request):
     return web.Response(status=500, text="Internal Server Error")
 
 
+async def refused_handler(request):
+    return web.Response(status=503, text="streaming refused: backend down")
+
+
 async def forbidden_discovery_handler(request):
     return web.Response(status=403, text="discovery refused: tenant is not provisioned for streaming")
 
@@ -263,6 +267,7 @@ def app():
     app.router.add_post("/token", token_handler)
     app.router.add_post("/token_header_auth", token_header_auth_handler)
     app.router.add_get("/error", error_handler)
+    app.router.add_get("/refused", refused_handler)
     app.router.add_get("/forbidden-discovery", forbidden_discovery_handler)
     app.router.add_get("/flaky_events", flaky_events_handler)
     app["flaky"] = {"connections": 0, "last_event_ids": [], "always_drop": False}
@@ -722,9 +727,10 @@ async def test_final_blank_line_ending_in_lone_cr_completes_last_event(sse_trans
 async def test_streaming_call_error_surfaces_server_body(sse_transport, aiohttp_client, app):
     """A refused stream carries the server's body, like discovery does."""
     client = await aiohttp_client(app)
-    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/error")))
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/refused")))
     with pytest.raises(aiohttp.ClientResponseError) as excinfo:
         async for _ in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template):
             pass
-    assert excinfo.value.status == 500
-    assert "Internal Server Error" in excinfo.value.message
+    assert excinfo.value.status == 503
+    # Distinct from the reason phrase, so only a surfaced body satisfies this.
+    assert "streaming refused: backend down" in excinfo.value.message

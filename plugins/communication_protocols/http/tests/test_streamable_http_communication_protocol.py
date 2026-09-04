@@ -109,6 +109,9 @@ def app():
     async def error_endpoint(request):
         return web.Response(status=500, text="Internal Server Error")
 
+    async def refused_endpoint(request):
+        return web.Response(status=503, text="streaming refused: backend down")
+
     async def forbidden_discovery(request):
         return web.Response(status=403, text="discovery refused: tenant is not provisioned for streaming")
 
@@ -123,6 +126,7 @@ def app():
         web.post('/token', oauth_token_handler),
         web.post('/token-header', oauth_token_header_handler),
         web.get('/error', error_endpoint),
+        web.get('/refused', refused_endpoint),
         web.get('/forbidden-discovery', forbidden_discovery),
     ])
     return app
@@ -362,9 +366,10 @@ async def test_register_manual_surfaces_server_error_body(streamable_http_transp
 async def test_streaming_call_error_surfaces_server_body(streamable_http_transport, aiohttp_client, app):
     """A refused stream carries the server's body, like discovery does."""
     client = await aiohttp_client(app)
-    call_template = StreamableHttpCallTemplate(name="test-provider", url=f"{client.make_url('/error')}")
+    call_template = StreamableHttpCallTemplate(name="test-provider", url=f"{client.make_url('/refused')}")
     with pytest.raises(aiohttp.ClientResponseError) as excinfo:
         async for _ in streamable_http_transport.call_tool_streaming(None, "test-provider.t", {}, call_template):
             pass
-    assert excinfo.value.status == 500
-    assert "Internal Server Error" in excinfo.value.message
+    assert excinfo.value.status == 503
+    # Distinct from the reason phrase, so only a surfaced body satisfies this.
+    assert "streaming refused: backend down" in excinfo.value.message

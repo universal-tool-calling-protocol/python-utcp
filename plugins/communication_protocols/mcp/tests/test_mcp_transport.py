@@ -349,3 +349,23 @@ async def test_changed_configuration_releases_the_stale_client(transport: McpCom
     await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "b"}, changed)
     assert len(transport._mcp_clients) == 1
     assert next(iter(transport._mcp_clients.values())).config["mcpServers"][SERVER_NAME]["env"] == {"CHANGED": "1"}
+
+
+@pytest.mark.asyncio
+async def test_deregistering_one_of_two_manuals_sharing_a_configuration_keeps_the_client(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate):
+    twin = McpCallTemplate(
+        name="twin_manual",
+        call_template_type="mcp",
+        config=McpConfig(mcpServers=dict(mcp_manual.config.mcpServers)),
+    )
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "a"}, mcp_manual)
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "b"}, twin)
+    assert len(transport._mcp_clients) == 1
+
+    await transport.deregister_manual(None, mcp_manual)
+    # The twin still owns the configuration: its client and session survive.
+    assert len(transport._mcp_clients) == 1
+    assert await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "c"}, twin) == {"reply": "you said: c"}
+
+    await transport.deregister_manual(None, twin)
+    assert transport._mcp_clients == {}
