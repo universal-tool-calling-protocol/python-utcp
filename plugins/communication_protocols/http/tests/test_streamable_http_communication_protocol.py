@@ -356,3 +356,15 @@ async def test_register_manual_surfaces_server_error_body(streamable_http_transp
     assert result.success is False
     assert "discovery refused: tenant is not provisioned for streaming" in result.errors[0]
     assert "403" in result.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_streaming_call_error_surfaces_server_body(streamable_http_transport, aiohttp_client, app):
+    """A refused stream carries the server's body, like discovery does."""
+    client = await aiohttp_client(app)
+    call_template = StreamableHttpCallTemplate(name="test-provider", url=f"{client.make_url('/error')}")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        async for _ in streamable_http_transport.call_tool_streaming(None, "test-provider.t", {}, call_template):
+            pass
+    assert excinfo.value.status == 500
+    assert "Internal Server Error" in excinfo.value.message

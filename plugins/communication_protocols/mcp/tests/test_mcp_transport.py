@@ -264,7 +264,7 @@ async def test_stdio_child_stderr_suppressed_by_default(transport: McpCommunicat
         assert session.connector.errlog is not sys.stderr
         assert session.connector.errlog.name == os.devnull
     finally:
-        await transport._cleanup_session(SERVER_NAME)
+        await transport._cleanup_session(SERVER_NAME, mcp_manual)
 
 
 @pytest.mark.asyncio
@@ -275,7 +275,7 @@ async def test_stdio_child_stderr_inherit_opt_in(transport: McpCommunicationProt
     try:
         assert session.connector.errlog is sys.stderr
     finally:
-        await transport._cleanup_session(SERVER_NAME)
+        await transport._cleanup_session(SERVER_NAME, mcp_manual)
 
 
 @pytest.mark.asyncio
@@ -303,10 +303,29 @@ async def test_mcp_client_and_session_are_reused_across_calls(transport: McpComm
     """Repeated calls with the same configuration reuse one client and one session
     instead of spawning a new server process per call."""
     await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "one"}, mcp_manual)
-    client_after_first = transport._mcp_client
+    assert len(transport._mcp_clients) == 1
+    client_after_first = next(iter(transport._mcp_clients.values()))
     await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "two"}, mcp_manual)
-    assert transport._mcp_client is client_after_first
-    assert list(transport._mcp_client.sessions.keys()) == [SERVER_NAME]
+    assert len(transport._mcp_clients) == 1
+    assert next(iter(transport._mcp_clients.values())) is client_after_first
+    assert list(client_after_first.sessions.keys()) == [SERVER_NAME]
+
+
+@pytest.mark.asyncio
+async def test_manuals_with_different_configurations_get_separate_clients(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate):
+    """The protocol object is shared by every manual; one manual's calls must not
+    evict another manual's sessions."""
+    other_manual = McpCallTemplate(
+        name="other_manual",
+        call_template_type="mcp",
+        config=McpConfig(mcpServers={"other_server": dict(mcp_manual.config.mcpServers[SERVER_NAME])}),
+    )
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "a"}, mcp_manual)
+    await transport.call_tool(None, "other_server.echo", {"message": "b"}, other_manual)
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "c"}, mcp_manual)
+    assert len(transport._mcp_clients) == 2
+    sessions = sorted(name for c in transport._mcp_clients.values() for name in c.sessions)
+    assert sessions == sorted([SERVER_NAME, "other_server"])
 
 
 @pytest.mark.asyncio
@@ -314,4 +333,4 @@ async def test_close_after_use_does_not_raise(transport: McpCommunicationProtoco
     """close() used to raise AttributeError after cleaning up; it must complete."""
     await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "one"}, mcp_manual)
     await transport.close()
-    assert transport._mcp_client.sessions == {}
+    assert transport._mcp_clients == {}

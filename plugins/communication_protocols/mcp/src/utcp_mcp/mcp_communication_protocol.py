@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from typing import Any, Dict, Optional, AsyncGenerator, TYPE_CHECKING, Tuple, TextIO
@@ -91,7 +92,12 @@ class McpCommunicationProtocol(CommunicationProtocol):
     
     def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
-        self._mcp_client: Optional[MCPClient] = None
+        # One MCPClient per distinct server configuration. This protocol object is
+        # registered once per process and shared by every manual, so a single
+        # client would make manuals with different configurations evict each
+        # other's sessions, including sessions still in use by a concurrent call.
+        self._mcp_clients: Dict[str, MCPClient] = {}
+        self._clients_lock = asyncio.Lock()
     
     def _log_info(self, message: str):
         """Log informational messages."""
@@ -105,40 +111,45 @@ class McpCommunicationProtocol(CommunicationProtocol):
         """Log error messages."""
         logger.error(f"[McpCommunicationProtocol] {message}")
 
-    async def _ensure_mcp_client(self, manual_call_template: 'McpCallTemplate'):
-        """Ensure MCPClient is initialized with the current configuration."""
-        # ``MCPClient.config`` is the whole ``{"mcpServers": ...}`` dict, so it must
-        # be compared against its ``mcpServers`` entry. Comparing the whole dict to
-        # the servers mapping was always unequal, which rebuilt the client and
-        # spawned a fresh server process on every call without ever closing the
-        # previous ones.
-        current_servers = self._mcp_client.config.get("mcpServers") if self._mcp_client is not None else None
-        if self._mcp_client is None or current_servers != manual_call_template.config.mcpServers:
-            if self._mcp_client is not None:
-                # The configuration changed: release the previous client's sessions
-                # so their child processes do not outlive it.
-                try:
-                    await self._mcp_client.close_all_sessions()
-                except Exception as e:
-                    self._log_warning(f"Failed to close sessions of the previous MCP client: {e}")
-            # Create a new MCPClient with the server configuration
-            config = {"mcpServers": manual_call_template.config.mcpServers}
-            self._mcp_client = _QuietStdioMCPClient.from_dict(config)
+    @staticmethod
+    def _config_key(manual_call_template: 'McpCallTemplate') -> str:
+        """Canonical key for a manual's server configuration."""
+        return json.dumps(manual_call_template.config.mcpServers, sort_keys=True, default=str)
+
+    async def _ensure_mcp_client(self, manual_call_template: 'McpCallTemplate') -> MCPClient:
+        """Return the MCPClient for this manual's configuration, creating it once.
+
+        Clients are keyed by configuration and never evicted by another manual's
+        activity, so sessions are reused across calls and a call in flight on one
+        configuration is never torn down by a call on another. Creation is
+        serialised so two concurrent first calls cannot each spawn a client.
+        """
+        key = self._config_key(manual_call_template)
+        client = self._mcp_clients.get(key)
+        if client is not None:
+            return client
+        async with self._clients_lock:
+            client = self._mcp_clients.get(key)
+            if client is None:
+                config = {"mcpServers": manual_call_template.config.mcpServers}
+                client = _QuietStdioMCPClient.from_dict(config)
+                self._mcp_clients[key] = client
+            return client
 
     async def _get_or_create_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
         """Get an existing session or create a new one using MCPClient."""
-        await self._ensure_mcp_client(manual_call_template)
+        client = await self._ensure_mcp_client(manual_call_template)
         
         try:
             # Try to get existing session
-            session = self._mcp_client.get_session(server_name)
+            session = client.get_session(server_name)
             self._log_info(f"Reusing existing session for server: {server_name}")
             return session
         except ValueError:
             # Session doesn't exist, create a new one
             self._log_info(f"Creating new session for server: {server_name}")
             try:
-                session = await self._mcp_client.create_session(server_name, auto_initialize=True)
+                session = await client.create_session(server_name, auto_initialize=True)
             except Exception as e:
                 server_config = manual_call_template.config.mcpServers.get(server_name)
                 is_stdio = isinstance(server_config, dict) and "command" in server_config
@@ -150,16 +161,23 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 raise
             return session
 
-    async def _cleanup_session(self, server_name: str):
-        """Clean up a specific session."""
-        if self._mcp_client:
-            await self._mcp_client.close_session(server_name)
+    async def _cleanup_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
+        """Clean up a specific session of the client serving this manual."""
+        client = self._mcp_clients.get(self._config_key(manual_call_template))
+        if client is not None and server_name in client.sessions:
+            await client.close_session(server_name)
             self._log_info(f"Cleaned up session for server: {server_name}")
 
     async def _cleanup_all_sessions(self):
-        """Clean up all active sessions."""
-        if self._mcp_client:
-            await self._mcp_client.close_all_sessions()
+        """Close every session of every client. A client whose shutdown fails is
+        kept so a later close() can retry it instead of leaking its processes."""
+        for key, client in list(self._mcp_clients.items()):
+            try:
+                await client.close_all_sessions()
+                del self._mcp_clients[key]
+            except Exception as e:
+                self._log_warning(f"Failed to close sessions of an MCP client: {e}")
+        if not self._mcp_clients:
             self._log_info("Cleaned up all sessions")
 
     def _add_server_to_tool_name(self, tools, server_name: str):
@@ -192,7 +210,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
             
             if is_session_error:
                 # Only restart session for connection/transport level issues
-                await self._cleanup_session(server_name)
+                await self._cleanup_session(server_name, manual_call_template)
                 self._log_warning(f"Session-level error for list_tools, retrying with fresh session: {e}")
                 
                 # Retry with a fresh session
@@ -220,7 +238,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 return resources_response
         except Exception as e:
             # If there's an error, clean up the potentially bad session and try once more
-            await self._cleanup_session(server_name)
+            await self._cleanup_session(server_name, manual_call_template)
             self._log_warning(f"Session failed for list_resources, retrying: {e}")
             
             # Retry with a fresh session
@@ -240,7 +258,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
             return result
         except Exception as e:
             # If there's an error, clean up the potentially bad session and try once more
-            await self._cleanup_session(server_name)
+            await self._cleanup_session(server_name, manual_call_template)
             self._log_warning(f"Session failed for read_resource '{resource_uri}', retrying: {e}")
             
             # Retry with a fresh session
@@ -569,7 +587,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # Clean up sessions for all servers in this manual
         if manual_call_template.config and manual_call_template.config.mcpServers:
             for server_name, server_config in manual_call_template.config.mcpServers.items():
-                await self._cleanup_session(server_name)
+                await self._cleanup_session(server_name, manual_call_template)
                 self._log_info(f"Cleaned up session for server '{server_name}'")
 
     async def close(self) -> None:

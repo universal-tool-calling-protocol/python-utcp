@@ -27,7 +27,8 @@ _DETAIL_KEYS = ("error", "message", "detail")
 # Control characters (newlines, ANSI escape introducers, NUL) are collapsed so
 # server-controlled text folded into an exception message or a log line cannot
 # forge extra log records or terminal escape sequences.
-_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]+")
+# C0 and C1 control ranges: C1 (U+0080..U+009F) carries escape introducers too.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 
 
 def _clean(text: str) -> str:

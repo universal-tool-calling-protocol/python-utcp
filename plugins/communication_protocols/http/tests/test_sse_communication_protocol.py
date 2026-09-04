@@ -179,6 +179,14 @@ async def bad_retry_events_handler(request):
     return response
 
 
+async def cr_eof_events_handler(request):
+    """A complete event whose closing blank line ends in a lone CR at end of stream."""
+    response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
+    await response.prepare(request)
+    await response.write(b'data: {"seq": 1}\n\r')
+    return response
+
+
 async def json_not_sse_handler(request):
     """A 200 that is not an event stream at all."""
     return web.json_response({"error": "not a stream"})
@@ -237,6 +245,7 @@ def app():
     app.router.add_post("/flaky_events", flaky_events_handler)
     app.router.add_get("/json_not_sse", json_not_sse_handler)
     app.router.add_get("/bad_retry_events", bad_retry_events_handler)
+    app.router.add_get("/cr_eof_events", cr_eof_events_handler)
     app.router.add_get("/empty_id_events", empty_id_events_handler)
     app["empty_id"] = {"connections": 0, "last_event_ids": []}
     app.router.add_post("/token", token_handler)
@@ -682,8 +691,28 @@ async def test_post_stream_is_not_reconnected(sse_transport, aiohttp_client, app
 
 
 @pytest.mark.asyncio
-async def test_malformed_retry_is_ignored_and_unterminated_trailing_event_is_dropped(sse_transport, aiohttp_client, app):
+async def test_malformed_retry_does_not_abort_and_unterminated_trailing_event_is_dropped(sse_transport, aiohttp_client, app):
     client = await aiohttp_client(app)
     call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/bad_retry_events")))
     results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
     assert results == [{"seq": 1}]
+
+
+@pytest.mark.asyncio
+async def test_final_blank_line_ending_in_lone_cr_completes_last_event(sse_transport, aiohttp_client, app):
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/cr_eof_events")))
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
+    assert results == [{"seq": 1}]
+
+
+@pytest.mark.asyncio
+async def test_streaming_call_error_surfaces_server_body(sse_transport, aiohttp_client, app):
+    """A refused stream carries the server's body, like discovery does."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/error")))
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        async for _ in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template):
+            pass
+    assert excinfo.value.status == 500
+    assert "Internal Server Error" in excinfo.value.message

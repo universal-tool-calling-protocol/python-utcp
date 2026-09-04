@@ -297,7 +297,9 @@ class SseCommunicationProtocol(CommunicationProtocol):
                             f"handshakes; update the call template to point at "
                             f"the final URL directly."
                         )
-                    await raise_for_status_with_body(response)
+                    # The error-body read is bounded like the handshake, so a server that
+                    # answers 4xx/5xx and then stalls cannot hang the call either.
+                    await asyncio.wait_for(raise_for_status_with_body(response), timeout=self.HANDSHAKE_TIMEOUT_SECONDS)
                     # Anything but an event stream would be parsed into silence: a
                     # JSON error document, say, yields zero events and a "successful" call.
                     content_type = response.headers.get("Content-Type", "")
@@ -397,8 +399,12 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     current_event['id'] = value
                 elif field == 'retry':
                     # Spec: only a value made of ASCII digits sets the reconnection time.
+                    # int() refuses absurdly long digit strings; ignore those too.
                     if value.isascii() and value.isdigit():
-                        current_event['retry'] = int(value)
+                        try:
+                            current_event['retry'] = int(value)
+                        except ValueError:
+                            pass
             if data_lines:
                 current_event['data'] = '\n'.join(data_lines)
             return current_event or None
@@ -433,9 +439,19 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     f"SSE event exceeded {self.MAX_EVENT_BUFFER_CHARS} characters without a blank-line delimiter"
                 )
 
-        # Spec: if the stream ends in the middle of an event, before the final
-        # blank line, the incomplete event is not dispatched.
-        decoder.decode(b"", final=True)
+        # At end of stream, a held-back CR is a real line terminator and may
+        # complete the closing blank line of the last event. Dispatch whatever is
+        # fully delimited; per spec, an event still incomplete after that (no
+        # final blank line) is discarded.
+        buffer += normalise(decoder.decode(b"", final=True))
+        if pending_cr:
+            buffer += "\n"
+            pending_cr = False
+        while "\n\n" in buffer:
+            event_string, buffer = buffer.split("\n\n", 1)
+            event = flush(event_string)
+            if event is not None:
+                yield event
 
     @staticmethod
     def _parse_event_data(data: str) -> Any:
