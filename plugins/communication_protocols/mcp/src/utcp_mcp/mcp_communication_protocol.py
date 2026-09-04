@@ -3,7 +3,7 @@ import contextvars
 import functools
 import os
 import sys
-from typing import Any, Dict, Optional, AsyncGenerator, TYPE_CHECKING, Tuple, TextIO
+from typing import Any, Dict, List, Optional, AsyncGenerator, TYPE_CHECKING, Tuple, TextIO
 import json
 
 from mcp_use import MCPClient
@@ -126,6 +126,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # when a manual's configuration changes.
         self._manual_config_keys: Dict[str, str] = {}
         self._clients_lock = asyncio.Lock()
+        # Clients whose shutdown failed. Kept apart from the live map so a retry
+        # on close() is possible without ever overwriting a newer live client
+        # for the same configuration.
+        self._failed_clients: List[MCPClient] = []
     
     def _log_info(self, message: str):
         """Log informational messages."""
@@ -178,8 +182,8 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     try:
                         await stale.close_all_sessions()
                     except Exception as e:
-                        # Keep it so close() can retry rather than leaking its processes.
-                        self._mcp_clients[previous_key] = stale
+                        # Keep it aside so close() can retry rather than leaking its processes.
+                        self._failed_clients.append(stale)
                         self._log_warning(f"Failed to close sessions of a stale MCP client: {e}")
             return client
 
@@ -227,8 +231,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
             await client.close_all_sessions()
             self._log_info(f"Closed the MCP client of manual '{manual_call_template.name}'")
         except Exception as e:
-            # Keep it so close() can retry rather than leaking its processes.
-            self._mcp_clients[key] = client
+            # Keep it aside so close() can retry rather than leaking its processes;
+            # never back into the live map, where a newer client for the same
+            # configuration may already live.
+            self._failed_clients.append(client)
             self._log_warning(f"Failed to close sessions of the MCP client of manual '{manual_call_template.name}': {e}")
 
     async def _cleanup_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
@@ -247,7 +253,13 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 del self._mcp_clients[key]
             except Exception as e:
                 self._log_warning(f"Failed to close sessions of an MCP client: {e}")
-        if not self._mcp_clients:
+        for client in list(self._failed_clients):
+            try:
+                await client.close_all_sessions()
+                self._failed_clients.remove(client)
+            except Exception as e:
+                self._log_warning(f"Failed to close sessions of a previously failed MCP client: {e}")
+        if not self._mcp_clients and not self._failed_clients:
             self._log_info("Cleaned up all sessions")
 
     def _add_server_to_tool_name(self, tools, server_name: str):
