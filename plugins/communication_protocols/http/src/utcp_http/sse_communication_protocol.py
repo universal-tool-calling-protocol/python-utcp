@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional, Callable, AsyncIterator, AsyncGene
 import aiohttp
 import json
 import asyncio
+import codecs
 import re
 from urllib.parse import quote
 import base64
@@ -28,12 +29,33 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+class SseProtocolError(RuntimeError):
+    """The server violated the SSE wire format. Not a connection loss, so never retried."""
+
+
 class SseCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
     SSE communication protocol implementation for UTCP client.
     
     Handles Server-Sent Events based tool providers with streaming capabilities.
     """
+
+    # Upper bound on reconnection attempts for a single tool call when the
+    # established stream drops and the call template has ``reconnect`` enabled.
+    # Keeps a tool call bounded even if the server keeps dropping the connection.
+    MAX_RECONNECT_ATTEMPTS: int = 5
+    # Cap on the delay before a reconnect, whatever ``retry_timeout`` or a
+    # server-sent ``retry:`` field asks for. Together with MAX_RECONNECT_ATTEMPTS
+    # this bounds the total time a call can spend waiting to reconnect.
+    MAX_RECONNECT_DELAY_MS: int = 60_000
+    # Time allowed for the SSE handshake, i.e. until response headers arrive.
+    # Reading the body is unbounded: an SSE stream may legitimately stay quiet.
+    HANDSHAKE_TIMEOUT_SECONDS: float = 30.0
+    # Largest partial event the parser buffers before declaring the stream
+    # malformed. Guards against a server that streams data without ever sending
+    # the blank-line event delimiter.
+    MAX_EVENT_BUFFER_CHARS: int = 16 * 1024 * 1024
 
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
@@ -224,97 +246,187 @@ class SseCommunicationProtocol(CommunicationProtocol):
             token = await self._handle_oauth2(tool_call_template.auth)
             request_headers["Authorization"] = f"Bearer {token}"
         
-        session = aiohttp.ClientSession()
-        # Always close the session, success or failure. The previous
-        # version only closed on the except path, leaking the session
-        # on the (typical) success path.
-        try:
-            method = "POST" if body_content is not None else "GET"
-            data = body_content if "application/json" not in request_headers.get("Content-Type", "") else None
-            json_data = body_content if "application/json" in request_headers.get("Content-Type", "") else None
+        method = "POST" if body_content is not None else "GET"
+        content_type = request_headers.get("Content-Type", "")
+        data = body_content if "application/json" not in content_type else None
+        json_data = body_content if "application/json" in content_type else None
 
-            # SSE handshake must not follow redirects: the streaming
-            # response has to stay open for the lifetime of the tool
-            # call, which is incompatible with the per-hop validator's
-            # release semantics, and SSE redirects are pathological in
-            # practice. Reject 3xx outright so an attacker-controlled
-            # endpoint cannot redirect the handshake into an internal
-            # service (GHSA-9qhg-99ww-9mqc).
-            response = await session.request(
-                method, url, params=query_params, headers=request_headers,
-                auth=auth, cookies=cookies, json=json_data, data=data,
-                timeout=None, allow_redirects=False,
-            )
-            if 300 <= response.status < 400:
-                response.release()
-                raise RuntimeError(
-                    f"SSE endpoint at {url!r} returned a {response.status} "
-                    f"redirect. Redirects are not followed during SSE "
-                    f"handshakes; update the call template to point at "
-                    f"the final URL directly."
-                )
-            response.raise_for_status()
-            async for event in self._process_sse_stream(response, tool_call_template.event_type):
-                yield event
-        except Exception as e:
-            logger.error(f"Error establishing SSE connection to '{tool_call_template.name}': {e}")
-            raise
-        finally:
-            await session.close()
+        reconnect = bool(tool_call_template.reconnect)
+        retry_delay_ms = tool_call_template.retry_timeout
+        last_event_id: Optional[str] = None
+        reconnect_attempts = 0
+        provider_name = tool_call_template.name
 
-    async def _process_sse_stream(self, response: aiohttp.ClientResponse, event_type=None):
-        """Process the SSE stream and yield events."""
+        while True:
+            attempt_headers = dict(request_headers)
+            if last_event_id is not None:
+                # Let the server resume from where we left off (SSE spec).
+                attempt_headers["Last-Event-ID"] = last_event_id
+
+            session = aiohttp.ClientSession()
+            try:
+                try:
+                    # SSE handshake must not follow redirects: the streaming
+                    # response has to stay open for the lifetime of the tool
+                    # call, which is incompatible with the per-hop validator's
+                    # release semantics, and SSE redirects are pathological in
+                    # practice. Reject 3xx outright so an attacker-controlled
+                    # endpoint cannot redirect the handshake into an internal
+                    # service (GHSA-9qhg-99ww-9mqc).
+                    # Bound the handshake only (until response headers arrive);
+                    # the body read stays unbounded because a stream may be quiet.
+                    response = await asyncio.wait_for(
+                        session.request(
+                            method, url, params=query_params, headers=attempt_headers,
+                            auth=auth, cookies=cookies, json=json_data, data=data,
+                            timeout=None, allow_redirects=False,
+                        ),
+                        timeout=self.HANDSHAKE_TIMEOUT_SECONDS,
+                    )
+                    if 300 <= response.status < 400:
+                        response.release()
+                        raise RuntimeError(
+                            f"SSE endpoint at {url!r} returned a {response.status} "
+                            f"redirect. Redirects are not followed during SSE "
+                            f"handshakes; update the call template to point at "
+                            f"the final URL directly."
+                        )
+                    response.raise_for_status()
+                except Exception as e:
+                    if reconnect_attempts == 0:
+                        # The initial handshake failing (refused, timed out, non-2xx) is a
+                        # definitive answer about the endpoint: fail fast, no retry.
+                        logger.error(f"Error establishing SSE connection to '{provider_name}': {e}")
+                        raise
+                    # A reconnect handshake failing is part of the outage we are riding
+                    # out (the server may still be restarting): count it and try again.
+                    reconnect_attempts += 1
+                    if reconnect_attempts > self.MAX_RECONNECT_ATTEMPTS:
+                        logger.error(f"SSE reconnect to '{provider_name}' failed and attempts are exhausted: {e}")
+                        raise
+                    delay_ms = min(retry_delay_ms, self.MAX_RECONNECT_DELAY_MS)
+                    logger.warning(
+                        f"SSE reconnect to '{provider_name}' failed ({e}); retrying in {delay_ms} ms "
+                        f"(attempt {reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS})"
+                    )
+                    await asyncio.sleep(delay_ms / 1000)
+                    continue
+
+                try:
+                    async for event in self._iter_sse_events(response):
+                        if event.get("id") is not None:
+                            last_event_id = event["id"]
+                        if event.get("retry") is not None:
+                            retry_delay_ms = event["retry"]
+                        if "data" not in event:
+                            continue
+                        if tool_call_template.event_type and event.get("event") != tool_call_template.event_type:
+                            continue
+                        yield self._parse_event_data(event["data"])
+                    # The server ended the stream cleanly: the tool call is complete.
+                    return
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    reconnect_attempts += 1
+                    if not reconnect or reconnect_attempts > self.MAX_RECONNECT_ATTEMPTS:
+                        logger.error(f"SSE connection to '{provider_name}' lost and not reconnecting: {e}")
+                        raise
+                    logger.warning(
+                        f"SSE connection to '{provider_name}' lost ({e}); reconnecting in "
+                        f"{min(retry_delay_ms, self.MAX_RECONNECT_DELAY_MS)} ms "
+                        f"(attempt {reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS})"
+                    )
+            finally:
+                # Always release the connection, whether the stream completed, failed,
+                # or the consumer stopped iterating early.
+                if not session.closed:
+                    await session.close()
+
+            await asyncio.sleep(min(retry_delay_ms, self.MAX_RECONNECT_DELAY_MS) / 1000)
+
+    async def _iter_sse_events(self, response: aiohttp.ClientResponse) -> AsyncIterator[Dict[str, Any]]:
+        """Parse the SSE wire format and yield one dict per event block.
+
+        Each dict may contain ``event``, ``id``, ``retry`` (int) and ``data`` (str, with
+        multi-line data joined by newlines). Blocks that only carry ``id``/``retry``
+        are yielded too (without ``data``) so the caller can track reconnection
+        state; comment-only blocks are skipped.
+        """
         buffer = ""
-        try:
-            async for chunk in response.content.iter_any():
-                buffer += chunk.decode('utf-8')
-                while '\n\n' in buffer:
-                    event_string, buffer = buffer.split('\n\n', 1)
-                    
-                    # Ignore empty event strings
-                    if not event_string.strip():
-                        continue
 
-                    # Process the event string
-                    lines = event_string.split('\n')
-                    current_event = {}
-                    data_lines = []
-                    for line in lines:
-                        if line.startswith(':'):
-                            continue # It's a comment
-                        
-                        if ':' in line:
-                            field, value = line.split(':', 1)
-                            value = value.lstrip()
-                            if field == 'event':
-                                current_event['event'] = value
-                            elif field == 'data':
-                                data_lines.append(value)
-                            elif field == 'id':
-                                current_event['id'] = value
-                            elif field == 'retry':
-                                try:
-                                    current_event['retry'] = int(value)
-                                except ValueError:
-                                    pass
-                    
-                    if not data_lines:
-                        continue
-
-                    current_event['data'] = '\n'.join(data_lines)
-
-                    if event_type and current_event.get('event') != event_type:
-                        continue
-
+        def flush(event_string: str):
+            if not event_string.strip():
+                return None
+            current_event: Dict[str, Any] = {}
+            data_lines: List[str] = []
+            for line in event_string.split('\n'):
+                if line.startswith(':'):
+                    continue  # comment / keep-alive
+                if ':' in line:
+                    field, value = line.split(':', 1)
+                    if value.startswith(' '):
+                        value = value[1:]
+                else:
+                    field, value = line, ''
+                if field == 'event':
+                    current_event['event'] = value
+                elif field == 'data':
+                    data_lines.append(value)
+                elif field == 'id':
+                    current_event['id'] = value
+                elif field == 'retry':
                     try:
-                        yield json.loads(current_event['data'])
-                    except json.JSONDecodeError:
-                        yield current_event['data']
-        except Exception as e:
-            logger.error(f"Error processing SSE stream: {e}")
-            raise
-        finally:
-            pass # Session is managed and closed by deregister_tool_provider
+                        current_event['retry'] = int(value)
+                    except ValueError:
+                        pass
+            if data_lines:
+                current_event['data'] = '\n'.join(data_lines)
+            return current_event or None
+
+        # Incremental decoding: a multi-byte UTF-8 character may straddle two chunks.
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        # A "\r" that ended the previous chunk is held back until the next chunk
+        # shows whether a "\n" follows; otherwise a CRLF split across two reads
+        # would become two LFs and dispatch an event early.
+        pending_cr = False
+
+        def normalise(text: str) -> str:
+            nonlocal pending_cr
+            if pending_cr:
+                text = "\r" + text
+                pending_cr = False
+            if text.endswith("\r"):
+                text = text[:-1]
+                pending_cr = True
+            # Normalise CRLF / CR line endings so the event delimiter is always "\n\n".
+            return text.replace("\r\n", "\n").replace("\r", "\n")
+
+        async for chunk in response.content.iter_any():
+            buffer += normalise(decoder.decode(chunk))
+            while "\n\n" in buffer:
+                event_string, buffer = buffer.split("\n\n", 1)
+                event = flush(event_string)
+                if event is not None:
+                    yield event
+            if len(buffer) > self.MAX_EVENT_BUFFER_CHARS:
+                raise SseProtocolError(
+                    f"SSE event exceeded {self.MAX_EVENT_BUFFER_CHARS} characters without a blank-line delimiter"
+                )
+
+        # Flush a trailing event that was not terminated by a blank line.
+        buffer += normalise(decoder.decode(b"", final=True))
+        if pending_cr:
+            buffer += "\n"
+        event = flush(buffer)
+        if event is not None:
+            yield event
+
+    @staticmethod
+    def _parse_event_data(data: str) -> Any:
+        """Return the JSON-decoded payload when possible, otherwise the raw string."""
+        try:
+            return json.loads(data)
+        except json.JSONDecodeError:
+            return data
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
         """Handle OAuth2 client credentials flow, trying both body and
