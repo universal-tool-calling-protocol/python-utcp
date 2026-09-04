@@ -164,6 +164,17 @@ async def app():
 
     app.router.add_route('*', '/forbidden-object-then-message', forbidden_object_then_message_handler)
     app.router.add_route('*', '/forbidden-huge', forbidden_huge_handler)
+
+    # No Content-Type at all, so no charset to decode with.
+    async def forbidden_no_charset_handler(request):
+        return web.Response(status=403, body=b'{"error": "no charset here"}')
+
+    # A charset Python does not know.
+    async def forbidden_bad_charset_handler(request):
+        return web.Response(status=403, body=b'{"error": "odd charset"}', content_type="application/json", charset="x-unknown-charset")
+
+    app.router.add_route('*', '/forbidden-no-charset', forbidden_no_charset_handler)
+    app.router.add_route('*', '/forbidden-bad-charset', forbidden_bad_charset_handler)
     
     return app
 
@@ -807,8 +818,14 @@ async def test_structured_error_wins_over_generic_message(http_transport, aiohtt
     call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-object-then-message", http_method="POST")
     with pytest.raises(aiohttp.ClientResponseError) as excinfo:
         await http_transport.call_tool(None, "t.tool", {}, call_template)
-    assert "INVALID_FIELD" in str(excinfo.value)
-    assert "Request failed" not in excinfo.value.message.split(":", 1)[1].split("INVALID_FIELD")[0]
+    assert "INVALID_FIELD" in excinfo.value.message
+    # The detail is the whole structured body, not the generic "Request failed".
+    from utcp_http._errors import error_detail_from_body
+    import json as _json
+    assert _json.loads(error_detail_from_body(excinfo.value.body)) == {
+        "error": {"code": "INVALID_FIELD", "reason": "value out of range"},
+        "message": "Request failed",
+    }
 
 
 @pytest.mark.asyncio
@@ -838,3 +855,14 @@ def test_error_detail_from_body_precedence_and_fallbacks():
     assert error_detail_from_body('{"error": "  ", "detail": "specific"}') == "specific"
     # Non-object JSON falls back to the raw body.
     assert error_detail_from_body('["a", "b"]') == '["a", "b"]'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path,expected", [("/forbidden-no-charset", "no charset here"), ("/forbidden-bad-charset", "odd charset")])
+async def test_error_body_is_surfaced_without_a_usable_charset(http_transport, aiohttp_client, app, path, expected):
+    """A missing or unknown charset must not lose the body; decode as UTF-8."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}{path}", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert expected in excinfo.value.message

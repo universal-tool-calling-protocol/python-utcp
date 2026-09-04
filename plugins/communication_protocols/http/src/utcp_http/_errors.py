@@ -65,7 +65,15 @@ async def _read_body_bounded(response: aiohttp.ClientResponse, limit: int) -> st
         if total >= limit:
             break
     raw = b"".join(chunks)[:limit]
-    return raw.decode(response.charset or "utf-8", errors="replace")
+    # ``charset`` only parses the Content-Type header, but stay defensive: the
+    # body was read directly, so aiohttp's own buffered-body machinery must not
+    # be relied on, and an unknown charset name must not lose the detail.
+    try:
+        encoding = response.charset or "utf-8"
+        raw.decode(encoding, errors="replace")
+    except (LookupError, RuntimeError, ValueError):
+        encoding = "utf-8"
+    return raw.decode(encoding, errors="replace")
 
 
 async def raise_for_status_with_body(response: aiohttp.ClientResponse) -> None:
