@@ -440,7 +440,8 @@ class McpCommunicationProtocol(CommunicationProtocol):
     async def call_tool_streaming(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """REQUIRED
         Streaming calls are not supported for MCP protocol, so we just call the tool and return the result as one item."""
-        yield self.call_tool(caller, tool_name, tool_args, tool_call_template)
+        result = await self.call_tool(caller, tool_name, tool_args, tool_call_template)
+        yield result
 
     def _process_tool_result(self, result, tool_name: str) -> Any:
         self._log_info(f"Processing tool result for '{tool_name}', type: {type(result)}")

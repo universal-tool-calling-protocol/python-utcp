@@ -246,6 +246,13 @@ async def test_resource_tool_without_registration(transport: McpCommunicationPro
     assert "contents" in result
 
 
+@pytest.mark.asyncio
+async def test_call_tool_streaming_yields_single_chunk(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate):
+    """Streaming mode should emit the awaited result as one chunk, not a coroutine."""
+    chunks = [chunk async for chunk in transport.call_tool_streaming(None, f"{SERVER_NAME}.echo", {"message": "test"}, mcp_manual)]
+    assert chunks == [{"reply": "you said: test"}]
+
+
 # --- Child stderr routing and structuredContent unwrapping ---
 
 @pytest.mark.asyncio

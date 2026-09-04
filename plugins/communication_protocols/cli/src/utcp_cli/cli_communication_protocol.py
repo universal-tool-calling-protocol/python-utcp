@@ -972,9 +972,19 @@ class CliCommunicationProtocol(CommunicationProtocol):
 
     async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
         """REQUIRED
-        Streaming calls are not supported for the CLI protocol.
+        Execute a tool call through the CLI transport streamingly.
 
-        Raises:
-            NotImplementedError: Always, as this functionality is not supported.
+        The CLI protocol does not natively support streaming, so the command is
+        executed to completion and the full result is yielded as a single chunk.
+
+        Args:
+            caller: The UTCP client that is calling this method.
+            tool_name: Name of the tool to call.
+            tool_args: Dictionary of arguments to pass to the tool.
+            tool_call_template: Call template of the tool to call.
+
+        Yields:
+            The complete tool result as a single item.
         """
-        raise NotImplementedError("Streaming is not supported by the CLI communication protocol.")
+        result = await self.call_tool(caller, tool_name, tool_args, tool_call_template)
+        yield result
