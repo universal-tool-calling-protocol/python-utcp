@@ -296,3 +296,14 @@ async def test_process_tool_result_unwraps_only_single_key_result_wrapper(transp
     # No structuredContent: fall back to text content.
     text_only = SimpleNamespace(structuredContent=None, content=[SimpleNamespace(text="7")])
     assert transport._process_tool_result(text_only, "t") == 7
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_and_session_are_reused_across_calls(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate):
+    """Repeated calls with the same configuration reuse one client and one session
+    instead of spawning a new server process per call."""
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "one"}, mcp_manual)
+    client_after_first = transport._mcp_client
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "two"}, mcp_manual)
+    assert transport._mcp_client is client_after_first
+    assert list(transport._mcp_client.sessions.keys()) == [SERVER_NAME]

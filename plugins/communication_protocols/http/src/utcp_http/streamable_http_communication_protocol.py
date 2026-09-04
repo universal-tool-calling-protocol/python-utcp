@@ -293,7 +293,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     f"followed during streaming handshakes; update the "
                     f"call template to point at the final URL directly."
                 )
-            response.raise_for_status()
+            await raise_for_status_with_body(response)
 
             async for chunk in self._process_http_stream(response, tool_call_template.chunk_size, tool_call_template.name):
                 yield chunk

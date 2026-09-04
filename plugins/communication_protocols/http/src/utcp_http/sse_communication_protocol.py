@@ -292,7 +292,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                             f"handshakes; update the call template to point at "
                             f"the final URL directly."
                         )
-                    response.raise_for_status()
+                    await raise_for_status_with_body(response)
                 except Exception as e:
                     if reconnect_attempts == 0:
                         # The initial handshake failing (refused, timed out, non-2xx) is a

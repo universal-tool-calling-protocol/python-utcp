@@ -100,7 +100,20 @@ class McpCommunicationProtocol(CommunicationProtocol):
 
     async def _ensure_mcp_client(self, manual_call_template: 'McpCallTemplate'):
         """Ensure MCPClient is initialized with the current configuration."""
-        if self._mcp_client is None or self._mcp_client.config != manual_call_template.config.mcpServers:
+        # ``MCPClient.config`` is the whole ``{"mcpServers": ...}`` dict, so it must
+        # be compared against its ``mcpServers`` entry. Comparing the whole dict to
+        # the servers mapping was always unequal, which rebuilt the client and
+        # spawned a fresh server process on every call without ever closing the
+        # previous ones.
+        current_servers = self._mcp_client.config.get("mcpServers") if self._mcp_client is not None else None
+        if self._mcp_client is None or current_servers != manual_call_template.config.mcpServers:
+            if self._mcp_client is not None:
+                # The configuration changed: release the previous client's sessions
+                # so their child processes do not outlive it.
+                try:
+                    await self._mcp_client.close_all_sessions()
+                except Exception as e:
+                    self._log_warning(f"Failed to close sessions of the previous MCP client: {e}")
             # Create a new MCPClient with the server configuration
             config = {"mcpServers": manual_call_template.config.mcpServers}
             self._mcp_client = _QuietStdioMCPClient.from_dict(config)
