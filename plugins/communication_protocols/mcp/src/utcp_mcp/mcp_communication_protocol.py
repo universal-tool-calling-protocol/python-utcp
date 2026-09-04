@@ -1,5 +1,6 @@
+import os
 import sys
-from typing import Any, Dict, Optional, AsyncGenerator, TYPE_CHECKING, Tuple
+from typing import Any, Dict, Optional, AsyncGenerator, TYPE_CHECKING, Tuple, TextIO
 import json
 
 from mcp_use import MCPClient
@@ -22,6 +23,56 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Environment variable that opts stdio MCP children back into writing to the
+# host's stderr. Same name and semantics as the TypeScript SDK.
+CHILD_STDERR_ENV_VAR = "UTCP_MCP_CHILD_STDERR"
+
+_devnull: Optional[TextIO] = None
+
+
+def _child_stderr_target() -> TextIO:
+    """Return the stream stdio MCP children should write their stderr to.
+
+    Defaults to ``os.devnull`` so a chatty server (banners, telemetry notices,
+    auth chatter, multiplied by every federated server) does not flood the host
+    terminal during discovery. Set ``UTCP_MCP_CHILD_STDERR=inherit`` to see it
+    while debugging. A file object rather than ``subprocess.DEVNULL`` because
+    the connector's contract is a text stream.
+    """
+    if os.environ.get(CHILD_STDERR_ENV_VAR) == "inherit":
+        return sys.stderr
+    global _devnull
+    if _devnull is None or _devnull.closed:
+        _devnull = open(os.devnull, "w")
+    return _devnull
+
+
+class _QuietStdioMCPClient(MCPClient):
+    """``MCPClient`` that routes stdio children's stderr per ``UTCP_MCP_CHILD_STDERR``.
+
+    ``MCPClient.from_dict`` offers no way to set the ``errlog`` that
+    ``StdioConnector`` hands to the MCP SDK's ``stdio_client``, so every child
+    would inherit the host's stderr. The connector only reads ``errlog`` when it
+    connects, so it is enough to set it between construction and initialization.
+    """
+
+    async def create_session(self, server_name: str, auto_initialize: bool = True):
+        session = await super().create_session(server_name, auto_initialize=False)
+        if session is None:
+            return None
+        if hasattr(session.connector, "errlog"):
+            session.connector.errlog = _child_stderr_target()
+        if auto_initialize:
+            try:
+                await session.initialize()
+            except Exception:
+                # Mirror the base class: a session that failed to initialize must
+                # not stay cached, or the next lookup would hand back a dead one.
+                self.sessions.pop(server_name, None)
+                raise
+        return session
+
 
 class McpCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
@@ -52,7 +103,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         if self._mcp_client is None or self._mcp_client.config != manual_call_template.config.mcpServers:
             # Create a new MCPClient with the server configuration
             config = {"mcpServers": manual_call_template.config.mcpServers}
-            self._mcp_client = MCPClient.from_dict(config)
+            self._mcp_client = _QuietStdioMCPClient.from_dict(config)
 
     async def _get_or_create_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
         """Get an existing session or create a new one using MCPClient."""
@@ -66,7 +117,17 @@ class McpCommunicationProtocol(CommunicationProtocol):
         except ValueError:
             # Session doesn't exist, create a new one
             self._log_info(f"Creating new session for server: {server_name}")
-            session = await self._mcp_client.create_session(server_name, auto_initialize=True)
+            try:
+                session = await self._mcp_client.create_session(server_name, auto_initialize=True)
+            except Exception as e:
+                server_config = manual_call_template.config.mcpServers.get(server_name)
+                is_stdio = isinstance(server_config, dict) and "command" in server_config
+                if is_stdio and os.environ.get(CHILD_STDERR_ENV_VAR) != "inherit":
+                    self._log_error(
+                        f"Failed to start stdio MCP server '{server_name}': {e}. The child's stderr was "
+                        f"suppressed; re-run with {CHILD_STDERR_ENV_VAR}=inherit to see what it printed while starting."
+                    )
+                raise
             return session
 
     async def _cleanup_session(self, server_name: str):
@@ -384,13 +445,16 @@ class McpCommunicationProtocol(CommunicationProtocol):
     def _process_tool_result(self, result, tool_name: str) -> Any:
         self._log_info(f"Processing tool result for '{tool_name}', type: {type(result)}")
         
-        # Check for structured output first - this is the expected behavior
-        if hasattr(result, 'structuredContent'):
-            self._log_info(f"Found structuredContent: {result.structuredContent}")
-            # If structuredContent has a 'result' key, unwrap it
-            if isinstance(result.structuredContent, dict) and 'result' in result.structuredContent:
-                return result.structuredContent['result']
-            return result.structuredContent
+        # Prefer structuredContent (MCP spec field) whenever the server sent it.
+        structured = getattr(result, 'structuredContent', None)
+        if structured is not None:
+            self._log_info(f"Found structuredContent: {structured}")
+            # FastMCP wraps non-object returns as {"result": value}; unwrap exactly
+            # that single-key shape. An object that merely has a "result" key among
+            # others is a genuine object return and passes through untouched.
+            if isinstance(structured, dict) and set(structured.keys()) == {"result"}:
+                return structured["result"]
+            return structured
         
         # Process content if available (fallback)
         if hasattr(result, 'content'):
