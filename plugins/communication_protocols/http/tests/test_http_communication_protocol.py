@@ -150,6 +150,20 @@ async def app():
 
     app.router.add_route('*', '/forbidden', forbidden_handler)
     app.router.add_route('*', '/forbidden-object', forbidden_object_handler)
+
+    # A structured `error` next to a generic `message`: the structure must win.
+    async def forbidden_object_then_message_handler(request):
+        return web.json_response(
+            {"error": {"code": "INVALID_FIELD", "reason": "value out of range"}, "message": "Request failed"},
+            status=422,
+        )
+
+    # A huge error body (think an HTML stack trace): the read itself is bounded.
+    async def forbidden_huge_handler(request):
+        return web.Response(status=403, text="x" * (1024 * 1024))
+
+    app.router.add_route('*', '/forbidden-object-then-message', forbidden_object_then_message_handler)
+    app.router.add_route('*', '/forbidden-huge', forbidden_huge_handler)
     
     return app
 
@@ -784,3 +798,43 @@ async def test_register_manual_surfaces_server_error_body(http_transport, aiohtt
     assert result.success is False
     assert "You are not allowed to do that, and here is exactly why." in result.errors[0]
     assert "403" in result.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_structured_error_wins_over_generic_message(http_transport, aiohttp_client, app):
+    """An object under `error` is shown even when a lower-priority string field exists."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-object-then-message", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert "INVALID_FIELD" in str(excinfo.value)
+    assert "Request failed" not in excinfo.value.message.split(":", 1)[1].split("INVALID_FIELD")[0]
+
+
+@pytest.mark.asyncio
+async def test_huge_error_body_is_read_bounded(http_transport, aiohttp_client, app):
+    """A 1 MiB error body is neither buffered in full nor folded into the message in full."""
+    from utcp_http._errors import MAX_BODY_READ_BYTES, MAX_DETAIL_CHARS
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-huge", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert excinfo.value.status == 403
+    assert len(excinfo.value.body) <= MAX_BODY_READ_BYTES
+    assert len(excinfo.value.message) <= MAX_DETAIL_CHARS + 50
+
+
+def test_error_detail_from_body_precedence_and_fallbacks():
+    from utcp_http._errors import error_detail_from_body
+    assert error_detail_from_body("") is None
+    assert error_detail_from_body("   ") is None
+    assert error_detail_from_body("plain text") == "plain text"
+    assert error_detail_from_body('{"error": "nope"}') == "nope"
+    assert error_detail_from_body('{"message": "nope"}') == "nope"
+    # Structured error beats a later generic string.
+    assert error_detail_from_body('{"error": {"code": "X"}, "message": "generic"}') == '{"error": {"code": "X"}, "message": "generic"}'
+    # An explicit null or blank string is skipped, not treated as structured.
+    assert error_detail_from_body('{"error": null, "message": "generic"}') == "generic"
+    assert error_detail_from_body('{"error": "  ", "detail": "specific"}') == "specific"
+    # Non-object JSON falls back to the raw body.
+    assert error_detail_from_body('["a", "b"]') == '["a", "b"]'
