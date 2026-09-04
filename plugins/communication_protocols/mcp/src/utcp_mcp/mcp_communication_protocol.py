@@ -1,9 +1,12 @@
 import asyncio
 import contextvars
+import copy
 import functools
 import os
 import sys
+from ipaddress import IPv6Address, ip_address
 from typing import Any, Dict, List, Optional, AsyncGenerator, TYPE_CHECKING, Tuple, TextIO
+from urllib.parse import urlparse
 import json
 
 from mcp_use import MCPClient
@@ -47,6 +50,71 @@ def _with_owner(method):
             _CURRENT_OWNER.reset(token)
 
     return wrapper
+
+
+# Hostnames considered safe to reach over plain HTTP/WS.
+_LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _is_secure_mcp_url(url: str) -> bool:
+    """Return True if ``url`` is safe for the MCP plugin to connect to.
+
+    HTTPS/WSS anywhere, or plain HTTP/WS only to a literal loopback address.
+    Kept local rather than importing ``utcp_http._security`` because the MCP
+    plugin does not depend on the HTTP plugin; the rule mirrors it (and the
+    TypeScript ``ensureSecureMcpUrl``), including the wider loopback set
+    (``0.0.0.0``, ``::``, IPv4-mapped IPv6 loopback) that a bare
+    ``is_loopback`` check misses.
+    """
+    if not isinstance(url, str) or not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in {"http", "https", "ws", "wss"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    if scheme in {"https", "wss"}:
+        return True
+    if host in _LOOPBACK_HOSTNAMES:
+        return True
+    if host in {"0.0.0.0", "::"}:
+        return True
+    try:
+        addr = ip_address(host)
+    except ValueError:
+        return False
+    if addr.is_loopback:
+        return True
+    if isinstance(addr, IPv6Address):
+        mapped = addr.ipv4_mapped
+        if mapped is not None and mapped.is_loopback:
+            return True
+    return False
+
+
+def _ensure_secure_mcp_url(url: str, *, context: Optional[str] = None) -> None:
+    """Raise ``ValueError`` if ``url`` is not safe for the MCP plugin to reach."""
+    if _is_secure_mcp_url(url):
+        return
+    where = f" during {context}" if context else ""
+    raise ValueError(
+        f"Security error{where}: URL must use HTTPS/WSS or be a literal loopback "
+        f"address (localhost / 127.0.0.1 / ::1). Got: {url!r}. Plain HTTP to any "
+        "other host is rejected to prevent MITM attacks and SSRF into internal services."
+    )
+
+
+def _has_authorization_header(server_config: Dict[str, Any]) -> bool:
+    """Return True if a server config already carries an Authorization header."""
+    headers = server_config.get("headers")
+    if not isinstance(headers, dict):
+        return False
+    return any(isinstance(k, str) and k.lower() == "authorization" for k in headers)
 
 
 # Environment variable that opts stdio MCP children back into writing to the
@@ -145,8 +213,19 @@ class McpCommunicationProtocol(CommunicationProtocol):
 
     @staticmethod
     def _config_key(manual_call_template: 'McpCallTemplate') -> str:
-        """Canonical key for a manual's server configuration."""
-        return json.dumps(manual_call_template.config.mcpServers, sort_keys=True, default=str)
+        """Canonical key for a manual's connection.
+
+        Includes the manual-level auth alongside the server configuration, so two
+        manuals that share servers but not credentials get distinct clients and
+        never reuse one another's injected token.
+        """
+        auth = manual_call_template.auth
+        auth_repr = auth.model_dump() if auth is not None else None
+        return json.dumps(
+            {"servers": manual_call_template.config.mcpServers, "auth": auth_repr},
+            sort_keys=True,
+            default=str,
+        )
 
     @staticmethod
     def _owner_key(manual_call_template: 'McpCallTemplate', config_key: str) -> str:
@@ -169,7 +248,8 @@ class McpCommunicationProtocol(CommunicationProtocol):
         async with self._clients_lock:
             client = self._mcp_clients.get(key)
             if client is None:
-                config = {"mcpServers": manual_call_template.config.mcpServers}
+                servers = await self._build_connection_servers(manual_call_template)
+                config = {"mcpServers": servers}
                 client = _QuietStdioMCPClient.from_dict(config)
                 self._mcp_clients[key] = client
             previous_key = self._manual_config_keys.get(manual_name)
@@ -186,6 +266,37 @@ class McpCommunicationProtocol(CommunicationProtocol):
                         self._failed_clients.append(stale)
                         self._log_warning(f"Failed to close sessions of a stale MCP client: {e}")
             return client
+
+    async def _build_connection_servers(self, manual_call_template: 'McpCallTemplate') -> Dict[str, Any]:
+        """Build the ``mcpServers`` mapping handed to the MCP client.
+
+        Applies the security checks the HTTP-family plugins enforce and wires up
+        manual-level OAuth2 (which was previously accepted on the call template
+        but never used). Returns a deep copy so neither the caller's template nor
+        the value the client is keyed by is mutated — in particular the fetched
+        bearer token must never leak into the client key.
+        """
+        servers = copy.deepcopy(manual_call_template.config.mcpServers)
+        token: Optional[str] = None
+        if isinstance(manual_call_template.auth, OAuth2Auth):
+            # Fetches (and validates the token endpoint of) the manual's OAuth2
+            # credentials before any server connection is dialed.
+            token = await self._handle_oauth2(manual_call_template.auth)
+        for server_name, server_config in servers.items():
+            if not isinstance(server_config, dict):
+                continue
+            # Validate any network URL before the client can connect to it.
+            for url_field in ("url", "ws_url"):
+                url = server_config.get(url_field)
+                if isinstance(url, str):
+                    _ensure_secure_mcp_url(url, context=f"MCP server '{server_name}' URL")
+            # Inject the manual-level bearer token for HTTP servers that do not
+            # already carry their own credentials. mcp-use turns ``auth_token``
+            # into an ``Authorization: Bearer`` header on the connection.
+            if token is not None and "url" in server_config:
+                if not server_config.get("auth_token") and not _has_authorization_header(server_config):
+                    server_config["auth_token"] = token
+        return servers
 
     async def _get_or_create_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
         """Get an existing session or create a new one using MCPClient."""
@@ -682,6 +793,9 @@ class McpCommunicationProtocol(CommunicationProtocol):
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
         """Handles OAuth2 client credentials flow, trying both body and auth header methods."""
+        # Validate the token endpoint before sending credentials to it, so a
+        # manual cannot direct the operator's client secret at an arbitrary host.
+        _ensure_secure_mcp_url(auth_details.token_url, context="MCP OAuth2 token URL")
         client_id = auth_details.client_id
         
         # Return cached token if available
