@@ -150,8 +150,9 @@ async def flaky_503_events_handler(request):
 
 
 async def slow_handshake_handler(request):
-    """Accepts the connection but does not send response headers for a long time."""
-    await asyncio.sleep(5)
+    """Accepts the connection but does not send response headers until well past
+    the (patched) handshake timeout."""
+    await asyncio.sleep(1)
     return web.Response(status=204)
 
 
@@ -168,6 +169,15 @@ async def huge_retry_events_handler(request):
         return response
     await response.write(b'id: 2\ndata: {"seq": 2}\n\n')
     return response
+
+async def bad_retry_events_handler(request):
+    """A retry field that is not made of digits must be ignored; the stream then
+    ends in the middle of an event, which must not be dispatched."""
+    response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
+    await response.prepare(request)
+    await response.write(b'retry: -1\ndata: {"seq": 1}\n\nretry: 20ms\n\ndata: {"seq": 2}')
+    return response
+
 
 async def json_not_sse_handler(request):
     """A 200 that is not an event stream at all."""
@@ -226,6 +236,7 @@ def app():
     app.router.add_route('*', '/events', events_handler)
     app.router.add_post("/flaky_events", flaky_events_handler)
     app.router.add_get("/json_not_sse", json_not_sse_handler)
+    app.router.add_get("/bad_retry_events", bad_retry_events_handler)
     app.router.add_get("/empty_id_events", empty_id_events_handler)
     app["empty_id"] = {"connections": 0, "last_event_ids": []}
     app.router.add_post("/token", token_handler)
@@ -668,3 +679,11 @@ async def test_post_stream_is_not_reconnected(sse_transport, aiohttp_client, app
             received.append(e)
     assert received == [{"message": "First part"}]
     assert app["flaky"]["connections"] == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_retry_is_ignored_and_unterminated_trailing_event_is_dropped(sse_transport, aiohttp_client, app):
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/bad_retry_events")))
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
+    assert results == [{"seq": 1}]

@@ -310,7 +310,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
     async def _process_http_stream(self, response: ClientResponse, chunk_size: Optional[int], provider_name: str) -> AsyncIterator[Any]:
         """Process the HTTP stream and yield chunks based on content type."""
         try:
-            content_type = response.headers.get('Content-Type', '')
+            content_type = response.headers.get('Content-Type', '').lower()
 
             if 'application/x-ndjson' in content_type:
                 async for line in response.content:

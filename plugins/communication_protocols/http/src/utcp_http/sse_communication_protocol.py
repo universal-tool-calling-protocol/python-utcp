@@ -393,10 +393,9 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 elif field == 'id':
                     current_event['id'] = value
                 elif field == 'retry':
-                    try:
+                    # Spec: only a value made of ASCII digits sets the reconnection time.
+                    if value.isascii() and value.isdigit():
                         current_event['retry'] = int(value)
-                    except ValueError:
-                        pass
             if data_lines:
                 current_event['data'] = '\n'.join(data_lines)
             return current_event or None
@@ -431,13 +430,9 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     f"SSE event exceeded {self.MAX_EVENT_BUFFER_CHARS} characters without a blank-line delimiter"
                 )
 
-        # Flush a trailing event that was not terminated by a blank line.
-        buffer += normalise(decoder.decode(b"", final=True))
-        if pending_cr:
-            buffer += "\n"
-        event = flush(buffer)
-        if event is not None:
-            yield event
+        # Spec: if the stream ends in the middle of an event, before the final
+        # blank line, the incomplete event is not dispatched.
+        decoder.decode(b"", final=True)
 
     @staticmethod
     def _parse_event_data(data: str) -> Any:
