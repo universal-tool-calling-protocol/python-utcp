@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional, Callable, AsyncIterator, AsyncGene
 import aiohttp
 import json
 import asyncio
+import codecs
 import re
 from urllib.parse import quote
 import base64
@@ -28,6 +29,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+class SseProtocolError(RuntimeError):
+    """The server violated the SSE wire format. Not a connection loss, so never retried."""
+
+
 class SseCommunicationProtocol(CommunicationProtocol):
     """REQUIRED
     SSE communication protocol implementation for UTCP client.
@@ -39,6 +45,17 @@ class SseCommunicationProtocol(CommunicationProtocol):
     # established stream drops and the call template has ``reconnect`` enabled.
     # Keeps a tool call bounded even if the server keeps dropping the connection.
     MAX_RECONNECT_ATTEMPTS: int = 5
+    # Cap on the delay before a reconnect, whatever ``retry_timeout`` or a
+    # server-sent ``retry:`` field asks for. Together with MAX_RECONNECT_ATTEMPTS
+    # this bounds the total time a call can spend waiting to reconnect.
+    MAX_RECONNECT_DELAY_MS: int = 60_000
+    # Time allowed for the SSE handshake, i.e. until response headers arrive.
+    # Reading the body is unbounded: an SSE stream may legitimately stay quiet.
+    HANDSHAKE_TIMEOUT_SECONDS: float = 30.0
+    # Largest partial event the parser buffers before declaring the stream
+    # malformed. Guards against a server that streams data without ever sending
+    # the blank-line event delimiter.
+    MAX_EVENT_BUFFER_CHARS: int = 16 * 1024 * 1024
 
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
@@ -256,10 +273,15 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     # practice. Reject 3xx outright so an attacker-controlled
                     # endpoint cannot redirect the handshake into an internal
                     # service (GHSA-9qhg-99ww-9mqc).
-                    response = await session.request(
-                        method, url, params=query_params, headers=attempt_headers,
-                        auth=auth, cookies=cookies, json=json_data, data=data,
-                        timeout=None, allow_redirects=False,
+                    # Bound the handshake only (until response headers arrive);
+                    # the body read stays unbounded because a stream may be quiet.
+                    response = await asyncio.wait_for(
+                        session.request(
+                            method, url, params=query_params, headers=attempt_headers,
+                            auth=auth, cookies=cookies, json=json_data, data=data,
+                            timeout=None, allow_redirects=False,
+                        ),
+                        timeout=self.HANDSHAKE_TIMEOUT_SECONDS,
                     )
                     if 300 <= response.status < 400:
                         response.release()
@@ -271,10 +293,24 @@ class SseCommunicationProtocol(CommunicationProtocol):
                         )
                     response.raise_for_status()
                 except Exception as e:
-                    # Failing to establish the connection (or a non-2xx status) is a
-                    # definitive answer, not a connection loss: fail fast, no retry.
-                    logger.error(f"Error establishing SSE connection to '{provider_name}': {e}")
-                    raise
+                    if reconnect_attempts == 0:
+                        # The initial handshake failing (refused, timed out, non-2xx) is a
+                        # definitive answer about the endpoint: fail fast, no retry.
+                        logger.error(f"Error establishing SSE connection to '{provider_name}': {e}")
+                        raise
+                    # A reconnect handshake failing is part of the outage we are riding
+                    # out (the server may still be restarting): count it and try again.
+                    reconnect_attempts += 1
+                    if reconnect_attempts > self.MAX_RECONNECT_ATTEMPTS:
+                        logger.error(f"SSE reconnect to '{provider_name}' failed and attempts are exhausted: {e}")
+                        raise
+                    delay_ms = min(retry_delay_ms, self.MAX_RECONNECT_DELAY_MS)
+                    logger.warning(
+                        f"SSE reconnect to '{provider_name}' failed ({e}); retrying in {delay_ms} ms "
+                        f"(attempt {reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS})"
+                    )
+                    await asyncio.sleep(delay_ms / 1000)
+                    continue
 
                 try:
                     async for event in self._iter_sse_events(response):
@@ -295,7 +331,8 @@ class SseCommunicationProtocol(CommunicationProtocol):
                         logger.error(f"SSE connection to '{provider_name}' lost and not reconnecting: {e}")
                         raise
                     logger.warning(
-                        f"SSE connection to '{provider_name}' lost ({e}); reconnecting in {retry_delay_ms} ms "
+                        f"SSE connection to '{provider_name}' lost ({e}); reconnecting in "
+                        f"{min(retry_delay_ms, self.MAX_RECONNECT_DELAY_MS)} ms "
                         f"(attempt {reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS})"
                     )
             finally:
@@ -304,7 +341,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 if not session.closed:
                     await session.close()
 
-            await asyncio.sleep(retry_delay_ms / 1000)
+            await asyncio.sleep(min(retry_delay_ms, self.MAX_RECONNECT_DELAY_MS) / 1000)
 
     async def _iter_sse_events(self, response: aiohttp.ClientResponse) -> AsyncIterator[Dict[str, Any]]:
         """Parse the SSE wire format and yield one dict per event block.
@@ -345,16 +382,40 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 current_event['data'] = '\n'.join(data_lines)
             return current_event or None
 
-        async for chunk in response.content.iter_any():
+        # Incremental decoding: a multi-byte UTF-8 character may straddle two chunks.
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        # A "\r" that ended the previous chunk is held back until the next chunk
+        # shows whether a "\n" follows; otherwise a CRLF split across two reads
+        # would become two LFs and dispatch an event early.
+        pending_cr = False
+
+        def normalise(text: str) -> str:
+            nonlocal pending_cr
+            if pending_cr:
+                text = "\r" + text
+                pending_cr = False
+            if text.endswith("\r"):
+                text = text[:-1]
+                pending_cr = True
             # Normalise CRLF / CR line endings so the event delimiter is always "\n\n".
-            buffer += chunk.decode('utf-8').replace('\r\n', '\n').replace('\r', '\n')
-            while '\n\n' in buffer:
-                event_string, buffer = buffer.split('\n\n', 1)
+            return text.replace("\r\n", "\n").replace("\r", "\n")
+
+        async for chunk in response.content.iter_any():
+            buffer += normalise(decoder.decode(chunk))
+            while "\n\n" in buffer:
+                event_string, buffer = buffer.split("\n\n", 1)
                 event = flush(event_string)
                 if event is not None:
                     yield event
+            if len(buffer) > self.MAX_EVENT_BUFFER_CHARS:
+                raise SseProtocolError(
+                    f"SSE event exceeded {self.MAX_EVENT_BUFFER_CHARS} characters without a blank-line delimiter"
+                )
 
         # Flush a trailing event that was not terminated by a blank line.
+        buffer += normalise(decoder.decode(b"", final=True))
+        if pending_cr:
+            buffer += "\n"
         event = flush(buffer)
         if event is not None:
             yield event
