@@ -334,3 +334,18 @@ async def test_close_after_use_does_not_raise(transport: McpCommunicationProtoco
     await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "one"}, mcp_manual)
     await transport.close()
     assert transport._mcp_clients == {}
+
+
+@pytest.mark.asyncio
+async def test_changed_configuration_releases_the_stale_client(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate):
+    """When a manual's configuration changes and nothing else uses the old one,
+    the old client's sessions are closed instead of lingering until close()."""
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "a"}, mcp_manual)
+    changed = McpCallTemplate(
+        name=mcp_manual.name,
+        call_template_type="mcp",
+        config=McpConfig(mcpServers={SERVER_NAME: {**mcp_manual.config.mcpServers[SERVER_NAME], "env": {"CHANGED": "1"}}}),
+    )
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "b"}, changed)
+    assert len(transport._mcp_clients) == 1
+    assert next(iter(transport._mcp_clients.values())).config["mcpServers"][SERVER_NAME]["env"] == {"CHANGED": "1"}

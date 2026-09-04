@@ -399,12 +399,10 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     current_event['id'] = value
                 elif field == 'retry':
                     # Spec: only a value made of ASCII digits sets the reconnection time.
-                    # int() refuses absurdly long digit strings; ignore those too.
-                    if value.isascii() and value.isdigit():
-                        try:
-                            current_event['retry'] = int(value)
-                        except ValueError:
-                            pass
+                    # Anything longer than 18 digits is absurd (and would be capped anyway);
+                    # bounding the length keeps the conversion cheap whatever the interpreter.
+                    if value.isascii() and value.isdigit() and len(value) <= 18:
+                        current_event['retry'] = int(value)
             if data_lines:
                 current_event['data'] = '\n'.join(data_lines)
             return current_event or None
@@ -452,6 +450,12 @@ class SseCommunicationProtocol(CommunicationProtocol):
             event = flush(event_string)
             if event is not None:
                 yield event
+        # The residual (discarded) buffer is still subject to the cap, so an
+        # over-limit malformed stream fails the same way at end of stream.
+        if len(buffer) > self.MAX_EVENT_BUFFER_CHARS:
+            raise SseProtocolError(
+                f"SSE event exceeded {self.MAX_EVENT_BUFFER_CHARS} characters without a blank-line delimiter"
+            )
 
     @staticmethod
     def _parse_event_data(data: str) -> Any:

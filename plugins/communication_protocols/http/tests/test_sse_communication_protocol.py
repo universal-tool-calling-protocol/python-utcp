@@ -141,7 +141,10 @@ async def flaky_503_events_handler(request):
     await response.prepare(request)
     if state["connections"] == 1:
         await response.write(SAMPLE_SSE_EVENTS[0].encode('utf-8'))
-        await asyncio.sleep(0.01)
+        # Make sure the event has left the socket before dropping it: on Windows the
+        # data and the close otherwise arrive together and aiohttp raises before
+        # delivering the event.
+        await asyncio.sleep(0.1)
         request.transport.close()
         return response
     for event in SAMPLE_SSE_EVENTS[1:]:
@@ -164,7 +167,10 @@ async def huge_retry_events_handler(request):
     await response.prepare(request)
     if state["connections"] == 1:
         await response.write(b'id: 1\nretry: 100000\ndata: {"seq": 1}\n\n')
-        await asyncio.sleep(0.01)
+        # Make sure the event has left the socket before dropping it: on Windows the
+        # data and the close otherwise arrive together and aiohttp raises before
+        # delivering the event.
+        await asyncio.sleep(0.1)
         request.transport.close()
         return response
     await response.write(b'id: 2\ndata: {"seq": 2}\n\n')
@@ -201,7 +207,10 @@ async def empty_id_events_handler(request):
     await response.prepare(request)
     if state["connections"] == 1:
         await response.write(b'id: 1\ndata: {"seq": 1}\n\nid\ndata: {"seq": 2}\n\n')
-        await asyncio.sleep(0.01)
+        # Make sure the event has left the socket before dropping it: on Windows the
+        # data and the close otherwise arrive together and aiohttp raises before
+        # delivering the event.
+        await asyncio.sleep(0.1)
         request.transport.close()
         return response
     await response.write(b'data: {"seq": 3}\n\n')
@@ -221,7 +230,10 @@ async def flaky_events_handler(request):
 
     if state["always_drop"] or state["connections"] == 1:
         await response.write(SAMPLE_SSE_EVENTS[0].encode('utf-8'))
-        await asyncio.sleep(0.01)
+        # Make sure the event has left the socket before dropping it: on Windows the
+        # data and the close otherwise arrive together and aiohttp raises before
+        # delivering the event.
+        await asyncio.sleep(0.1)
         request.transport.close()
         return response
 

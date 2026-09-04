@@ -97,6 +97,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # client would make manuals with different configurations evict each
         # other's sessions, including sessions still in use by a concurrent call.
         self._mcp_clients: Dict[str, MCPClient] = {}
+        # Which configuration each manual (by name) currently uses, so a client
+        # nothing references any more can be closed when a manual's
+        # configuration changes.
+        self._manual_config_keys: Dict[str, str] = {}
         self._clients_lock = asyncio.Lock()
     
     def _log_info(self, message: str):
@@ -125,8 +129,9 @@ class McpCommunicationProtocol(CommunicationProtocol):
         serialised so two concurrent first calls cannot each spawn a client.
         """
         key = self._config_key(manual_call_template)
+        manual_name = manual_call_template.name or key
         client = self._mcp_clients.get(key)
-        if client is not None:
+        if client is not None and self._manual_config_keys.get(manual_name) == key:
             return client
         async with self._clients_lock:
             client = self._mcp_clients.get(key)
@@ -134,6 +139,19 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 config = {"mcpServers": manual_call_template.config.mcpServers}
                 client = _QuietStdioMCPClient.from_dict(config)
                 self._mcp_clients[key] = client
+            previous_key = self._manual_config_keys.get(manual_name)
+            self._manual_config_keys[manual_name] = key
+            if previous_key is not None and previous_key != key and previous_key not in self._manual_config_keys.values():
+                # This manual's configuration changed and no other manual uses the
+                # old one: release the old client's sessions and processes.
+                stale = self._mcp_clients.pop(previous_key, None)
+                if stale is not None:
+                    try:
+                        await stale.close_all_sessions()
+                    except Exception as e:
+                        # Keep it so close() can retry rather than leaking its processes.
+                        self._mcp_clients[previous_key] = stale
+                        self._log_warning(f"Failed to close sessions of a stale MCP client: {e}")
             return client
 
     async def _get_or_create_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
