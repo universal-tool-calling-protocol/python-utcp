@@ -251,3 +251,48 @@ async def test_call_tool_streaming_yields_single_chunk(transport: McpCommunicati
     """Streaming mode should emit the awaited result as one chunk, not a coroutine."""
     chunks = [chunk async for chunk in transport.call_tool_streaming(None, f"{SERVER_NAME}.echo", {"message": "test"}, mcp_manual)]
     assert chunks == [{"reply": "you said: test"}]
+
+
+# --- Child stderr routing and structuredContent unwrapping ---
+
+@pytest.mark.asyncio
+async def test_stdio_child_stderr_suppressed_by_default(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate, monkeypatch):
+    """Without the opt-in, stdio children write stderr to os.devnull, not the host's stderr."""
+    monkeypatch.delenv("UTCP_MCP_CHILD_STDERR", raising=False)
+    session = await transport._get_or_create_session(SERVER_NAME, mcp_manual)
+    try:
+        assert session.connector.errlog is not sys.stderr
+        assert session.connector.errlog.name == os.devnull
+    finally:
+        await transport._cleanup_session(SERVER_NAME)
+
+
+@pytest.mark.asyncio
+async def test_stdio_child_stderr_inherit_opt_in(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate, monkeypatch):
+    """UTCP_MCP_CHILD_STDERR=inherit restores the host's stderr for debugging."""
+    monkeypatch.setenv("UTCP_MCP_CHILD_STDERR", "inherit")
+    session = await transport._get_or_create_session(SERVER_NAME, mcp_manual)
+    try:
+        assert session.connector.errlog is sys.stderr
+    finally:
+        await transport._cleanup_session(SERVER_NAME)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_result_unwraps_only_single_key_result_wrapper(transport: McpCommunicationProtocol):
+    """A FastMCP {"result": x} wrapper is unwrapped; a real object with a result key is not."""
+    from types import SimpleNamespace
+    assert transport._process_tool_result(SimpleNamespace(structuredContent={"result": 42}, content=[]), "t") == 42
+    assert transport._process_tool_result(
+        SimpleNamespace(structuredContent={"result": 1, "extra": 2}, content=[]), "t"
+    ) == {"result": 1, "extra": 2}
+    assert transport._process_tool_result(SimpleNamespace(structuredContent={"answer": 42}, content=[]), "t") == {"answer": 42}
+    assert transport._process_tool_result(SimpleNamespace(structuredContent={"result": ["a", "b"]}, content=[]), "t") == ["a", "b"]
+    # FastMCP only wraps non-object returns, so {"result": {...}} is a genuine
+    # object return from the tool and must keep its shape.
+    assert transport._process_tool_result(
+        SimpleNamespace(structuredContent={"result": {"nested": True}}, content=[]), "t"
+    ) == {"result": {"nested": True}}
+    # No structuredContent: fall back to text content.
+    text_only = SimpleNamespace(structuredContent=None, content=[SimpleNamespace(text="7")])
+    assert transport._process_tool_result(text_only, "t") == 7
