@@ -301,7 +301,10 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     # Anything but an event stream would be parsed into silence: a
                     # JSON error document, say, yields zero events and a "successful" call.
                     content_type = response.headers.get("Content-Type", "")
-                    if "text/event-stream" not in content_type.lower():
+                    # Compare the media type exactly (parameters such as charset allowed),
+                    # so "text/event-stream-invalid" does not pass a substring check.
+                    media_type = content_type.split(";", 1)[0].strip().lower()
+                    if media_type != "text/event-stream":
                         response.release()
                         raise SseProtocolError(
                             f"Expected a text/event-stream response but got {content_type or 'no Content-Type'!r}"
