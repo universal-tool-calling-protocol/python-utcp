@@ -178,3 +178,29 @@ async def test_register_manual_fallbacks_to_manual_template_tcp():
     finally:
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_streaming_yields_single_chunk_tcp():
+    """Streaming mode should be an async generator that yields the full result once."""
+    server, port, set_response = await start_tcp_server()
+    set_response({"echo": "hello"})
+
+    try:
+        provider = TCPProvider(
+            name="tcp-provider",
+            host="127.0.0.1",
+            port=port,
+            request_data_format="json",
+            response_byte_format="utf-8",
+            framing_strategy="stream",
+            timeout=2000
+        )
+        transport_client = TCPTransport()
+        expected = await transport_client.call_tool(None, "tcp-provider.tcp_tool", {"x": 1}, provider)
+        chunks = [chunk async for chunk in transport_client.call_tool_streaming(None, "tcp-provider.tcp_tool", {"x": 1}, provider)]
+
+        assert chunks == [expected]
+    finally:
+        server.close()
+        await server.wait_closed()

@@ -105,6 +105,27 @@ async def token_header_auth_handler(request):
 async def error_handler(request):
     return web.Response(status=500, text="Internal Server Error")
 
+async def flaky_events_handler(request):
+    """Serves the first event then drops the TCP connection on the first connection
+    (or on every connection when ``always_drop`` is set). A reconnecting client is
+    served the remaining events and a clean end of stream."""
+    state = request.app["flaky"]
+    state["connections"] += 1
+    state["last_event_ids"].append(request.headers.get("Last-Event-ID"))
+
+    response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
+    await response.prepare(request)
+
+    if state["always_drop"] or state["connections"] == 1:
+        await response.write(SAMPLE_SSE_EVENTS[0].encode('utf-8'))
+        await asyncio.sleep(0.01)
+        request.transport.close()
+        return response
+
+    for event in SAMPLE_SSE_EVENTS[1:]:
+        await response.write(event.encode('utf-8'))
+    return response
+
 # --- Pytest Fixtures ---
 
 @pytest_asyncio.fixture
@@ -121,6 +142,8 @@ def app():
     app.router.add_post("/token", token_handler)
     app.router.add_post("/token_header_auth", token_header_auth_handler)
     app.router.add_get("/error", error_handler)
+    app.router.add_get("/flaky_events", flaky_events_handler)
+    app["flaky"] = {"connections": 0, "last_event_ids": [], "always_drop": False}
     return app
 
 @pytest_asyncio.fixture
@@ -377,3 +400,53 @@ async def test_call_tool_error_nonstream(sse_transport, aiohttp_client, app):
     with pytest.raises(aiohttp.ClientResponseError) as excinfo:
         await sse_transport.call_tool(None, "test_tool", {}, call_template)
     assert excinfo.value.status == 500
+
+
+# --- Reconnection ---
+
+@pytest.mark.asyncio
+async def test_call_tool_reconnects_after_connection_loss(sse_transport, aiohttp_client, app):
+    """An established stream that drops is resumed with Last-Event-ID and yields every event once."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(
+        name="test-sse", url=str(client.make_url("/flaky_events")), reconnect=True, retry_timeout=10
+    )
+
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.test_tool", {}, call_template)]
+
+    assert results == [{"message": "First part"}, {"message": "Second part"}, {"message": "End of stream"}]
+    assert app["flaky"]["connections"] == 2
+    assert app["flaky"]["last_event_ids"] == [None, "1"]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_connection_loss_without_reconnect_raises(sse_transport, aiohttp_client, app):
+    """With reconnect disabled a dropped stream surfaces as an error after the events received so far."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(
+        name="test-sse", url=str(client.make_url("/flaky_events")), reconnect=False, retry_timeout=10
+    )
+
+    received = []
+    with pytest.raises(aiohttp.ClientError):
+        async for e in sse_transport.call_tool_streaming(None, "test-sse.test_tool", {}, call_template):
+            received.append(e)
+
+    assert received == [{"message": "First part"}]
+    assert app["flaky"]["connections"] == 1
+
+
+@pytest.mark.asyncio
+async def test_call_tool_reconnect_gives_up_after_max_attempts(sse_transport, aiohttp_client, app):
+    """A server that keeps dropping the stream cannot make a tool call hang forever."""
+    app["flaky"]["always_drop"] = True
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(
+        name="test-sse", url=str(client.make_url("/flaky_events")), reconnect=True, retry_timeout=1
+    )
+
+    with pytest.raises(aiohttp.ClientError):
+        async for _ in sse_transport.call_tool_streaming(None, "test-sse.test_tool", {}, call_template):
+            pass
+
+    assert app["flaky"]["connections"] == 1 + SseCommunicationProtocol.MAX_RECONNECT_ATTEMPTS

@@ -174,3 +174,28 @@ async def test_register_manual_fallbacks_to_manual_template_udp():
         assert tool.tool_call_template.name == provider.name
     finally:
         transport.close()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_streaming_yields_single_chunk_udp():
+    """Streaming mode should be an async generator that yields the full result once."""
+    transport, port, set_response = await start_udp_server()
+    set_response({"echo": "hello"})
+
+    try:
+        provider = UDPProvider(
+            name="udp-provider",
+            host="127.0.0.1",
+            port=port,
+            number_of_response_datagrams=1,
+            request_data_format="json",
+            response_byte_format="utf-8",
+            timeout=2000
+        )
+        transport_client = UDPTransport()
+        expected = await transport_client.call_tool(None, "udp-provider.udp_tool", {"x": 1}, provider)
+        chunks = [chunk async for chunk in transport_client.call_tool_streaming(None, "udp-provider.udp_tool", {"x": 1}, provider)]
+
+        assert chunks == [expected]
+    finally:
+        transport.close()
