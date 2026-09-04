@@ -18,6 +18,7 @@ from utcp.data.auth_implementations.basic_auth import BasicAuth
 from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.sse_call_template import SseCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
+from utcp_http._errors import raise_for_status_with_body
 from utcp_http._security import ensure_secure_url, safe_request_with_redirects
 import traceback
 import logging
@@ -170,7 +171,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                     timeout=aiohttp.ClientTimeout(total=10.0),
                     auth_header_names=auth_header_names,
                 ) as response:
-                    response.raise_for_status()
+                    await raise_for_status_with_body(response)
                     response_data = await response.json()
                     utcp_manual = UtcpManualSerializer().validate_dict(response_data)
                     return RegisterManualResult(

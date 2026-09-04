@@ -106,6 +106,10 @@ async def error_handler(request):
     return web.Response(status=500, text="Internal Server Error")
 
 
+async def forbidden_discovery_handler(request):
+    return web.Response(status=403, text="discovery refused: tenant is not provisioned for streaming")
+
+
 async def crlf_split_events_handler(request):
     """One multi-line CRLF event whose CRLF is split across two writes."""
     response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
@@ -202,6 +206,7 @@ def app():
     app.router.add_post("/token", token_handler)
     app.router.add_post("/token_header_auth", token_header_auth_handler)
     app.router.add_get("/error", error_handler)
+    app.router.add_get("/forbidden-discovery", forbidden_discovery_handler)
     app.router.add_get("/flaky_events", flaky_events_handler)
     app["flaky"] = {"connections": 0, "last_event_ids": [], "always_drop": False}
     app.router.add_get("/crlf_split_events", crlf_split_events_handler)
@@ -580,3 +585,14 @@ async def test_reconnect_delay_is_capped(sse_transport, aiohttp_client, app, mon
     assert results == [{"seq": 1}, {"seq": 2}]
     assert app["huge_retry"]["connections"] == 2
     assert time.monotonic() - started < 3
+
+
+@pytest.mark.asyncio
+async def test_register_manual_surfaces_server_error_body(sse_transport, aiohttp_client, app):
+    """A refused discovery reports the server's body in errors[], not just the status."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/forbidden-discovery")))
+    result = await sse_transport.register_manual(None, call_template)
+    assert result.success is False
+    assert "discovery refused: tenant is not provisioned for streaming" in result.errors[0]
+    assert "403" in result.errors[0]
