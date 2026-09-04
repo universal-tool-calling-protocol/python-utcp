@@ -118,6 +118,7 @@ async def crlf_split_events_handler(request):
 
 async def no_delimiter_events_handler(request):
     """Streams data lines without ever sending the blank-line event delimiter."""
+    request.app["no_delimiter"]["connections"] += 1
     response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
     await response.prepare(request)
     for _ in range(20):
@@ -205,6 +206,7 @@ def app():
     app["flaky"] = {"connections": 0, "last_event_ids": [], "always_drop": False}
     app.router.add_get("/crlf_split_events", crlf_split_events_handler)
     app.router.add_get("/no_delimiter_events", no_delimiter_events_handler)
+    app["no_delimiter"] = {"connections": 0}
     app.router.add_get("/flaky_503_events", flaky_503_events_handler)
     app["flaky503"] = {"connections": 0}
     app.router.add_get("/slow_handshake", slow_handshake_handler)
@@ -539,6 +541,8 @@ async def test_oversized_event_without_delimiter_raises_and_does_not_reconnect(s
     with pytest.raises(SseProtocolError):
         async for _ in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template):
             pass
+    # A protocol violation is not a connection loss: exactly one connection, no reconnect.
+    assert app["no_delimiter"]["connections"] == 1
 
 
 @pytest.mark.asyncio
