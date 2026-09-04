@@ -369,3 +369,26 @@ async def test_deregistering_one_of_two_manuals_sharing_a_configuration_keeps_th
 
     await transport.deregister_manual(None, twin)
     assert transport._mcp_clients == {}
+
+
+@pytest.mark.asyncio
+async def test_same_manual_name_from_two_clients_with_different_configurations(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate):
+    """The protocol is a process-wide singleton: two UtcpClient instances may register
+    a manual of the same name with different configurations, and one must not
+    close the other's client."""
+    client_a, client_b = object(), object()
+    manual_b = McpCallTemplate(
+        name=mcp_manual.name,
+        call_template_type="mcp",
+        config=McpConfig(mcpServers={SERVER_NAME: {**mcp_manual.config.mcpServers[SERVER_NAME], "env": {"OWNER": "b"}}}),
+    )
+    await transport.call_tool(client_a, f"{SERVER_NAME}.echo", {"message": "a"}, mcp_manual)
+    await transport.call_tool(client_b, f"{SERVER_NAME}.echo", {"message": "b"}, manual_b)
+    assert len(transport._mcp_clients) == 2
+    # Client a's session is still alive and reused.
+    await transport.call_tool(client_a, f"{SERVER_NAME}.echo", {"message": "a2"}, mcp_manual)
+    assert len(transport._mcp_clients) == 2
+
+    await transport.deregister_manual(client_b, manual_b)
+    assert len(transport._mcp_clients) == 1
+    assert await transport.call_tool(client_a, f"{SERVER_NAME}.echo", {"message": "a3"}, mcp_manual) == {"reply": "you said: a3"}

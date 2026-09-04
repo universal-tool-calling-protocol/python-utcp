@@ -1,4 +1,6 @@
 import asyncio
+import contextvars
+import functools
 import os
 import sys
 from typing import Any, Dict, Optional, AsyncGenerator, TYPE_CHECKING, Tuple, TextIO
@@ -24,6 +26,28 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Identity of the UtcpClient behind the current call. This protocol object is a
+# process-wide singleton, so manual names alone cannot identify an owner: two
+# UtcpClient instances may register a manual of the same name with different
+# configurations. Set by the public entry points and read where client
+# ownership is tracked, without threading ``caller`` through every helper.
+_CURRENT_OWNER: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("utcp_mcp_owner", default=None)
+
+
+def _with_owner(method):
+    """Run an entry point with ``_CURRENT_OWNER`` bound to its ``caller``."""
+
+    @functools.wraps(method)
+    async def wrapper(self, caller, *args, **kwargs):
+        token = _CURRENT_OWNER.set(id(caller) if caller is not None else None)
+        try:
+            return await method(self, caller, *args, **kwargs)
+        finally:
+            _CURRENT_OWNER.reset(token)
+
+    return wrapper
+
 
 # Environment variable that opts stdio MCP children back into writing to the
 # host's stderr. Same name and semantics as the TypeScript SDK.
@@ -97,9 +121,9 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # client would make manuals with different configurations evict each
         # other's sessions, including sessions still in use by a concurrent call.
         self._mcp_clients: Dict[str, MCPClient] = {}
-        # Which configuration each manual (by name) currently uses, so a client
-        # nothing references any more can be closed when a manual's
-        # configuration changes.
+        # Which configuration each owner (calling UtcpClient plus manual name)
+        # currently uses, so a client nothing references any more can be closed
+        # when a manual's configuration changes.
         self._manual_config_keys: Dict[str, str] = {}
         self._clients_lock = asyncio.Lock()
     
@@ -120,6 +144,11 @@ class McpCommunicationProtocol(CommunicationProtocol):
         """Canonical key for a manual's server configuration."""
         return json.dumps(manual_call_template.config.mcpServers, sort_keys=True, default=str)
 
+    @staticmethod
+    def _owner_key(manual_call_template: 'McpCallTemplate', config_key: str) -> str:
+        """Identifies who holds a configuration: the calling UtcpClient plus the manual name."""
+        return f"{_CURRENT_OWNER.get()}:{manual_call_template.name or config_key}"
+
     async def _ensure_mcp_client(self, manual_call_template: 'McpCallTemplate') -> MCPClient:
         """Return the MCPClient for this manual's configuration, creating it once.
 
@@ -129,7 +158,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         serialised so two concurrent first calls cannot each spawn a client.
         """
         key = self._config_key(manual_call_template)
-        manual_name = manual_call_template.name or key
+        manual_name = self._owner_key(manual_call_template, key)
         client = self._mcp_clients.get(key)
         if client is not None and self._manual_config_keys.get(manual_name) == key:
             return client
@@ -185,7 +214,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         with identical configurations share one client, and deregistering one
         must not tear down the other's sessions."""
         key = self._config_key(manual_call_template)
-        manual_name = manual_call_template.name or key
+        manual_name = self._owner_key(manual_call_template, key)
         async with self._clients_lock:
             if self._manual_config_keys.get(manual_name) == key:
                 del self._manual_config_keys[manual_name]
@@ -313,6 +342,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         result = await session.call_tool(tool_name, arguments=inputs)
         return result
 
+    @_with_owner
     async def register_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> RegisterManualResult:
         """REQUIRED
         Register a manual with the communication protocol.
@@ -386,6 +416,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
             errors=errors
         )
 
+    @_with_owner
     async def call_tool(self, caller: 'UtcpClient', tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """REQUIRED
         Call a tool using the model context protocol.
@@ -617,6 +648,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # Return as string
         return text
 
+    @_with_owner
     async def deregister_manual(self, caller: 'UtcpClient', manual_call_template: CallTemplate) -> None:
         """Deregister an MCP manual and clean up associated sessions."""
         if not isinstance(manual_call_template, McpCallTemplate):
