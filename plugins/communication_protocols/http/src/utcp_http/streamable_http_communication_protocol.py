@@ -16,7 +16,7 @@ from utcp.data.auth_implementations import OAuth2Auth
 from utcp_http.streamable_http_call_template import StreamableHttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth, ClientResponse
 from utcp_http._errors import raise_for_status_with_body
-from utcp_http._security import ensure_secure_url, safe_request_with_redirects
+from utcp_http._security import ensure_secure_url, safe_request_with_redirects, reject_remote_loopback_tool_urls
 import logging
 
 logging.basicConfig(
@@ -153,6 +153,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     await raise_for_status_with_body(response)
                     response_data = await response.json()
                     utcp_manual = UtcpManualSerializer().validate_dict(response_data)
+                    reject_remote_loopback_tool_urls(url, utcp_manual)
                     return RegisterManualResult(
                         success=True,
                         manual_call_template=manual_call_template,

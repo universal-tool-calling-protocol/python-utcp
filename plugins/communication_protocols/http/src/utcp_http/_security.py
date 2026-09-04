@@ -478,3 +478,35 @@ async def safe_request_with_redirects(
     finally:
         if final_response is not None:
             final_response.release()
+
+
+def reject_remote_loopback_tool_urls(
+    discovery_url: str, manual: Any, *, context: str = "manual discovery"
+) -> None:
+    """Reject a remotely-discovered manual that points tool calls at loopback.
+
+    ``ensure_secure_url`` deliberately permits loopback HTTP so local
+    development works. That leaves one gap: a manual fetched from a remote
+    (non-loopback) origin can still declare tool URLs on the agent's own
+    loopback interface, turning tool invocation into a request against a
+    service that only trusts local callers.
+
+    The OpenAPI converter already closes this for specs it converts (a remote
+    spec may not declare a loopback ``servers[0].url``). Hand-written UTCP
+    manuals bypass the converter, so the same rule is applied here to every
+    tool's call-template URL. A manual fetched from loopback (local dev) is
+    exempt, exactly as the converter exempts a local spec.
+    """
+    if is_loopback_url(discovery_url):
+        return
+    for tool in getattr(manual, "tools", None) or []:
+        call_template = getattr(tool, "tool_call_template", None)
+        url = getattr(call_template, "url", None)
+        if isinstance(url, str) and is_loopback_url(url):
+            raise ValueError(
+                f"Security error during {context}: a manual fetched from "
+                f"{discovery_url!r} declares a loopback tool URL ({url!r}) for "
+                f"tool {getattr(tool, 'name', '?')!r}. A remote manual is not "
+                "allowed to redirect tool calls at the agent's own loopback "
+                "interface."
+            )

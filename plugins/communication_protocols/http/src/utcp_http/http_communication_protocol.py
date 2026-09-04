@@ -33,7 +33,7 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 from utcp_http.openapi_converter import OpenApiConverter
-from utcp_http._security import ensure_secure_url, safe_request_with_redirects
+from utcp_http._security import ensure_secure_url, safe_request_with_redirects, reject_remote_loopback_tool_urls
 from utcp_http._errors import raise_for_status_with_body
 import logging
 
@@ -226,6 +226,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                         if "utcp_version" in response_data and "tools" in response_data:
                             logger.info(f"Detected UTCP manual from '{manual_call_template.name}'.")
                             utcp_manual = UtcpManualSerializer().validate_dict(response_data)
+                            reject_remote_loopback_tool_urls(manual_call_template.url, utcp_manual)
                         else:
                             logger.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
                             converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, call_template_name=manual_call_template.name, auth_tools=manual_call_template.auth_tools)
