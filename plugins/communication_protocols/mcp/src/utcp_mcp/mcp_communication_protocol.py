@@ -449,10 +449,19 @@ class McpCommunicationProtocol(CommunicationProtocol):
         structured = getattr(result, 'structuredContent', None)
         if structured is not None:
             self._log_info(f"Found structuredContent: {structured}")
-            # FastMCP wraps non-object returns as {"result": value}; unwrap exactly
-            # that single-key shape. An object that merely has a "result" key among
-            # others is a genuine object return and passes through untouched.
-            if isinstance(structured, dict) and set(structured.keys()) == {"result"}:
+            # FastMCP wraps NON-OBJECT returns (primitives, lists, None) as
+            # {"result": value}; object returns are sent as-is. Unwrap exactly that
+            # shape: a single "result" key whose value is not a dict. A single-key
+            # {"result": {...}} is therefore a genuine object return and passes
+            # through untouched, as does any dict with other keys. A genuine
+            # {"result": <primitive or list>} return is indistinguishable from the
+            # wrapper on the wire and is unwrapped too; that ambiguity is inherent
+            # to the FastMCP convention.
+            if (
+                isinstance(structured, dict)
+                and set(structured.keys()) == {"result"}
+                and not isinstance(structured["result"], dict)
+            ):
                 return structured["result"]
             return structured
         

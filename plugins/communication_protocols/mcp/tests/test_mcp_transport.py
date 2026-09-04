@@ -280,6 +280,12 @@ async def test_process_tool_result_unwraps_only_single_key_result_wrapper(transp
         SimpleNamespace(structuredContent={"result": 1, "extra": 2}, content=[]), "t"
     ) == {"result": 1, "extra": 2}
     assert transport._process_tool_result(SimpleNamespace(structuredContent={"answer": 42}, content=[]), "t") == {"answer": 42}
+    assert transport._process_tool_result(SimpleNamespace(structuredContent={"result": ["a", "b"]}, content=[]), "t") == ["a", "b"]
+    # FastMCP only wraps non-object returns, so {"result": {...}} is a genuine
+    # object return from the tool and must keep its shape.
+    assert transport._process_tool_result(
+        SimpleNamespace(structuredContent={"result": {"nested": True}}, content=[]), "t"
+    ) == {"result": {"nested": True}}
     # No structuredContent: fall back to text content.
     text_only = SimpleNamespace(structuredContent=None, content=[SimpleNamespace(text="7")])
     assert transport._process_tool_result(text_only, "t") == 7
