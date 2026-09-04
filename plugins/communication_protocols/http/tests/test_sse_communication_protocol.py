@@ -169,6 +169,27 @@ async def huge_retry_events_handler(request):
     await response.write(b'id: 2\ndata: {"seq": 2}\n\n')
     return response
 
+async def json_not_sse_handler(request):
+    """A 200 that is not an event stream at all."""
+    return web.json_response({"error": "not a stream"})
+
+
+async def empty_id_events_handler(request):
+    """Sets an id, then resets it with an empty id, then drops the connection."""
+    state = request.app["empty_id"]
+    state["connections"] += 1
+    state["last_event_ids"].append(request.headers.get("Last-Event-ID"))
+    response = web.StreamResponse(status=200, headers={'Content-Type': 'text/event-stream'})
+    await response.prepare(request)
+    if state["connections"] == 1:
+        await response.write(b'id: 1\ndata: {"seq": 1}\n\nid\ndata: {"seq": 2}\n\n')
+        await asyncio.sleep(0.01)
+        request.transport.close()
+        return response
+    await response.write(b'data: {"seq": 3}\n\n')
+    return response
+
+
 async def flaky_events_handler(request):
     """Serves the first event then drops the TCP connection on the first connection
     (or on every connection when ``always_drop`` is set). A reconnecting client is
@@ -203,6 +224,10 @@ def app():
     app = web.Application()
     app.router.add_get("/tools", tools_handler)
     app.router.add_route('*', '/events', events_handler)
+    app.router.add_post("/flaky_events", flaky_events_handler)
+    app.router.add_get("/json_not_sse", json_not_sse_handler)
+    app.router.add_get("/empty_id_events", empty_id_events_handler)
+    app["empty_id"] = {"connections": 0, "last_event_ids": []}
     app.router.add_post("/token", token_handler)
     app.router.add_post("/token_header_auth", token_header_auth_handler)
     app.router.add_get("/error", error_handler)
@@ -596,3 +621,50 @@ async def test_register_manual_surfaces_server_error_body(sse_transport, aiohttp
     assert result.success is False
     assert "discovery refused: tenant is not provisioned for streaming" in result.errors[0]
     assert "403" in result.errors[0]
+
+
+# --- Spec conformance follow-ups ---
+
+@pytest.mark.asyncio
+async def test_event_type_message_matches_events_without_an_event_field(sse_transport, aiohttp_client, app):
+    """Per the SSE spec an event block without `event:` has the type "message"."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/events")), event_type="message")
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
+    assert results == [{"message": "First part"}]
+
+
+@pytest.mark.asyncio
+async def test_empty_id_resets_last_event_id(sse_transport, aiohttp_client, app):
+    """An empty `id` line resets the last event ID, so no Last-Event-ID header is sent on reconnect."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/empty_id_events")), reconnect=True, retry_timeout=10)
+    results = [e async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template)]
+    assert results == [{"seq": 1}, {"seq": 2}, {"seq": 3}]
+    assert app["empty_id"]["last_event_ids"] == [None, None]
+
+
+@pytest.mark.asyncio
+async def test_non_event_stream_response_raises(sse_transport, aiohttp_client, app):
+    """A 200 that is not text/event-stream fails instead of yielding zero events."""
+    from utcp_http.sse_communication_protocol import SseProtocolError
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(name="test-sse", url=str(client.make_url("/json_not_sse")))
+    with pytest.raises(SseProtocolError):
+        async for _ in sse_transport.call_tool_streaming(None, "test-sse.t", {}, call_template):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_post_stream_is_not_reconnected(sse_transport, aiohttp_client, app):
+    """A dropped POST stream is not re-issued: that could re-execute a non-idempotent tool."""
+    client = await aiohttp_client(app)
+    call_template = SseCallTemplate(
+        name="test-sse", url=str(client.make_url("/flaky_events")), reconnect=True, retry_timeout=10, body_field="payload"
+    )
+    received = []
+    with pytest.raises(aiohttp.ClientError):
+        async for e in sse_transport.call_tool_streaming(None, "test-sse.t", {"payload": {"n": 1}}, call_template):
+            received.append(e)
+    assert received == [{"message": "First part"}]
+    assert app["flaky"]["connections"] == 1

@@ -307,3 +307,11 @@ async def test_mcp_client_and_session_are_reused_across_calls(transport: McpComm
     await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "two"}, mcp_manual)
     assert transport._mcp_client is client_after_first
     assert list(transport._mcp_client.sessions.keys()) == [SERVER_NAME]
+
+
+@pytest.mark.asyncio
+async def test_close_after_use_does_not_raise(transport: McpCommunicationProtocol, mcp_manual: McpCallTemplate):
+    """close() used to raise AttributeError after cleaning up; it must complete."""
+    await transport.call_tool(None, f"{SERVER_NAME}.echo", {"message": "one"}, mcp_manual)
+    await transport.close()
+    assert transport._mcp_client.sessions == {}

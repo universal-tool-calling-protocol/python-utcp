@@ -252,7 +252,11 @@ class SseCommunicationProtocol(CommunicationProtocol):
         data = body_content if "application/json" not in content_type else None
         json_data = body_content if "application/json" in content_type else None
 
-        reconnect = bool(tool_call_template.reconnect)
+        # Never re-send a request body: a reconnect re-issues the request, and for
+        # a POST that would re-execute a possibly non-idempotent tool.
+        reconnect = bool(tool_call_template.reconnect) and body_content is None
+        if tool_call_template.reconnect and body_content is not None:
+            logger.info(f"Reconnection is disabled for '{tool_call_template.name}' because the call sends a request body.")
         retry_delay_ms = tool_call_template.retry_timeout
         last_event_id: Optional[str] = None
         reconnect_attempts = 0
@@ -260,8 +264,9 @@ class SseCommunicationProtocol(CommunicationProtocol):
 
         while True:
             attempt_headers = dict(request_headers)
-            if last_event_id is not None:
-                # Let the server resume from where we left off (SSE spec).
+            if last_event_id:
+                # Let the server resume from where we left off (SSE spec). An empty
+                # last event ID means "none": the header is not sent.
                 attempt_headers["Last-Event-ID"] = last_event_id
 
             session = aiohttp.ClientSession()
@@ -293,6 +298,16 @@ class SseCommunicationProtocol(CommunicationProtocol):
                             f"the final URL directly."
                         )
                     await raise_for_status_with_body(response)
+                    # Anything but an event stream would be parsed into silence: a
+                    # JSON error document, say, yields zero events and a "successful" call.
+                    content_type = response.headers.get("Content-Type", "")
+                    if "text/event-stream" not in content_type.lower():
+                        response.release()
+                        raise SseProtocolError(
+                            f"Expected a text/event-stream response but got {content_type or 'no Content-Type'!r}"
+                        )
+                except SseProtocolError:
+                    raise
                 except Exception as e:
                     if reconnect_attempts == 0:
                         # The initial handshake failing (refused, timed out, non-2xx) is a
@@ -315,13 +330,16 @@ class SseCommunicationProtocol(CommunicationProtocol):
 
                 try:
                     async for event in self._iter_sse_events(response):
-                        if event.get("id") is not None:
+                        # Per the SSE spec an id containing NUL is ignored, and an empty id
+                        # resets the last event ID.
+                        if event.get("id") is not None and "\x00" not in event["id"]:
                             last_event_id = event["id"]
                         if event.get("retry") is not None:
                             retry_delay_ms = event["retry"]
                         if "data" not in event:
                             continue
-                        if tool_call_template.event_type and event.get("event") != tool_call_template.event_type:
+                        # An event block without an ``event:`` field has the type "message".
+                        if tool_call_template.event_type and (event.get("event") or "message") != tool_call_template.event_type:
                             continue
                         yield self._parse_event_data(event["data"])
                     # The server ended the stream cleanly: the tool call is complete.

@@ -67,9 +67,16 @@ class _QuietStdioMCPClient(MCPClient):
             try:
                 await session.initialize()
             except Exception:
-                # Mirror the base class: a session that failed to initialize must
-                # not stay cached, or the next lookup would hand back a dead one.
+                # The base class only registers a session after a successful
+                # initialize; undo the early registration, and disconnect so a
+                # child that started but failed the MCP handshake does not linger.
                 self.sessions.pop(server_name, None)
+                if server_name in self.active_sessions:
+                    self.active_sessions.remove(server_name)
+                try:
+                    await session.disconnect()
+                except Exception as disconnect_error:
+                    logger.warning(f"Failed to disconnect '{server_name}' after a failed initialize: {disconnect_error}")
                 raise
         return session
 
@@ -569,7 +576,6 @@ class McpCommunicationProtocol(CommunicationProtocol):
         """Close all active sessions and clean up resources."""
         self._log_info("Closing MCP communication protocol and cleaning up all sessions")
         await self._cleanup_all_sessions()
-        self._session_locks.clear()
         self._log_info("MCP communication protocol closed successfully")
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
