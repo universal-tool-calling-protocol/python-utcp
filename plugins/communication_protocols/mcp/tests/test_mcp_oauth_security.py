@@ -240,26 +240,58 @@ async def test_close_drops_cached_tokens():
 
 @pytest.mark.asyncio
 async def test_fetch_landing_after_close_does_not_repopulate_cache():
-    # close() drops the in-flight entry; a fetch that still lands is no longer
-    # the current entry and must not write the cache (identity gate), so the
-    # drain leaves no credential behind.
+    # close() drops the in-flight entry. The fake fetch deliberately survives the
+    # drain's cancel and still LANDS with a value, so the only thing standing
+    # between that value and the cache is the identity gate — which must hold.
     proto = McpCommunicationProtocol()
+    started = asyncio.Event()
     release = asyncio.Event()
 
     async def fake_fetch(_auth):
-        await release.wait()
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            pass  # survive the drain's cancel so the fetch genuinely lands with a value
         return {"access_token": "late"}
 
     proto._fetch_oauth2_token = fake_fetch
     auth = _oauth("https://auth.example.com/token")
     waiter = asyncio.create_task(proto._handle_oauth2(auth))
-    await asyncio.sleep(0)  # the shared fetch is registered and running
+    # Wait until the fetch is genuinely RUNNING (inside its try), not merely
+    # scheduled: cancelling a coroutine that has not started throws at its entry
+    # and the except never runs, which would test cancellation, not the gate.
+    await started.wait()
     assert len(proto._oauth_inflight) == 1
 
-    await proto.close()  # cancels the fetch and drops its entry
-    release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await waiter
+    await proto.close()  # drops the entry; the fetch survives the cancel and lands
+    assert await waiter == "late"     # the caller still receives its token...
+    assert proto._oauth_tokens == {}  # ...but the fetch was no longer current, so nothing cached
+    assert proto._oauth_inflight == {}
+
+
+def test_require_access_token_rejects_malformed_responses():
+    # A 200 without an access_token is a failed fetch, not a cacheable result.
+    with pytest.raises(aiohttp.ClientError, match="access_token"):
+        McpCommunicationProtocol._require_access_token({"token_type": "bearer"})
+    with pytest.raises(aiohttp.ClientError, match="access_token"):
+        McpCommunicationProtocol._require_access_token(["not", "a", "dict"])
+    assert McpCommunicationProtocol._require_access_token({"access_token": "t"}) == {"access_token": "t"}
+
+
+@pytest.mark.asyncio
+async def test_failed_fetch_is_never_cached_and_can_be_retried():
+    # A fetch that fails (including on a malformed body) must leave neither a
+    # cache entry nor an in-flight entry behind, so the next call retries.
+    proto = McpCommunicationProtocol()
+
+    async def failing_fetch(_auth):
+        raise aiohttp.ClientError("OAuth2 token endpoint responded without an access_token")
+
+    proto._fetch_oauth2_token = failing_fetch
+    auth = _oauth("https://auth.example.com/token")
+    with pytest.raises(aiohttp.ClientError, match="access_token"):
+        await proto._handle_oauth2(auth)
 
     assert proto._oauth_tokens == {}
     assert proto._oauth_inflight == {}

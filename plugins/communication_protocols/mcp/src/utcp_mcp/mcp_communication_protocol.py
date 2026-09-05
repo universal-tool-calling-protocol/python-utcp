@@ -920,8 +920,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 async with session.post(auth_details.token_url, data=body_data, allow_redirects=False) as response:
                     self._reject_token_redirect(response)
                     response.raise_for_status()
-                    token_response = await response.json()
-                    return token_response
+                    return self._require_access_token(await response.json())
             except aiohttp.ClientError as e:
                 self._log_error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
                 
@@ -936,11 +935,25 @@ class McpCommunicationProtocol(CommunicationProtocol):
                 async with session.post(auth_details.token_url, data=header_data, auth=header_auth, allow_redirects=False) as response:
                     self._reject_token_redirect(response)
                     response.raise_for_status()
-                    token_response = await response.json()
-                    return token_response
+                    return self._require_access_token(await response.json())
             except aiohttp.ClientError as e:
                 self._log_error(f"OAuth2 with Basic Auth header also failed: {e}")
                 raise e
+
+    @staticmethod
+    def _require_access_token(token_response: Any) -> Dict[str, Any]:
+        """A successful HTTP response is not a successful token fetch unless it
+        carries an ``access_token``.
+
+        Treating a malformed body as a fetch failure is what keeps it out of the
+        cache — the cache only ever receives validated responses, so a single
+        bad reply cannot become a persistent failure on the read path — and it
+        lets the body-vs-Basic fallback proceed the same way a transport error
+        would. Matches the TypeScript plugin.
+        """
+        if not isinstance(token_response, dict) or not token_response.get("access_token"):
+            raise aiohttp.ClientError("OAuth2 token endpoint responded without an access_token")
+        return token_response
 
     @staticmethod
     def _reject_token_redirect(response: "aiohttp.ClientResponse") -> None:
