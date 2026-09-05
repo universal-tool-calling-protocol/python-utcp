@@ -76,6 +76,39 @@ async def test_insecure_mcp_server_url_rejected():
 
 
 @pytest.mark.asyncio
+async def test_loopback_http_server_url_accepted():
+    # Loopback HTTP server URLs are allowed for local development, matching the
+    # HTTP-family plugins' trust boundary.
+    proto = McpCommunicationProtocol()
+    template = McpCallTemplate(
+        name="m", config=McpConfig(mcpServers={"s": {"url": "http://127.0.0.1:8080/mcp"}})
+    )
+    servers = await proto._build_connection_servers(template)
+    assert servers["s"]["url"] == "http://127.0.0.1:8080/mcp"
+
+
+@pytest.mark.asyncio
+async def test_server_with_own_auth_field_not_overwritten(monkeypatch):
+    proto = McpCommunicationProtocol()
+
+    async def fake_token(_auth):
+        return "TOK123"
+
+    monkeypatch.setattr(proto, "_handle_oauth2", fake_token)
+    template = McpCallTemplate(
+        name="m",
+        config=McpConfig(
+            mcpServers={"s": {"url": "https://mcp.example.com", "auth": {"kind": "custom"}}}
+        ),
+        auth=_oauth("https://auth.example.com/token"),
+    )
+    servers = await proto._build_connection_servers(template)
+    # A server carrying its own auth keeps it; the manual token is not injected.
+    assert "auth_token" not in servers["s"]
+    assert servers["s"]["auth"] == {"kind": "custom"}
+
+
+@pytest.mark.asyncio
 async def test_oauth_token_injected_for_http_server(monkeypatch):
     proto = McpCommunicationProtocol()
 

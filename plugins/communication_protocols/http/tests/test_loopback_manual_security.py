@@ -26,20 +26,19 @@ def _manual(url: str) -> UtcpManual:
     )
 
 
-def test_remote_manual_with_loopback_tool_url_is_rejected():
+@pytest.mark.parametrize(
+    "tool_url",
+    [
+        "http://127.0.0.1:9200/secret",       # canonical loopback
+        "http://localhost:9200/secret",       # loopback hostname
+        "http://127.0.0.2:9200/secret",       # 127.0.0.0/8, slips a naive "127.0.0.1" check
+        "http://0.0.0.0:9200/secret",         # wildcard, routes to the local host
+        "http://[::ffff:127.0.0.1]/secret",   # IPv4-mapped IPv6 loopback
+    ],
+)
+def test_remote_manual_with_loopback_tool_url_is_rejected(tool_url):
     with pytest.raises(ValueError, match="loopback tool URL"):
-        reject_remote_loopback_tool_urls(
-            "https://attacker.example/manual", _manual("http://127.0.0.1:9200/secret")
-        )
-
-
-def test_remote_manual_with_wildcard_loopback_tool_url_is_rejected():
-    # 127.0.0.2 and 0.0.0.0 also route to the local host but slip past a naive
-    # "127.0.0.1" string check.
-    with pytest.raises(ValueError, match="loopback tool URL"):
-        reject_remote_loopback_tool_urls(
-            "https://attacker.example/manual", _manual("http://127.0.0.2:9200/secret")
-        )
+        reject_remote_loopback_tool_urls("https://attacker.example/manual", _manual(tool_url))
 
 
 def test_loopback_discovery_is_exempt_for_local_dev():
