@@ -9,6 +9,8 @@ Two things are covered here:
      validated before a connection is dialed.
 """
 
+import asyncio
+
 import aiohttp
 import pytest
 
@@ -146,6 +148,35 @@ async def test_existing_server_credentials_not_overwritten(monkeypatch):
     )
     servers = await proto._build_connection_servers(template)
     assert servers["s"]["auth_token"] == "own"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_token_fetches_are_coalesced():
+    # The token fetch runs outside the client-creation lock, so concurrent
+    # first-time callers must share one request rather than each POSTing.
+    proto = McpCommunicationProtocol()
+    calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_fetch(auth):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        proto._oauth_tokens[auth.client_id] = {"access_token": "tok"}
+        return "tok"
+
+    proto._fetch_oauth2_token = fake_fetch  # instance attr shadows the method
+    auth = _oauth("https://auth.example.com/token")
+
+    tasks = [asyncio.create_task(proto._handle_oauth2(auth)) for _ in range(5)]
+    await started.wait()
+    release.set()
+    results = await asyncio.gather(*tasks)
+
+    assert results == ["tok"] * 5
+    assert calls == 1
 
 
 @pytest.mark.asyncio

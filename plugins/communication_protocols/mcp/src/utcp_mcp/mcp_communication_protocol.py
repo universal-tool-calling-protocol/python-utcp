@@ -184,6 +184,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
     
     def __init__(self):
         self._oauth_tokens: Dict[str, Dict[str, Any]] = {}
+        # In-flight OAuth2 token fetches, keyed like the token cache (by
+        # client_id), so concurrent first-time callers share one request instead
+        # of each POSTing to the token endpoint.
+        self._oauth_inflight: "Dict[str, asyncio.Task[str]]" = {}
         # One MCPClient per distinct server configuration. This protocol object is
         # registered once per process and shared by every manual, so a single
         # client would make manuals with different configurations evict each
@@ -801,16 +805,36 @@ class McpCommunicationProtocol(CommunicationProtocol):
         self._log_info("MCP communication protocol closed successfully")
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:
-        """Handles OAuth2 client credentials flow, trying both body and auth header methods."""
+        """Return an OAuth2 access token, fetching it at most once per burst.
+
+        Validates the token endpoint, serves a cached token when present, and
+        coalesces concurrent first-time fetches for the same client so a burst of
+        callers issues a single token request and shares its result. The fetch
+        runs outside ``_clients_lock`` (so a slow token endpoint can't stall
+        client creation), which is exactly why the coalescing is needed here.
+        """
         # Validate the token endpoint before sending credentials to it, so a
         # manual cannot direct the operator's client secret at an arbitrary host.
         _ensure_secure_mcp_url(auth_details.token_url, context="MCP OAuth2 token URL")
         client_id = auth_details.client_id
-        
-        # Return cached token if available
+
+        # Return cached token if available.
         if client_id in self._oauth_tokens:
             return self._oauth_tokens[client_id]["access_token"]
 
+        # Coalesce concurrent first-time fetches. The check-and-set below is
+        # synchronous (no await between them), so exactly one task is created and
+        # every other caller awaits it.
+        task = self._oauth_inflight.get(client_id)
+        if task is None:
+            task = asyncio.ensure_future(self._fetch_oauth2_token(auth_details))
+            self._oauth_inflight[client_id] = task
+            task.add_done_callback(lambda _t, cid=client_id: self._oauth_inflight.pop(cid, None))
+        return await task
+
+    async def _fetch_oauth2_token(self, auth_details: OAuth2Auth) -> str:
+        """Perform the OAuth2 client-credentials request (body method, then Basic)."""
+        client_id = auth_details.client_id
         async with aiohttp.ClientSession() as session:
             # Method 1: Send credentials in the request body
             try:
