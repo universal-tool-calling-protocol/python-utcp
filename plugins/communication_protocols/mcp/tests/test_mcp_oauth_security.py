@@ -271,20 +271,27 @@ async def test_fetch_landing_after_close_does_not_repopulate_cache():
 
 
 def test_require_access_token_rejects_malformed_responses():
-    # A 200 without a USABLE access_token is a failed fetch, not a cacheable
-    # result. Usable means a non-empty string: a truthy non-string (12345, True)
-    # would be injected as an invalid bearer credential on every reuse. The
-    # non-string cases are what fail if the isinstance(str) clause is removed.
+    # The usability rule is positive (non-empty visible ASCII), so every shape
+    # that cannot be a valid ``Authorization: Bearer <token>`` header is rejected
+    # by one rule. The string cases below are exactly what fail if the VCHAR
+    # requirement is removed.
     for bad in (
         {"token_type": "bearer"},
         ["not", "a", "dict"],
         {"access_token": 12345},
         {"access_token": True},
         {"access_token": ""},
+        {"access_token": "tok en"},        # embedded space ends the token
+        {"access_token": "tok\r\nen"},     # CR/LF: header injection
+        {"access_token": "tok\x00en"},     # NUL / control character
+        {"access_token": "tok\u00e9n"},  # non-ASCII
     ):
         with pytest.raises(aiohttp.ClientError, match="access_token"):
             McpCommunicationProtocol._require_access_token(bad)
-    assert McpCommunicationProtocol._require_access_token({"access_token": "t"}) == {"access_token": "t"}
+    # Printable punctuation is accepted: the rule must not over-reject real
+    # opaque tokens (tightening to RFC 6750's b64token alphabet would).
+    ok = {"access_token": "a.b-c_d~e+f/g=:h"}
+    assert McpCommunicationProtocol._require_access_token(ok) == ok
 
 
 @pytest.mark.asyncio

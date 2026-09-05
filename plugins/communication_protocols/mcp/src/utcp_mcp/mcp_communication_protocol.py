@@ -3,6 +3,7 @@ import contextvars
 import copy
 import functools
 import os
+import re
 import sys
 from ipaddress import IPv6Address, ip_address
 from typing import Any, Dict, List, Optional, AsyncGenerator, TYPE_CHECKING, Tuple, TextIO
@@ -54,6 +55,10 @@ def _with_owner(method):
 
 # Hostnames considered safe to reach over plain HTTP/WS.
 _LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+# What a usable bearer token looks like: a non-empty run of visible ASCII
+# (RFC 9110 VCHAR, 0x21-0x7E). See ``_require_access_token``.
+_VISIBLE_ASCII = re.compile(r"[\x21-\x7E]+")
 
 
 def _is_secure_mcp_url(url: str) -> bool:
@@ -951,12 +956,21 @@ class McpCommunicationProtocol(CommunicationProtocol):
         lets the body-vs-Basic fallback proceed the same way a transport error
         would. Matches the TypeScript plugin.
         """
-        # "Usable" means a non-empty string: mcp-use formats whatever it is given
-        # into ``Bearer <token>``, so a truthy non-string (a number, ``True``, a
-        # dict) would be injected as an invalid credential on every reuse.
+        # Defined POSITIVELY from the contract the token must satisfy, not as a
+        # list of bad shapes: mcp-use places it verbatim into
+        # ``Authorization: Bearer <token>``, and an HTTP header value may contain
+        # only visible ASCII (RFC 9110 VCHAR, 0x21-0x7E), with a space ending the
+        # token. So a usable token is a non-empty string of VCHAR. That single
+        # rule makes every unusable shape inexpressible at once (non-string,
+        # empty, whitespace, CR/LF header injection, NUL/control characters,
+        # non-ASCII) without over-fitting to RFC 6750's narrower b64token
+        # alphabet, which would reject legitimate opaque tokens.
         token = token_response.get("access_token") if isinstance(token_response, dict) else None
-        if not isinstance(token, str) or not token:
-            raise aiohttp.ClientError("OAuth2 token endpoint responded without a usable access_token")
+        if not isinstance(token, str) or not _VISIBLE_ASCII.fullmatch(token):
+            raise aiohttp.ClientError(
+                "OAuth2 token endpoint responded without a usable access_token "
+                "(must be a non-empty string of visible ASCII)"
+            )
         return token_response
 
     @staticmethod
