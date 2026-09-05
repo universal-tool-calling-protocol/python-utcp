@@ -830,7 +830,11 @@ class McpCommunicationProtocol(CommunicationProtocol):
             task = asyncio.ensure_future(self._fetch_oauth2_token(auth_details))
             self._oauth_inflight[client_id] = task
             task.add_done_callback(lambda _t, cid=client_id: self._oauth_inflight.pop(cid, None))
-        return await task
+        # Shield the shared task: awaiting a task directly propagates a waiter's
+        # cancellation into the task, which would cancel the fetch for every other
+        # waiter too. shield lets a cancelled waiter raise on its own while the
+        # shared fetch runs to completion for the rest.
+        return await asyncio.shield(task)
 
     async def _fetch_oauth2_token(self, auth_details: OAuth2Auth) -> str:
         """Perform the OAuth2 client-credentials request (body method, then Basic)."""

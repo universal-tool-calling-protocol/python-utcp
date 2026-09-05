@@ -180,6 +180,40 @@ async def test_concurrent_token_fetches_are_coalesced():
 
 
 @pytest.mark.asyncio
+async def test_cancelling_one_waiter_does_not_fail_the_others():
+    # A waiter awaiting the shared fetch may be cancelled; that must not cancel
+    # the shared fetch and fail the remaining waiters.
+    proto = McpCommunicationProtocol()
+    calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_fetch(auth):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        proto._oauth_tokens[auth.client_id] = {"access_token": "tok"}
+        return "tok"
+
+    proto._fetch_oauth2_token = fake_fetch
+    auth = _oauth("https://auth.example.com/token")
+
+    waiter_a = asyncio.create_task(proto._handle_oauth2(auth))
+    await started.wait()  # the shared fetch is running
+    waiter_b = asyncio.create_task(proto._handle_oauth2(auth))
+    await asyncio.sleep(0)  # let b attach to the shared task
+
+    waiter_a.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter_a
+
+    release.set()
+    assert await waiter_b == "tok"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_manuals_with_same_servers_but_different_auth_get_distinct_keys():
     a = McpCallTemplate(
         name="m",
