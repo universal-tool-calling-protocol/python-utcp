@@ -245,12 +245,17 @@ class McpCommunicationProtocol(CommunicationProtocol):
         client = self._mcp_clients.get(key)
         if client is not None and self._manual_config_keys.get(manual_name) == key:
             return client
+        # Build the connection config (URL validation + any manual OAuth2 token
+        # fetch) BEFORE taking the lock. The token endpoint comes from the manual
+        # and its fetch is network I/O, so holding ``_clients_lock`` across it
+        # would let one slow token endpoint stall client creation for every
+        # manual. ``from_dict`` spawns no processes, so a config built here but
+        # left unused after losing the creation race below is inert.
+        servers = await self._build_connection_servers(manual_call_template)
         async with self._clients_lock:
             client = self._mcp_clients.get(key)
             if client is None:
-                servers = await self._build_connection_servers(manual_call_template)
-                config = {"mcpServers": servers}
-                client = _QuietStdioMCPClient.from_dict(config)
+                client = _QuietStdioMCPClient.from_dict({"mcpServers": servers})
                 self._mcp_clients[key] = client
             previous_key = self._manual_config_keys.get(manual_name)
             self._manual_config_keys[manual_name] = key
