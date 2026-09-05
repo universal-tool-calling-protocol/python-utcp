@@ -25,8 +25,12 @@ class _NoSessionClient:
 
 
 def _stub_client(proto: McpCommunicationProtocol, monkeypatch):
+    # One shared instance, as the real _ensure_mcp_client returns the same client
+    # for the same configuration; in-flight creations are keyed by client identity.
+    client = _NoSessionClient()
+
     async def fake_ensure(_tmpl):
-        return _NoSessionClient()
+        return client
 
     monkeypatch.setattr(proto, "_ensure_mcp_client", fake_ensure)
 

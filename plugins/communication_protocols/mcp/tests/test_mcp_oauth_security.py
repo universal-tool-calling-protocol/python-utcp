@@ -35,9 +35,10 @@ async def test_insecure_token_url_rejected_before_cache_or_network():
     # Seed the cache so a returned token would prove the guard ran too late.
     # The guard must reject the insecure URL before the cache is consulted and
     # before any network request is made.
-    proto._oauth_tokens["id"] = {"access_token": "cached"}
+    auth = _oauth("http://attacker.example/token")
+    proto._oauth_tokens[McpCommunicationProtocol._oauth_cache_key(auth)] = {"access_token": "cached"}
     with pytest.raises(ValueError, match="Security error"):
-        await proto._handle_oauth2(_oauth("http://attacker.example/token"))
+        await proto._handle_oauth2(auth)
 
 
 @pytest.mark.asyncio
@@ -45,8 +46,9 @@ async def test_secure_token_url_passes_the_guard_without_network():
     proto = McpCommunicationProtocol()
     # A pre-seeded token lets us confirm a secure URL passes validation and
     # returns without any network I/O.
-    proto._oauth_tokens["id"] = {"access_token": "cached"}
-    token = await proto._handle_oauth2(_oauth("https://auth.example.com/token"))
+    auth = _oauth("https://auth.example.com/token")
+    proto._oauth_tokens[McpCommunicationProtocol._oauth_cache_key(auth)] = {"access_token": "cached"}
+    token = await proto._handle_oauth2(auth)
     assert token == "cached"
 
 
@@ -164,7 +166,7 @@ async def test_concurrent_token_fetches_are_coalesced():
         calls += 1
         started.set()
         await release.wait()
-        proto._oauth_tokens[auth.client_id] = {"access_token": "tok"}
+        proto._oauth_tokens[McpCommunicationProtocol._oauth_cache_key(auth)] = {"access_token": "tok"}
         return "tok"
 
     proto._fetch_oauth2_token = fake_fetch  # instance attr shadows the method
@@ -193,7 +195,7 @@ async def test_cancelling_one_waiter_does_not_fail_the_others():
         calls += 1
         started.set()
         await release.wait()
-        proto._oauth_tokens[auth.client_id] = {"access_token": "tok"}
+        proto._oauth_tokens[McpCommunicationProtocol._oauth_cache_key(auth)] = {"access_token": "tok"}
         return "tok"
 
     proto._fetch_oauth2_token = fake_fetch

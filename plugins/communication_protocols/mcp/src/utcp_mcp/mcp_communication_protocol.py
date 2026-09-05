@@ -191,7 +191,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # In-flight session creations, keyed by (configuration, server), so
         # concurrent first calls for the same server dial once instead of each
         # spawning a session and leaking all but the last.
-        self._session_creations: "Dict[Tuple[str, str], asyncio.Task]" = {}
+        self._session_creations: "Dict[Tuple[int, str], asyncio.Task]" = {}
         # One MCPClient per distinct server configuration. This protocol object is
         # registered once per process and shared by every manual, so a single
         # client would make manuals with different configurations evict each
@@ -239,6 +239,17 @@ class McpCommunicationProtocol(CommunicationProtocol):
     def _owner_key(manual_call_template: 'McpCallTemplate', config_key: str) -> str:
         """Identifies who holds a configuration: the calling UtcpClient plus the manual name."""
         return f"{_CURRENT_OWNER.get()}:{manual_call_template.name or config_key}"
+
+    @staticmethod
+    def _oauth_cache_key(auth: OAuth2Auth) -> str:
+        """Key for the OAuth token cache and in-flight map.
+
+        Keyed by the FULL configuration, not ``client_id`` alone: two manuals may
+        share a client_id but point at different issuers, scopes or secrets, and
+        must not receive each other's tokens. Matches the HTTP plugin. Carries
+        the secret, so it is used only as a dict key and never logged.
+        """
+        return json.dumps([auth.token_url, auth.client_id, auth.client_secret, auth.scope or ""])
 
     async def _ensure_mcp_client(self, manual_call_template: 'McpCallTemplate') -> MCPClient:
         """Return the MCPClient for this manual's configuration, creating it once.
@@ -331,7 +342,12 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # burst of first calls dials once instead of each spawning a session and
         # leaking all but the last. The check-and-set is synchronous, so exactly
         # one task is created.
-        inflight_key = (self._config_key(manual_call_template), server_name)
+        # Keyed by the CLIENT INSTANCE, not the configuration: a client can be
+        # retired (deregistered or drained) while a creation on it is pending,
+        # and a later client with the same configuration must not join that
+        # task, which is bound to the retired client. The task holds a reference
+        # to its client, so the id cannot be reused while the entry exists.
+        inflight_key = (id(client), server_name)
         task = self._session_creations.get(inflight_key)
         if task is None:
             task = asyncio.ensure_future(
@@ -838,20 +854,20 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # Validate the token endpoint before sending credentials to it, so a
         # manual cannot direct the operator's client secret at an arbitrary host.
         _ensure_secure_mcp_url(auth_details.token_url, context="MCP OAuth2 token URL")
-        client_id = auth_details.client_id
+        cache_key = self._oauth_cache_key(auth_details)
 
         # Return cached token if available.
-        if client_id in self._oauth_tokens:
-            return self._oauth_tokens[client_id]["access_token"]
+        if cache_key in self._oauth_tokens:
+            return self._oauth_tokens[cache_key]["access_token"]
 
         # Coalesce concurrent first-time fetches. The check-and-set below is
         # synchronous (no await between them), so exactly one task is created and
         # every other caller awaits it.
-        task = self._oauth_inflight.get(client_id)
+        task = self._oauth_inflight.get(cache_key)
         if task is None:
             task = asyncio.ensure_future(self._fetch_oauth2_token(auth_details))
-            self._oauth_inflight[client_id] = task
-            task.add_done_callback(lambda _t, cid=client_id: self._oauth_inflight.pop(cid, None))
+            self._oauth_inflight[cache_key] = task
+            task.add_done_callback(lambda _t, k=cache_key: self._oauth_inflight.pop(k, None))
         # Shield the shared task: awaiting a task directly propagates a waiter's
         # cancellation into the task, which would cancel the fetch for every other
         # waiter too. shield lets a cancelled waiter raise on its own while the
@@ -861,6 +877,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
     async def _fetch_oauth2_token(self, auth_details: OAuth2Auth) -> str:
         """Perform the OAuth2 client-credentials request (body method, then Basic)."""
         client_id = auth_details.client_id
+        cache_key = self._oauth_cache_key(auth_details)
         async with aiohttp.ClientSession() as session:
             # Method 1: Send credentials in the request body
             try:
@@ -875,7 +892,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     self._reject_token_redirect(response)
                     response.raise_for_status()
                     token_response = await response.json()
-                    self._oauth_tokens[client_id] = token_response
+                    self._oauth_tokens[cache_key] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
                 self._log_error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
@@ -892,7 +909,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     self._reject_token_redirect(response)
                     response.raise_for_status()
                     token_response = await response.json()
-                    self._oauth_tokens[client_id] = token_response
+                    self._oauth_tokens[cache_key] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
                 self._log_error(f"OAuth2 with Basic Auth header also failed: {e}")
