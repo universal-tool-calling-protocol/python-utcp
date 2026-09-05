@@ -188,6 +188,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # client_id), so concurrent first-time callers share one request instead
         # of each POSTing to the token endpoint.
         self._oauth_inflight: "Dict[str, asyncio.Task[str]]" = {}
+        # In-flight session creations, keyed by (configuration, server), so
+        # concurrent first calls for the same server dial once instead of each
+        # spawning a session and leaking all but the last.
+        self._session_creations: "Dict[Tuple[str, str], asyncio.Task]" = {}
         # One MCPClient per distinct server configuration. This protocol object is
         # registered once per process and shared by every manual, so a single
         # client would make manuals with different configurations evict each
@@ -314,27 +318,45 @@ class McpCommunicationProtocol(CommunicationProtocol):
     async def _get_or_create_session(self, server_name: str, manual_call_template: 'McpCallTemplate'):
         """Get an existing session or create a new one using MCPClient."""
         client = await self._ensure_mcp_client(manual_call_template)
-        
+
         try:
             # Try to get existing session
             session = client.get_session(server_name)
             self._log_info(f"Reusing existing session for server: {server_name}")
             return session
         except ValueError:
-            # Session doesn't exist, create a new one
-            self._log_info(f"Creating new session for server: {server_name}")
-            try:
-                session = await client.create_session(server_name, auto_initialize=True)
-            except Exception as e:
-                server_config = manual_call_template.config.mcpServers.get(server_name)
-                is_stdio = isinstance(server_config, dict) and "command" in server_config
-                if is_stdio and os.environ.get(CHILD_STDERR_ENV_VAR) != "inherit":
-                    self._log_error(
-                        f"Failed to start stdio MCP server '{server_name}': {e}. The child's stderr was "
-                        f"suppressed; re-run with {CHILD_STDERR_ENV_VAR}=inherit to see what it printed while starting."
-                    )
-                raise
-            return session
+            pass
+
+        # Coalesce concurrent creations for the same (configuration, server) so a
+        # burst of first calls dials once instead of each spawning a session and
+        # leaking all but the last. The check-and-set is synchronous, so exactly
+        # one task is created.
+        inflight_key = (self._config_key(manual_call_template), server_name)
+        task = self._session_creations.get(inflight_key)
+        if task is None:
+            task = asyncio.ensure_future(
+                self._create_session(server_name, client, manual_call_template)
+            )
+            self._session_creations[inflight_key] = task
+            task.add_done_callback(lambda _t, k=inflight_key: self._session_creations.pop(k, None))
+        # Shield so a cancelled waiter does not cancel the shared creation for
+        # the others (see _handle_oauth2 for the same reasoning).
+        return await asyncio.shield(task)
+
+    async def _create_session(self, server_name: str, client: MCPClient, manual_call_template: 'McpCallTemplate'):
+        """Create (and initialize) a new session for ``server_name`` on ``client``."""
+        self._log_info(f"Creating new session for server: {server_name}")
+        try:
+            return await client.create_session(server_name, auto_initialize=True)
+        except Exception as e:
+            server_config = manual_call_template.config.mcpServers.get(server_name)
+            is_stdio = isinstance(server_config, dict) and "command" in server_config
+            if is_stdio and os.environ.get(CHILD_STDERR_ENV_VAR) != "inherit":
+                self._log_error(
+                    f"Failed to start stdio MCP server '{server_name}': {e}. The child's stderr was "
+                    f"suppressed; re-run with {CHILD_STDERR_ENV_VAR}=inherit to see what it printed while starting."
+                )
+            raise
 
     async def _release_manual_client(self, manual_call_template: 'McpCallTemplate') -> None:
         """Drop this manual's claim on its client. The client's sessions are closed
