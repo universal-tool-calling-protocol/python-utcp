@@ -840,6 +840,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
         """Close all active sessions and clean up resources."""
         self._log_info("Closing MCP communication protocol and cleaning up all sessions")
         await self._cleanup_all_sessions()
+        # Drop cached tokens on a drain so this shared instance does not hold
+        # credentials past it (matches the TypeScript plugin). In-flight fetches
+        # are left alone: they self-prune when they settle.
+        self._oauth_tokens.clear()
         self._log_info("MCP communication protocol closed successfully")
 
     async def _handle_oauth2(self, auth_details: OAuth2Auth) -> str:

@@ -228,3 +228,13 @@ async def test_manuals_with_same_servers_but_different_auth_get_distinct_keys():
         auth=_oauth("https://auth-b.example.com/token"),
     )
     assert McpCommunicationProtocol._config_key(a) != McpCommunicationProtocol._config_key(b)
+
+
+@pytest.mark.asyncio
+async def test_close_drops_cached_tokens():
+    # A drain must not leave credentials cached on this shared instance.
+    proto = McpCommunicationProtocol()
+    auth = _oauth("https://auth.example.com/token")
+    proto._oauth_tokens[McpCommunicationProtocol._oauth_cache_key(auth)] = {"access_token": "tok"}
+    await proto.close()
+    assert proto._oauth_tokens == {}
