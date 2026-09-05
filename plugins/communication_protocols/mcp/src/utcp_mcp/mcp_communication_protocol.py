@@ -840,9 +840,14 @@ class McpCommunicationProtocol(CommunicationProtocol):
         """Close all active sessions and clean up resources."""
         self._log_info("Closing MCP communication protocol and cleaning up all sessions")
         await self._cleanup_all_sessions()
-        # Drop cached tokens on a drain so this shared instance does not hold
-        # credentials past it (matches the TypeScript plugin). In-flight fetches
-        # are left alone: they self-prune when they settle.
+        # Drain the OAuth state so this shared instance holds no credentials past
+        # close(). Cancel in-flight fetches (asyncio can) and drop their entries;
+        # a fetch that still lands finds it is no longer the current entry and,
+        # by the caching rule in _on_oauth_fetch_done, does not repopulate the
+        # cache.
+        for task in list(self._oauth_inflight.values()):
+            task.cancel()
+        self._oauth_inflight.clear()
         self._oauth_tokens.clear()
         self._log_info("MCP communication protocol closed successfully")
 
@@ -871,17 +876,37 @@ class McpCommunicationProtocol(CommunicationProtocol):
         if task is None:
             task = asyncio.ensure_future(self._fetch_oauth2_token(auth_details))
             self._oauth_inflight[cache_key] = task
-            task.add_done_callback(lambda _t, k=cache_key: self._oauth_inflight.pop(k, None))
+            task.add_done_callback(functools.partial(self._on_oauth_fetch_done, cache_key))
         # Shield the shared task: awaiting a task directly propagates a waiter's
         # cancellation into the task, which would cancel the fetch for every other
         # waiter too. shield lets a cancelled waiter raise on its own while the
         # shared fetch runs to completion for the rest.
-        return await asyncio.shield(task)
+        return (await asyncio.shield(task))["access_token"]
 
-    async def _fetch_oauth2_token(self, auth_details: OAuth2Auth) -> str:
-        """Perform the OAuth2 client-credentials request (body method, then Basic)."""
+    def _on_oauth_fetch_done(self, cache_key: str, task: "asyncio.Task") -> None:
+        """Settle handler for a shared token fetch.
+
+        The in-flight entry is the sole authority for who may write the cache:
+        only a fetch that is STILL the current entry when it settles caches its
+        result, and only then does it remove itself. An entry dropped by
+        close() therefore never repopulates the cache and never clobbers a
+        successor — there is no version counter to coordinate or leak.
+        """
+        if self._oauth_inflight.get(cache_key) is not task:
+            return
+        self._oauth_inflight.pop(cache_key, None)
+        if task.cancelled() or task.exception() is not None:
+            return
+        self._oauth_tokens[cache_key] = task.result()
+
+    async def _fetch_oauth2_token(self, auth_details: OAuth2Auth) -> Dict[str, Any]:
+        """Perform the OAuth2 client-credentials request (body method, then Basic).
+
+        Pure fetch: returns the token response and never writes the cache —
+        whether the result may be cached is decided by ``_on_oauth_fetch_done``,
+        which knows whether this fetch is still the current in-flight entry.
+        """
         client_id = auth_details.client_id
-        cache_key = self._oauth_cache_key(auth_details)
         async with aiohttp.ClientSession() as session:
             # Method 1: Send credentials in the request body
             try:
@@ -896,8 +921,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     self._reject_token_redirect(response)
                     response.raise_for_status()
                     token_response = await response.json()
-                    self._oauth_tokens[cache_key] = token_response
-                    return token_response["access_token"]
+                    return token_response
             except aiohttp.ClientError as e:
                 self._log_error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
                 
@@ -913,8 +937,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     self._reject_token_redirect(response)
                     response.raise_for_status()
                     token_response = await response.json()
-                    self._oauth_tokens[cache_key] = token_response
-                    return token_response["access_token"]
+                    return token_response
             except aiohttp.ClientError as e:
                 self._log_error(f"OAuth2 with Basic Auth header also failed: {e}")
                 raise e

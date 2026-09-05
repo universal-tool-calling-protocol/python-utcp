@@ -166,8 +166,7 @@ async def test_concurrent_token_fetches_are_coalesced():
         calls += 1
         started.set()
         await release.wait()
-        proto._oauth_tokens[McpCommunicationProtocol._oauth_cache_key(auth)] = {"access_token": "tok"}
-        return "tok"
+        return {"access_token": "tok"}  # cached by the settle handler, if still current
 
     proto._fetch_oauth2_token = fake_fetch  # instance attr shadows the method
     auth = _oauth("https://auth.example.com/token")
@@ -195,8 +194,7 @@ async def test_cancelling_one_waiter_does_not_fail_the_others():
         calls += 1
         started.set()
         await release.wait()
-        proto._oauth_tokens[McpCommunicationProtocol._oauth_cache_key(auth)] = {"access_token": "tok"}
-        return "tok"
+        return {"access_token": "tok"}  # cached by the settle handler, if still current
 
     proto._fetch_oauth2_token = fake_fetch
     auth = _oauth("https://auth.example.com/token")
@@ -238,3 +236,30 @@ async def test_close_drops_cached_tokens():
     proto._oauth_tokens[McpCommunicationProtocol._oauth_cache_key(auth)] = {"access_token": "tok"}
     await proto.close()
     assert proto._oauth_tokens == {}
+
+
+@pytest.mark.asyncio
+async def test_fetch_landing_after_close_does_not_repopulate_cache():
+    # close() drops the in-flight entry; a fetch that still lands is no longer
+    # the current entry and must not write the cache (identity gate), so the
+    # drain leaves no credential behind.
+    proto = McpCommunicationProtocol()
+    release = asyncio.Event()
+
+    async def fake_fetch(_auth):
+        await release.wait()
+        return {"access_token": "late"}
+
+    proto._fetch_oauth2_token = fake_fetch
+    auth = _oauth("https://auth.example.com/token")
+    waiter = asyncio.create_task(proto._handle_oauth2(auth))
+    await asyncio.sleep(0)  # the shared fetch is registered and running
+    assert len(proto._oauth_inflight) == 1
+
+    await proto.close()  # cancels the fetch and drops its entry
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert proto._oauth_tokens == {}
+    assert proto._oauth_inflight == {}
