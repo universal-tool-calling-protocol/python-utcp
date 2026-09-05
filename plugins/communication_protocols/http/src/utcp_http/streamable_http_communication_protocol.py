@@ -153,7 +153,9 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     await raise_for_status_with_body(response)
                     response_data = await response.json()
                     utcp_manual = UtcpManualSerializer().validate_dict(response_data)
-                    reject_remote_loopback_tool_urls(url, utcp_manual)
+                    # Final (post-redirect) URL: loopback discovery that redirected
+                    # to a remote origin loses the local-dev exemption.
+                    reject_remote_loopback_tool_urls(str(response.url), utcp_manual)
                     return RegisterManualResult(
                         success=True,
                         manual_call_template=manual_call_template,

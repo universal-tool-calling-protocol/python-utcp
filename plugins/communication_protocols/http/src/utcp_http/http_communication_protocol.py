@@ -226,7 +226,10 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                         if "utcp_version" in response_data and "tools" in response_data:
                             logger.info(f"Detected UTCP manual from '{manual_call_template.name}'.")
                             utcp_manual = UtcpManualSerializer().validate_dict(response_data)
-                            reject_remote_loopback_tool_urls(manual_call_template.url, utcp_manual)
+                            # Use the final (post-redirect) URL: a loopback
+                            # discovery URL that redirected to a remote origin is
+                            # serving a remote manual and loses the local-dev exemption.
+                            reject_remote_loopback_tool_urls(str(response.url), utcp_manual)
                         else:
                             logger.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
                             converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, call_template_name=manual_call_template.name, auth_tools=manual_call_template.auth_tools)

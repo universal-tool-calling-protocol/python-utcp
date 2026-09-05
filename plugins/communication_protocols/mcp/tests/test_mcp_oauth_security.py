@@ -9,6 +9,7 @@ Two things are covered here:
      validated before a connection is dialed.
 """
 
+import aiohttp
 import pytest
 
 from utcp.data.auth_implementations import OAuth2Auth
@@ -27,20 +28,41 @@ def _oauth(token_url: str) -> OAuth2Auth:
 
 
 @pytest.mark.asyncio
-async def test_insecure_token_url_rejected_before_any_request():
+async def test_insecure_token_url_rejected_before_cache_or_network():
     proto = McpCommunicationProtocol()
+    # Seed the cache so a returned token would prove the guard ran too late.
+    # The guard must reject the insecure URL before the cache is consulted and
+    # before any network request is made.
+    proto._oauth_tokens["id"] = {"access_token": "cached"}
     with pytest.raises(ValueError, match="Security error"):
         await proto._handle_oauth2(_oauth("http://attacker.example/token"))
 
 
 @pytest.mark.asyncio
-async def test_secure_token_url_passes_the_guard():
+async def test_secure_token_url_passes_the_guard_without_network():
     proto = McpCommunicationProtocol()
-    # Validation passes for a loopback token URL; the fetch then fails with a
-    # connection error, which must NOT be the security-guard message.
-    with pytest.raises(Exception) as excinfo:
-        await proto._handle_oauth2(_oauth("http://127.0.0.1:1/token"))
-    assert "Security error" not in str(excinfo.value)
+    # A pre-seeded token lets us confirm a secure URL passes validation and
+    # returns without any network I/O.
+    proto._oauth_tokens["id"] = {"access_token": "cached"}
+    token = await proto._handle_oauth2(_oauth("https://auth.example.com/token"))
+    assert token == "cached"
+
+
+def test_token_endpoint_redirect_is_refused():
+    # Redirects are disabled on the token request; a 3xx would be an attempt to
+    # bounce the credential-bearing POST elsewhere and must be refused.
+    class _Redirect:
+        status = 302
+
+    with pytest.raises(aiohttp.ClientError, match="redirect"):
+        McpCommunicationProtocol._reject_token_redirect(_Redirect())
+
+
+def test_token_endpoint_non_redirect_passes():
+    class _Ok:
+        status = 200
+
+    McpCommunicationProtocol._reject_token_redirect(_Ok())
 
 
 @pytest.mark.asyncio

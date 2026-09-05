@@ -496,6 +496,11 @@ def reject_remote_loopback_tool_urls(
     manuals bypass the converter, so the same rule is applied here to every
     tool's call-template URL. A manual fetched from loopback (local dev) is
     exempt, exactly as the converter exempts a local spec.
+
+    ``discovery_url`` must be the *final* response URL after any redirects, not
+    the URL originally requested: a loopback discovery URL that redirects to a
+    remote origin is serving a remote manual and must not keep the local-dev
+    exemption.
     """
     if is_loopback_url(discovery_url):
         return

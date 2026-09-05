@@ -294,7 +294,11 @@ class McpCommunicationProtocol(CommunicationProtocol):
             # already carry their own credentials. mcp-use turns ``auth_token``
             # into an ``Authorization: Bearer`` header on the connection.
             if token is not None and "url" in server_config:
-                if not server_config.get("auth_token") and not _has_authorization_header(server_config):
+                if (
+                    not server_config.get("auth_token")
+                    and not server_config.get("auth")
+                    and not _has_authorization_header(server_config)
+                ):
                     server_config["auth_token"] = token
         return servers
 
@@ -812,7 +816,8 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     'client_secret': auth_details.client_secret,
                     'scope': auth_details.scope
                 }
-                async with session.post(auth_details.token_url, data=body_data) as response:
+                async with session.post(auth_details.token_url, data=body_data, allow_redirects=False) as response:
+                    self._reject_token_redirect(response)
                     response.raise_for_status()
                     token_response = await response.json()
                     self._oauth_tokens[client_id] = token_response
@@ -828,7 +833,8 @@ class McpCommunicationProtocol(CommunicationProtocol):
                     'grant_type': 'client_credentials',
                     'scope': auth_details.scope
                 }
-                async with session.post(auth_details.token_url, data=header_data, auth=header_auth) as response:
+                async with session.post(auth_details.token_url, data=header_data, auth=header_auth, allow_redirects=False) as response:
+                    self._reject_token_redirect(response)
                     response.raise_for_status()
                     token_response = await response.json()
                     self._oauth_tokens[client_id] = token_response
@@ -836,3 +842,17 @@ class McpCommunicationProtocol(CommunicationProtocol):
             except aiohttp.ClientError as e:
                 self._log_error(f"OAuth2 with Basic Auth header also failed: {e}")
                 raise e
+
+    @staticmethod
+    def _reject_token_redirect(response: "aiohttp.ClientResponse") -> None:
+        """Refuse a redirect from the OAuth2 token endpoint.
+
+        Redirects are disabled on the token request, so a 3xx here would be a
+        token endpoint trying to bounce the credential-bearing POST to another
+        host. Fail instead of replaying ``client_id`` / ``client_secret`` there.
+        """
+        if 300 <= response.status < 400:
+            raise aiohttp.ClientError(
+                f"OAuth2 token endpoint returned a redirect ({response.status}); "
+                "refusing to replay credentials to the redirect target."
+            )
