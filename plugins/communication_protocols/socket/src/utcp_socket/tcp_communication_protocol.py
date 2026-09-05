@@ -8,7 +8,7 @@ import json
 import socket
 import struct
 import sys
-from typing import Dict, Any, List, Optional, Callable, Union
+from typing import Dict, Any, List, Optional, Callable, Union, AsyncGenerator
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp_socket.tcp_call_template import TCPProvider, TCPProviderSerializer
@@ -404,10 +404,11 @@ class TCPTransport(CommunicationProtocol):
             raise ValueError("TCPTransport can only be used with TCPProvider")
         self._log_info(f"Deregistering TCP provider '{manual_call_template.name}' (no-op)")
     
-    async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate):
-        async def _generator():
-            yield await self.call_tool(caller, tool_name, tool_args, tool_call_template)
-        return _generator()
+    async def call_tool_streaming(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+        """REQUIRED
+        Streaming variant: the TCP protocol does not natively stream, so the full result is yielded as a single chunk."""
+        result = await self.call_tool(caller, tool_name, tool_args, tool_call_template)
+        yield result
     
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """Call a TCP tool."""

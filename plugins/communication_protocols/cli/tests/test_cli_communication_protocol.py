@@ -277,6 +277,22 @@ async def test_call_tool_json_output(transport: CliCommunicationProtocol, mock_c
 
 
 @pytest.mark.asyncio
+async def test_call_tool_streaming_yields_single_chunk(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
+    """Streaming mode should emit the full result as one chunk instead of failing."""
+    call_template = CliCallTemplate(
+        commands=[
+            {"command": f"{python_executable} {mock_cli_script} --message UTCP_ARG_message_UTCP_END"}
+        ]
+    )
+
+    chunks = [chunk async for chunk in transport.call_tool_streaming(None, "echo", {"message": "Hello World"}, call_template)]
+
+    assert len(chunks) == 1
+    assert isinstance(chunks[0], dict)
+    assert "Echo:" in chunks[0]["result"] and "Hello" in chunks[0]["result"]
+
+
+@pytest.mark.asyncio
 async def test_call_tool_math_operation(transport: CliCommunicationProtocol, mock_cli_script, python_executable):
     """Test calling a math tool with numeric arguments."""
     call_template = CliCallTemplate(

@@ -33,7 +33,8 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 from utcp_http.openapi_converter import OpenApiConverter
-from utcp_http._security import ensure_secure_url, safe_request_with_redirects
+from utcp_http._security import ensure_secure_url, safe_request_with_redirects, reject_remote_loopback_tool_urls
+from utcp_http._errors import raise_for_status_with_body
 import logging
 
 logging.basicConfig(
@@ -210,7 +211,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                         timeout=aiohttp.ClientTimeout(total=10.0),
                         auth_header_names=auth_header_names,
                     ) as response:
-                        response.raise_for_status()  # Raise exception for 4XX/5XX responses
+                        await raise_for_status_with_body(response)  # 4XX/5XX, with the server's body in the message
 
                         # Check content type to determine how to parse the response
                         content_type = response.headers.get('Content-Type', '')
@@ -225,6 +226,10 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                         if "utcp_version" in response_data and "tools" in response_data:
                             logger.info(f"Detected UTCP manual from '{manual_call_template.name}'.")
                             utcp_manual = UtcpManualSerializer().validate_dict(response_data)
+                            # Use the final (post-redirect) URL: a loopback
+                            # discovery URL that redirected to a remote origin is
+                            # serving a remote manual and loses the local-dev exemption.
+                            reject_remote_loopback_tool_urls(str(response.url), utcp_manual)
                         else:
                             logger.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
                             converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, call_template_name=manual_call_template.name, auth_tools=manual_call_template.auth_tools)
@@ -359,7 +364,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                     timeout=aiohttp.ClientTimeout(total=30.0),
                     auth_header_names=auth_header_names,
                 ) as response:
-                    response.raise_for_status()
+                    await raise_for_status_with_body(response)
                     
                     content_type = response.headers.get('Content-Type', '').lower()
                     if 'application/json' in content_type:

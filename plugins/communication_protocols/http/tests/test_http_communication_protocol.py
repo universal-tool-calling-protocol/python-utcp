@@ -139,6 +139,48 @@ async def app():
     app.router.add_post('/token', token_handler)
     app.router.add_post('/token_header_auth', token_header_auth_handler)
     app.router.add_get('/error', error_handler)
+
+    # Non-2xx with a descriptive body, like a real API refusing a call.
+    async def forbidden_handler(request):
+        return web.json_response({"error": "You are not allowed to do that, and here is exactly why."}, status=403)
+
+    # Some APIs nest an object under `error`; the message must show its JSON.
+    async def forbidden_object_handler(request):
+        return web.json_response({"error": {"code": "INVALID_FIELD", "reason": "value out of range"}}, status=422)
+
+    app.router.add_route('*', '/forbidden', forbidden_handler)
+    app.router.add_route('*', '/forbidden-object', forbidden_object_handler)
+
+    # A structured `error` next to a generic `message`: the structure must win.
+    async def forbidden_object_then_message_handler(request):
+        return web.json_response(
+            {"error": {"code": "INVALID_FIELD", "reason": "value out of range"}, "message": "Request failed"},
+            status=422,
+        )
+
+    # A huge error body (think an HTML stack trace): the read itself is bounded.
+    async def forbidden_huge_handler(request):
+        return web.Response(status=403, text="x" * (1024 * 1024))
+
+    app.router.add_route('*', '/forbidden-object-then-message', forbidden_object_then_message_handler)
+    app.router.add_route('*', '/forbidden-huge', forbidden_huge_handler)
+
+    # No Content-Type at all, so no charset to decode with.
+    async def forbidden_no_charset_handler(request):
+        return web.Response(status=403, body=b'{"error": "no charset here"}')
+
+    # A charset Python does not know.
+    async def forbidden_bad_charset_handler(request):
+        return web.Response(status=403, body=b'{"error": "odd charset"}', content_type="application/json", charset="x-unknown-charset")
+
+    app.router.add_route('*', '/forbidden-no-charset', forbidden_no_charset_handler)
+
+    # A body nested deeper than the JSON parser's recursion limit.
+    async def forbidden_deep_handler(request):
+        return web.Response(status=503, body=b"[" * 20000, content_type="application/json")
+
+    app.router.add_route('*', '/forbidden-deep', forbidden_deep_handler)
+    app.router.add_route('*', '/forbidden-bad-charset', forbidden_bad_charset_handler)
     
     return app
 
@@ -736,3 +778,112 @@ def test_auth_tools_integration():
     serialized = serializer.to_dict(call_template)
     assert "auth_tools" in serialized
     assert serialized["auth_tools"]["auth_type"] == "api_key"
+
+
+# --- Server error bodies are surfaced, not just status codes ---
+
+@pytest.mark.asyncio
+async def test_call_tool_surfaces_server_error_body(http_transport, aiohttp_client, app):
+    """A refused call carries the server's reason, not only "403, message='Forbidden'"."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {"param1": "value1"}, call_template)
+    assert excinfo.value.status == 403
+    assert "You are not allowed to do that, and here is exactly why." in str(excinfo.value)
+    assert '"error"' in excinfo.value.body
+
+
+@pytest.mark.asyncio
+async def test_call_tool_surfaces_object_valued_error_field(http_transport, aiohttp_client, app):
+    """An object under `error` shows its JSON structure in the message."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-object", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert excinfo.value.status == 422
+    assert "INVALID_FIELD" in str(excinfo.value)
+    assert "value out of range" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_register_manual_surfaces_server_error_body(http_transport, aiohttp_client, app):
+    """A refused discovery reports the server's reason in errors[]."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden", http_method="GET")
+    result = await http_transport.register_manual(None, call_template)
+    assert result.success is False
+    assert "You are not allowed to do that, and here is exactly why." in result.errors[0]
+    assert "403" in result.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_structured_error_wins_over_generic_message(http_transport, aiohttp_client, app):
+    """An object under `error` is shown even when a lower-priority string field exists."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-object-then-message", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert "INVALID_FIELD" in excinfo.value.message
+    # The detail is the whole structured body, not the generic "Request failed".
+    from utcp_http._errors import error_detail_from_body
+    import json as _json
+    assert _json.loads(error_detail_from_body(excinfo.value.body)) == {
+        "error": {"code": "INVALID_FIELD", "reason": "value out of range"},
+        "message": "Request failed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_huge_error_body_is_read_bounded(http_transport, aiohttp_client, app):
+    """A 1 MiB error body is neither buffered in full nor folded into the message in full."""
+    from utcp_http._errors import MAX_BODY_READ_BYTES, MAX_DETAIL_CHARS
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-huge", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert excinfo.value.status == 403
+    assert len(excinfo.value.body) <= MAX_BODY_READ_BYTES
+    assert len(excinfo.value.message) <= MAX_DETAIL_CHARS + 50
+
+
+def test_error_detail_from_body_precedence_and_fallbacks():
+    from utcp_http._errors import error_detail_from_body
+    assert error_detail_from_body("") is None
+    assert error_detail_from_body("   ") is None
+    assert error_detail_from_body("plain text") == "plain text"
+    assert error_detail_from_body('{"error": "nope"}') == "nope"
+    assert error_detail_from_body('{"message": "nope"}') == "nope"
+    # Structured error beats a later generic string.
+    assert error_detail_from_body('{"error": {"code": "X"}, "message": "generic"}') == '{"error": {"code": "X"}, "message": "generic"}'
+    # An explicit null or blank string is skipped, not treated as structured.
+    assert error_detail_from_body('{"error": null, "message": "generic"}') == "generic"
+    assert error_detail_from_body('{"error": "  ", "detail": "specific"}') == "specific"
+    # Non-object JSON falls back to the raw body.
+    assert error_detail_from_body('["a", "b"]') == '["a", "b"]'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path,expected", [("/forbidden-no-charset", "no charset here"), ("/forbidden-bad-charset", "odd charset")])
+async def test_error_body_is_surfaced_without_a_usable_charset(http_transport, aiohttp_client, app, path, expected):
+    """A missing or unknown charset must not lose the body; decode as UTF-8."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}{path}", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert expected in excinfo.value.message
+
+
+@pytest.mark.asyncio
+async def test_deeply_nested_error_body_still_raises_client_response_error(http_transport, aiohttp_client, app):
+    """A body that overflows the JSON parser's recursion limit must not escape as RecursionError."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(name="t", url=f"http://localhost:{client.port}/forbidden-deep", http_method="POST")
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await http_transport.call_tool(None, "t.tool", {}, call_template)
+    assert excinfo.value.status == 503
+
+
+def test_error_detail_collapses_control_characters():
+    from utcp_http._errors import error_detail_from_body
+    assert error_detail_from_body('{"error": "line one\\nline two\\u001b[31m"}') == "line one line two [31m"

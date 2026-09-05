@@ -15,7 +15,8 @@ from utcp.data.auth_implementations import BasicAuth
 from utcp.data.auth_implementations import OAuth2Auth
 from utcp_http.streamable_http_call_template import StreamableHttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth, ClientResponse
-from utcp_http._security import ensure_secure_url, safe_request_with_redirects
+from utcp_http._errors import raise_for_status_with_body
+from utcp_http._security import ensure_secure_url, safe_request_with_redirects, reject_remote_loopback_tool_urls
 import logging
 
 logging.basicConfig(
@@ -149,9 +150,12 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     timeout=aiohttp.ClientTimeout(total=10.0),
                     auth_header_names=auth_header_names,
                 ) as response:
-                    response.raise_for_status()
+                    await raise_for_status_with_body(response)
                     response_data = await response.json()
                     utcp_manual = UtcpManualSerializer().validate_dict(response_data)
+                    # Final (post-redirect) URL: loopback discovery that redirected
+                    # to a remote origin loses the local-dev exemption.
+                    reject_remote_loopback_tool_urls(str(response.url), utcp_manual)
                     return RegisterManualResult(
                         success=True,
                         manual_call_template=manual_call_template,
@@ -292,7 +296,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                     f"followed during streaming handshakes; update the "
                     f"call template to point at the final URL directly."
                 )
-            response.raise_for_status()
+            await raise_for_status_with_body(response)
 
             async for chunk in self._process_http_stream(response, tool_call_template.chunk_size, tool_call_template.name):
                 yield chunk
@@ -309,7 +313,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
     async def _process_http_stream(self, response: ClientResponse, chunk_size: Optional[int], provider_name: str) -> AsyncIterator[Any]:
         """Process the HTTP stream and yield chunks based on content type."""
         try:
-            content_type = response.headers.get('Content-Type', '')
+            content_type = response.headers.get('Content-Type', '').lower()
 
             if 'application/x-ndjson' in content_type:
                 async for line in response.content:
