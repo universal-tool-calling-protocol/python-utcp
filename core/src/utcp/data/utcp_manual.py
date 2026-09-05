@@ -6,8 +6,9 @@ between tool providers and clients for sharing available tools and their
 configurations.
 """
 
+import logging
 from typing import List, Union, Optional, Any
-from pydantic import BaseModel, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 from utcp.python_specific_tooling.tool_decorator import ToolContext
 from utcp.python_specific_tooling.version import __version__
 from utcp.data.tool import Tool
@@ -15,7 +16,10 @@ from utcp.data.tool import ToolSerializer
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
 from utcp.plugins.plugin_loader import ensure_plugins_initialized
+from utcp.exceptions import UtcpUnknownCallTemplateTypeError
 import traceback
+
+logger = logging.getLogger(__name__)
 
 class UtcpManual(BaseModel):
     """REQUIRED
@@ -33,7 +37,12 @@ class UtcpManual(BaseModel):
         version: UTCP protocol version supported by the provider.
             Defaults to the current library version.
         tools: List of available tools with their complete configurations
-            including input/output schemas, descriptions, and metadata.
+            including input/output schemas, descriptions, and metadata. Tools whose
+            call template type is not registered in this client are skipped with a
+            warning; the remaining tools load normally.
+
+    Keys this client does not know are kept in `model_extra` and re-serialized
+    unchanged, so `info` and `x-` extension keys survive a load/store round trip.
 
     Example:
         ```python
@@ -55,14 +64,16 @@ class UtcpManual(BaseModel):
         )
         ```
     """
+    model_config = ConfigDict(extra="allow")
+
     utcp_version: str = __version__
     manual_version: str = "1.0.0"
     tools: List[Tool]
 
-    def __init__(self, tools: List[Tool], manual_version: str = "1.0.0", utcp_version: str = __version__):
-        super().__init__(utcp_version=utcp_version, manual_version=manual_version, tools=tools)
+    def __init__(self, **data):
         """Initializes the UtcpManual, ensuring plugins are loaded."""
         ensure_plugins_initialized()
+        super().__init__(**data)
 
     @staticmethod
     def create_from_decorators(manual_version: str = "1.0.0", exclude: Optional[List[str]] = None) -> "UtcpManual":
@@ -103,7 +114,20 @@ class UtcpManual(BaseModel):
     @field_validator("tools", mode="before")
     @classmethod
     def validate_tools(cls, tools: List[Union[Tool, dict]]) -> List[Tool]:
-        return [v if isinstance(v, Tool) else ToolSerializer().validate_dict(v) for v in tools]
+        validated: List[Tool] = []
+        for v in tools:
+            if isinstance(v, Tool):
+                validated.append(v)
+                continue
+            try:
+                validated.append(ToolSerializer().validate_dict(v))
+            except UtcpUnknownCallTemplateTypeError as e:
+                logger.warning(
+                    "Skipping tool '%s' in manual: %s The rest of the manual is unaffected.",
+                    v.get("name", "<unnamed>") if isinstance(v, dict) else "<unnamed>",
+                    e,
+                )
+        return validated
 
     
 class UtcpManualSerializer(Serializer[UtcpManual]):
