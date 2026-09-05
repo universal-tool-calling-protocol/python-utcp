@@ -271,11 +271,19 @@ async def test_fetch_landing_after_close_does_not_repopulate_cache():
 
 
 def test_require_access_token_rejects_malformed_responses():
-    # A 200 without an access_token is a failed fetch, not a cacheable result.
-    with pytest.raises(aiohttp.ClientError, match="access_token"):
-        McpCommunicationProtocol._require_access_token({"token_type": "bearer"})
-    with pytest.raises(aiohttp.ClientError, match="access_token"):
-        McpCommunicationProtocol._require_access_token(["not", "a", "dict"])
+    # A 200 without a USABLE access_token is a failed fetch, not a cacheable
+    # result. Usable means a non-empty string: a truthy non-string (12345, True)
+    # would be injected as an invalid bearer credential on every reuse. The
+    # non-string cases are what fail if the isinstance(str) clause is removed.
+    for bad in (
+        {"token_type": "bearer"},
+        ["not", "a", "dict"],
+        {"access_token": 12345},
+        {"access_token": True},
+        {"access_token": ""},
+    ):
+        with pytest.raises(aiohttp.ClientError, match="access_token"):
+            McpCommunicationProtocol._require_access_token(bad)
     assert McpCommunicationProtocol._require_access_token({"access_token": "t"}) == {"access_token": "t"}
 
 

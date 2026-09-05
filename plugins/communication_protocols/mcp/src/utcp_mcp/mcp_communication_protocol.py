@@ -951,8 +951,12 @@ class McpCommunicationProtocol(CommunicationProtocol):
         lets the body-vs-Basic fallback proceed the same way a transport error
         would. Matches the TypeScript plugin.
         """
-        if not isinstance(token_response, dict) or not token_response.get("access_token"):
-            raise aiohttp.ClientError("OAuth2 token endpoint responded without an access_token")
+        # "Usable" means a non-empty string: mcp-use formats whatever it is given
+        # into ``Bearer <token>``, so a truthy non-string (a number, ``True``, a
+        # dict) would be injected as an invalid credential on every reuse.
+        token = token_response.get("access_token") if isinstance(token_response, dict) else None
+        if not isinstance(token, str) or not token:
+            raise aiohttp.ClientError("OAuth2 token endpoint responded without a usable access_token")
         return token_response
 
     @staticmethod
