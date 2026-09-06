@@ -362,8 +362,9 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         endpoint itself.
         """
         client_id = auth_details.client_id
-        if client_id in self._oauth_tokens:
-            return self._oauth_tokens[client_id]["access_token"]
+        cache_key = auth_details.cache_key()
+        if cache_key in self._oauth_tokens:
+            return self._oauth_tokens[cache_key]["access_token"]
 
         # Reject obviously-internal or plain-HTTP non-loopback token
         # endpoints before any credential bytes leave the process.
@@ -387,7 +388,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     token_data = await response.json()
-                    self._oauth_tokens[client_id] = token_data
+                    self._oauth_tokens[cache_key] = token_data
                     return token_data['access_token']
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
@@ -409,7 +410,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     token_data = await response.json()
-                    self._oauth_tokens[client_id] = token_data
+                    self._oauth_tokens[cache_key] = token_data
                     return token_data['access_token']
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with Basic Auth header also failed: {e}")

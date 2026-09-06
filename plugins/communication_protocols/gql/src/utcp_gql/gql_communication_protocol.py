@@ -80,8 +80,9 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
         GHSA-8cp3-qxj6-px34 and GHSA-9qhg-99ww-9mqc.
         """
         client_id = auth.client_id
-        if client_id in self._oauth_tokens:
-            return self._oauth_tokens[client_id]["access_token"]
+        cache_key = auth.cache_key()
+        if cache_key in self._oauth_tokens:
+            return self._oauth_tokens[cache_key]["access_token"]
 
         ensure_secure_url(auth.token_url, context="OAuth2 token URL")
 
@@ -101,7 +102,7 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
             ) as resp:
                 resp.raise_for_status()
                 token_response = await resp.json()
-                self._oauth_tokens[client_id] = token_response
+                self._oauth_tokens[cache_key] = token_response
                 return token_response["access_token"]
 
     async def _prepare_headers(

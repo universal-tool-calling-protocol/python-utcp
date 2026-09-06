@@ -1,3 +1,5 @@
+import json
+
 from utcp.data.auth import Auth
 from utcp.interfaces.serializer import Serializer
 from utcp.exceptions import UtcpSerializerValidationError
@@ -25,6 +27,21 @@ class OAuth2Auth(Auth):
     client_id: str = Field(..., description="The OAuth2 client ID.")
     client_secret: str = Field(..., description="The OAuth2 client secret.")
     scope: Optional[str] = Field(None, description="The OAuth2 scope.")
+
+    def cache_key(self) -> str:
+        """The identity of this credential configuration, for caching and coalescing tokens.
+
+        Two ``OAuth2Auth`` values obtain the same token exactly when this key is
+        equal, so it includes everything that changes the token: the token
+        endpoint, client id, client secret and scope. Keying by ``client_id``
+        alone would let two configurations that share a client id but differ in
+        issuer, secret or scope receive each other's tokens. An absent scope is
+        normalised to ``""`` so ``None`` and ``""`` compare equal.
+
+        This is the single source of that rule for every communication protocol.
+        The key embeds the secret: use it only as a dictionary key, never log it.
+        """
+        return json.dumps([self.token_url, self.client_id, self.client_secret, self.scope or ""])
 
 
 class OAuth2AuthSerializer(Serializer[OAuth2Auth]):

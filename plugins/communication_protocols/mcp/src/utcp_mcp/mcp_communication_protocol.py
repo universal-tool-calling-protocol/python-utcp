@@ -249,12 +249,11 @@ class McpCommunicationProtocol(CommunicationProtocol):
     def _oauth_cache_key(auth: OAuth2Auth) -> str:
         """Key for the OAuth token cache and in-flight map.
 
-        Keyed by the FULL configuration, not ``client_id`` alone: two manuals may
-        share a client_id but point at different issuers, scopes or secrets, and
-        must not receive each other's tokens. Matches the HTTP plugin. Carries
-        the secret, so it is used only as a dict key and never logged.
+        Delegates to ``OAuth2Auth.cache_key`` in core, the single source of the
+        rule that a credential's identity is its full configuration, not
+        ``client_id`` alone. Carries the secret: dict key only, never logged.
         """
-        return json.dumps([auth.token_url, auth.client_id, auth.client_secret, auth.scope or ""])
+        return auth.cache_key()
 
     async def _ensure_mcp_client(self, manual_call_template: 'McpCallTemplate') -> MCPClient:
         """Return the MCPClient for this manual's configuration, creating it once.

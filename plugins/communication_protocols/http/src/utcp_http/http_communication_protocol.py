@@ -63,7 +63,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
 
     Attributes:
         _session: Optional aiohttp ClientSession for connection reuse.
-        _oauth_tokens: Cache of OAuth2 tokens by client_id.
+        _oauth_tokens: Cache of OAuth2 tokens keyed by the full credential configuration (``OAuth2Auth.cache_key``).
         _log: Logger function for debugging and error reporting.
     """
 
@@ -414,8 +414,9 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         """
         client_id = auth_details.client_id
 
-        if client_id in self._oauth_tokens:
-            return self._oauth_tokens[client_id]["access_token"]
+        cache_key = auth_details.cache_key()
+        if cache_key in self._oauth_tokens:
+            return self._oauth_tokens[cache_key]["access_token"]
 
         # Reject obviously-internal or plain-HTTP non-loopback token
         # endpoints before any credential bytes leave the process.
@@ -440,7 +441,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     token_response = await response.json()
-                    self._oauth_tokens[client_id] = token_response
+                    self._oauth_tokens[cache_key] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with credentials in body failed: {e}. Trying Basic Auth header.")
@@ -463,7 +464,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     token_response = await response.json()
-                    self._oauth_tokens[client_id] = token_response
+                    self._oauth_tokens[cache_key] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with Basic Auth header also failed: {e}")
