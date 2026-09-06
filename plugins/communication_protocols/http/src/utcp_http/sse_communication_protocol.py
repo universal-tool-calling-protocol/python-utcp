@@ -480,8 +480,9 @@ class SseCommunicationProtocol(CommunicationProtocol):
         endpoint itself.
         """
         client_id = auth_details.client_id
-        if client_id in self._oauth_tokens:
-            return self._oauth_tokens[client_id]["access_token"]
+        cache_key = auth_details.cache_key()
+        if cache_key in self._oauth_tokens:
+            return self._oauth_tokens[cache_key]["access_token"]
 
         # Reject obviously-internal or plain-HTTP non-loopback token
         # endpoints before any credential bytes leave the process.
@@ -499,7 +500,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     token_response = await response.json()
-                    self._oauth_tokens[client_id] = token_response
+                    self._oauth_tokens[cache_key] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with body failed: {e}. Trying Basic Auth.")
@@ -517,7 +518,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 ) as response:
                     response.raise_for_status()
                     token_response = await response.json()
-                    self._oauth_tokens[client_id] = token_response
+                    self._oauth_tokens[cache_key] = token_response
                     return token_response["access_token"]
             except aiohttp.ClientError as e:
                 logger.error(f"OAuth2 with header failed: {e}")

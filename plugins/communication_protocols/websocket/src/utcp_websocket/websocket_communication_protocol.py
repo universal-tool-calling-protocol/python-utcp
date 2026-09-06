@@ -63,7 +63,7 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
     Attributes:
         _connections: Active WebSocket connections by provider key.
         _sessions: aiohttp ClientSessions for connection management.
-        _oauth_tokens: Cache of OAuth2 tokens by client_id.
+        _oauth_tokens: Cache of OAuth2 tokens keyed by the full credential configuration (``OAuth2Auth.cache_key``).
     """
 
     def __init__(self, logger_func: Optional[Callable[[str], None]] = None):
@@ -215,8 +215,9 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         OAuth2 path used by this plugin.
         """
         client_id = auth.client_id
-        if client_id in self._oauth_tokens:
-            return self._oauth_tokens[client_id]["access_token"]
+        cache_key = auth.cache_key()
+        if cache_key in self._oauth_tokens:
+            return self._oauth_tokens[cache_key]["access_token"]
 
         ensure_secure_url(auth.token_url, context="OAuth2 token URL")
 
@@ -236,7 +237,7 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
             ) as resp:
                 resp.raise_for_status()
                 token_response = await resp.json()
-                self._oauth_tokens[client_id] = token_response
+                self._oauth_tokens[cache_key] = token_response
                 return token_response["access_token"]
 
     async def _prepare_headers(self, call_template: WebSocketCallTemplate) -> Dict[str, str]:
