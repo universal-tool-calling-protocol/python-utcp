@@ -639,6 +639,16 @@ class OpenApiConverter:
 
             # Non-body parameter
             schema = self._resolve_ref_obj(param.get("schema", {}), set()) or {}
+            param_content_obj = None
+            if not schema and isinstance(param.get("content"), dict):
+                # OpenAPI 3.x allows a Parameter Object to carry its schema under a
+                # 'content' map (media-type -> Media Type Object) instead of 'schema',
+                # e.g. for parameters that need a media type other than the implicit one.
+                for media_type_obj_candidate in param["content"].values():
+                    if isinstance(media_type_obj_candidate, dict):
+                        param_content_obj = media_type_obj_candidate
+                        schema = self._resolve_ref_obj(param_content_obj.get("schema", {}), set()) or {}
+                        break
             if not schema:
                 # OpenAPI 2.0 non-body params use top-level type/items
                 if "type" in param:
@@ -647,10 +657,10 @@ class OpenApiConverter:
                     schema["items"] = param.get("items")
                 if "enum" in param:
                     schema["enum"] = param.get("enum")
-            
-            # Examples can live on the parameter itself and on its schema;
-            # collect both into the normalized 'examples' keyword.
-            param_examples = self._merge_examples(param, schema)
+
+            # Examples can live on the parameter itself, its schema, and (for the
+            # 'content' form) the Media Type Object; collect all into 'examples'.
+            param_examples = self._merge_examples(param, schema, param_content_obj)
 
             prop = {
                 "description": param.get("description", ""),
@@ -667,12 +677,18 @@ class OpenApiConverter:
         request_body = operation.get("requestBody")
         if request_body:
             content = request_body.get("content", {})
-            json_schema = content.get("application/json", {}).get("schema")
-            json_schema = self._resolve_ref_obj(json_schema, set()) if json_schema else None
-            
-            # Examples can live on the media type object and on the schema;
-            # collect both into the normalized 'examples' keyword.
             media_type_obj = content.get("application/json", {})
+            json_schema = media_type_obj.get("schema")
+            # Fall back to the first schema-bearing media type when the body has no
+            # application/json entry (e.g. application/xml-only), matching the
+            # fallback _extract_outputs already does for response bodies.
+            if json_schema is None and isinstance(content, dict):
+                for candidate_media_type_obj in content.values():
+                    if isinstance(candidate_media_type_obj, dict) and "schema" in candidate_media_type_obj:
+                        media_type_obj = candidate_media_type_obj
+                        json_schema = candidate_media_type_obj.get("schema")
+                        break
+            json_schema = self._resolve_ref_obj(json_schema, set()) if json_schema else None
 
             if json_schema:
                 body_examples = self._merge_examples(media_type_obj, json_schema)
