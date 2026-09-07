@@ -21,10 +21,10 @@ Supported provider types:
 """
 
 from typing import List, Optional, Union
-from pydantic import BaseModel, field_serializer, field_validator, Field
+from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, Field
 import uuid
 from utcp.interfaces.serializer import Serializer
-from utcp.exceptions import UtcpSerializerValidationError
+from utcp.exceptions import UtcpSerializerValidationError, UtcpUnknownCallTemplateTypeError
 import traceback
 from utcp.data.auth import Auth, AuthSerializer
 
@@ -45,8 +45,13 @@ class CallTemplate(BaseModel):
             the same protocol type as the manual's call_template_type. This provides fine-grained security
             control - e.g., set to ["http", "cli"] to allow both HTTP and CLI tools, or leave unset to
             restrict tools to the manual's own protocol type.
+
+    Keys this client does not know are kept in `model_extra` and re-serialized unchanged,
+    so a manual carrying `x-` extension keys survives a load/store round trip.
     """
-    
+
+    model_config = ConfigDict(extra="allow")
+
     name: str = Field(default_factory=lambda: uuid.uuid4().hex)
     call_template_type: str
     auth: Optional[Auth] = None
@@ -100,10 +105,18 @@ class CallTemplateSerializer(Serializer[CallTemplate]):
 
         Returns:
             The CallTemplate object converted from the dictionary.
+
+        Raises:
+            UtcpUnknownCallTemplateTypeError: The type is named but no serializer is
+                registered for it. Callers that load a whole manual skip the tool.
+            UtcpSerializerValidationError: The template is malformed.
         """
+        if "call_template_type" not in obj:
+            raise UtcpSerializerValidationError("Invalid CallTemplate: missing 'call_template_type'")
+        serializer = CallTemplateSerializer.call_template_serializers.get(obj["call_template_type"])
+        if serializer is None:
+            raise UtcpUnknownCallTemplateTypeError(obj["call_template_type"])
         try:
-            return CallTemplateSerializer.call_template_serializers[obj["call_template_type"]].validate_dict(obj)
-        except KeyError:
-            raise ValueError(f"Invalid call template type: {obj['call_template_type']}")
+            return serializer.validate_dict(obj)
         except Exception as e:
             raise UtcpSerializerValidationError("Invalid CallTemplate: " + traceback.format_exc()) from e

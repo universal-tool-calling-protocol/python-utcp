@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_serializer, field_validator
 from utcp.data.call_template import CallTemplate, CallTemplateSerializer
 from utcp.interfaces.serializer import Serializer
 from typing import Union
-from utcp.exceptions import UtcpSerializerValidationError
+from utcp.exceptions import UtcpSerializerValidationError, UtcpUnknownCallTemplateTypeError
 import traceback
 
 JsonType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
@@ -177,5 +177,7 @@ class ToolSerializer(Serializer[Tool]):
         """
         try:
             return Tool.model_validate(obj)
+        except UtcpUnknownCallTemplateTypeError:
+            raise
         except Exception as e:
             raise UtcpSerializerValidationError("Invalid Tool: " + traceback.format_exc()) from e
