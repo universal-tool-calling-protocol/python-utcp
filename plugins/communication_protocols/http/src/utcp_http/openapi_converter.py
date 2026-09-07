@@ -562,7 +562,7 @@ class OpenApiConverter:
         description = operation.get("summary") or operation.get("description", "")
         tags = operation.get("tags", [])
 
-        inputs, header_fields, body_field = self._extract_inputs(path, operation)
+        inputs, header_fields, body_field, body_content_type = self._extract_inputs(path, operation)
         outputs = self._extract_outputs(operation)
         auth = self._extract_auth(operation)
 
@@ -575,7 +575,8 @@ class OpenApiConverter:
             url=full_url,
             body_field=body_field if body_field else None,
             header_fields=header_fields if header_fields else None,
-            auth=auth
+            auth=auth,
+            content_type=body_content_type or "application/json"
         )
 
         return Tool(
@@ -587,8 +588,8 @@ class OpenApiConverter:
             tool_call_template=call_template
         )
 
-    def _extract_inputs(self, path: str, operation: Dict[str, Any]) -> Tuple[JsonSchema, List[str], Optional[str]]:
-        """Extracts input schema, header fields, and body field from an OpenAPI operation.
+    def _extract_inputs(self, path: str, operation: Dict[str, Any]) -> Tuple[JsonSchema, List[str], Optional[str], Optional[str]]:
+        """Extracts input schema, header fields, body field, and body media type from an OpenAPI operation.
 
         - Merges path-level and operation-level parameters
         - Resolves $ref for parameters
@@ -598,6 +599,7 @@ class OpenApiConverter:
         required = []
         header_fields = []
         body_field = None
+        body_content_type = None
 
         # Merge path-level and operation-level parameters
         path_item = self.spec.get("paths", {}).get(path, {}) if path else {}
@@ -677,16 +679,18 @@ class OpenApiConverter:
         request_body = operation.get("requestBody")
         if request_body:
             content = request_body.get("content", {})
+            body_content_type = "application/json" if "application/json" in content else None
             media_type_obj = content.get("application/json", {})
             json_schema = media_type_obj.get("schema")
             # Fall back to the first schema-bearing media type when the body has no
             # application/json entry (e.g. application/xml-only), matching the
             # fallback _extract_outputs already does for response bodies.
             if json_schema is None and isinstance(content, dict):
-                for candidate_media_type_obj in content.values():
+                for candidate_media_type, candidate_media_type_obj in content.items():
                     if isinstance(candidate_media_type_obj, dict) and "schema" in candidate_media_type_obj:
                         media_type_obj = candidate_media_type_obj
                         json_schema = candidate_media_type_obj.get("schema")
+                        body_content_type = candidate_media_type
                         break
             json_schema = self._resolve_ref_obj(json_schema, set()) if json_schema else None
 
@@ -702,11 +706,15 @@ class OpenApiConverter:
                     prop["examples"] = body_examples
 
                 properties[body_field] = prop
-                if json_schema.get("required"):
+                # requestBody.required (a bool on the request body itself) governs whether
+                # the body is a mandatory tool input; json_schema.get("required") is a
+                # different thing (the list of the body object's own required properties)
+                # and says nothing about whether the body as a whole may be omitted.
+                if request_body.get("required"):
                     required.append(body_field)
 
         schema = JsonSchema(properties=properties, required=required if required else None)
-        return schema, header_fields, body_field
+        return schema, header_fields, body_field, body_content_type
 
     def _extract_outputs(self, operation: Dict[str, Any]) -> JsonSchema:
         """Extracts the output schema from an OpenAPI operation, resolving refs."""
