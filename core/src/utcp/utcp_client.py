@@ -158,3 +158,18 @@ class UtcpClient(ABC):
             A list of required variables for the tool.
         """
         pass
+
+    @abstractmethod
+    async def close(self) -> None:
+        """REQUIRED
+        Close the protocol instances this client created and release their resources.
+
+        Closes every instance the client obtained from
+        `CommunicationProtocol.communication_protocol_factories`. Instances from
+        `CommunicationProtocol.communication_protocols` are shared by every client
+        in the process and are left running.
+
+        Every owned instance is closed even if one of them fails to close; the
+        failures are then raised together as a `UtcpProtocolCloseError`.
+        """
+        pass

@@ -1,0 +1,242 @@
+"""A client owns the protocol instances it creates from the factory registry.
+
+Everything here goes through the public surface: the two registries on
+``CommunicationProtocol``, ``UtcpClient.create``, ``register_manual``,
+``call_tool`` and ``close``.
+"""
+
+import asyncio
+import logging
+from typing import Any, AsyncGenerator, Dict, List
+
+import pytest
+
+from utcp.data.call_template import CallTemplate
+from utcp.data.register_manual_response import RegisterManualResult
+from utcp.data.tool import JsonSchema, Tool
+from utcp.data.utcp_manual import UtcpManual
+from utcp.exceptions import UtcpProtocolCloseError, UtcpVariableNotFound
+from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.utcp_client import UtcpClient
+from utcp_http.http_call_template import HttpCallTemplate
+
+
+class RecordingProtocol(CommunicationProtocol):
+    """Records which client-facing calls reached this instance, and how often it was closed."""
+
+    def __init__(self):
+        self.registered: List[str] = []
+        self.called: List[str] = []
+        self.closed = 0
+
+    async def register_manual(self, caller: UtcpClient, manual_call_template: CallTemplate) -> RegisterManualResult:
+        self.registered.append(manual_call_template.name)
+        tool = Tool(
+            name="ping",
+            description="answers with the identity of the instance that served it",
+            inputs=JsonSchema(type="object", properties={}),
+            outputs=JsonSchema(type="object", properties={}),
+            tags=[],
+            tool_call_template=manual_call_template,
+        )
+        return RegisterManualResult(
+            manual_call_template=manual_call_template,
+            manual=UtcpManual(manual_version="1.0.0", tools=[tool]),
+            success=True,
+            errors=[],
+        )
+
+    async def deregister_manual(self, caller: UtcpClient, manual_call_template: CallTemplate) -> None:
+        pass
+
+    async def call_tool(self, caller: UtcpClient, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        self.called.append(tool_name)
+        return {"served_by": id(self)}
+
+    async def call_tool_streaming(self, caller: UtcpClient, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> AsyncGenerator[Any, None]:
+        yield await self.call_tool(caller, tool_name, tool_args, tool_call_template)
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
+def http_manual(name: str) -> HttpCallTemplate:
+    return HttpCallTemplate(name=name, url="https://example.test/utcp", http_method="POST", call_template_type="http")
+
+
+@pytest.fixture
+def isolated_registries(monkeypatch):
+    """Both registries start empty and are restored after the test."""
+    monkeypatch.setattr(CommunicationProtocol, "communication_protocols", {})
+    monkeypatch.setattr(CommunicationProtocol, "communication_protocol_factories", {})
+
+
+@pytest.fixture
+def recording_factory(isolated_registries):
+    """Registers a factory for ``http`` and returns the instances it made, in order."""
+    made: List[RecordingProtocol] = []
+
+    def factory() -> RecordingProtocol:
+        protocol = RecordingProtocol()
+        made.append(protocol)
+        return protocol
+
+    CommunicationProtocol.communication_protocol_factories["http"] = factory
+    return made
+
+
+class TestPerClientInstances:
+
+    @pytest.mark.asyncio
+    async def test_each_client_gets_its_own_instance_and_routes_to_it(self, recording_factory):
+        client_a = await UtcpClient.create()
+        client_b = await UtcpClient.create()
+        assert len(recording_factory) == 2
+        own_a, own_b = recording_factory
+
+        await client_a.register_manual(http_manual("a_manual"))
+        await client_b.register_manual(http_manual("b_manual"))
+        result_a = await client_a.call_tool("a_manual.ping", {})
+        result_b = await client_b.call_tool("b_manual.ping", {})
+
+        assert own_a.registered == ["a_manual"] and own_a.called == ["a_manual.ping"]
+        assert own_b.registered == ["b_manual"] and own_b.called == ["b_manual.ping"]
+        assert result_a["served_by"] == id(own_a)
+        assert result_b["served_by"] == id(own_b)
+
+    @pytest.mark.asyncio
+    async def test_a_factory_wins_over_a_shared_instance_of_the_same_type(self, recording_factory):
+        shared = RecordingProtocol()
+        CommunicationProtocol.communication_protocols["http"] = shared
+
+        client = await UtcpClient.create()
+        await client.register_manual(http_manual("m"))
+
+        assert recording_factory[0].registered == ["m"]
+        assert shared.registered == []
+
+    @pytest.mark.asyncio
+    async def test_a_shared_instance_registered_after_the_client_exists_is_still_used(self, isolated_registries):
+        # Late registration in the shared registry keeps working: shared
+        # instances are looked up live, not snapshotted at creation.
+        client = await UtcpClient.create()
+        shared = RecordingProtocol()
+        CommunicationProtocol.communication_protocols["http"] = shared
+
+        await client.register_manual(http_manual("m"))
+
+        assert shared.registered == ["m"]
+
+    @pytest.mark.asyncio
+    async def test_a_type_with_no_protocol_in_either_registry_names_what_is_available(self, isolated_registries):
+        # "http" has a serializer (the plugin is imported) but, with the
+        # registries isolated, no protocol in either of them.
+        CommunicationProtocol.communication_protocol_factories["cli"] = RecordingProtocol
+        CommunicationProtocol.communication_protocols["text"] = RecordingProtocol()
+        client = await UtcpClient.create()
+
+        with pytest.raises(ValueError, match=r"type http found, available types: \['cli', 'text'\]"):
+            await client.register_manual(http_manual("m"))
+
+
+class TestCloseIsScopedToWhatTheClientOwns:
+
+    @pytest.mark.asyncio
+    async def test_close_drains_own_instance_and_leaves_other_clients_and_shared_ones_running(self, recording_factory):
+        shared = RecordingProtocol()
+        CommunicationProtocol.communication_protocols["cli"] = shared
+        client_a = await UtcpClient.create()
+        client_b = await UtcpClient.create()
+        own_a, own_b = recording_factory
+
+        await client_a.close()
+
+        assert own_a.closed == 1
+        assert own_b.closed == 0
+        # Every other client in the process is still using this one.
+        assert shared.closed == 0
+
+        await client_b.close()
+        assert own_b.closed == 1
+        assert shared.closed == 0
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_every_owned_protocol_even_when_one_fails(self, isolated_registries):
+        # The failing close raises IMMEDIATELY; the healthy one takes a moment.
+        # A first-failure-wins close would return before the healthy one ended.
+        class FailingProtocol(RecordingProtocol):
+            async def close(self) -> None:
+                raise RuntimeError("transport refused to close")
+
+        class SlowProtocol(RecordingProtocol):
+            async def close(self) -> None:
+                await asyncio.sleep(0.02)
+                self.closed += 1
+
+        slow = SlowProtocol()
+        CommunicationProtocol.communication_protocol_factories["http"] = FailingProtocol
+        CommunicationProtocol.communication_protocol_factories["cli"] = lambda: slow
+
+        client = await UtcpClient.create()
+        with pytest.raises(UtcpProtocolCloseError) as raised:
+            await client.close()
+
+        # The failure is still surfaced, with its cause inside...
+        assert len(raised.value.failures) == 1
+        assert isinstance(raised.value.failures[0], RuntimeError)
+        # ...but only after every owned protocol has finished closing.
+        assert slow.closed == 1
+
+
+class TestFailedCreateClosesWhatItCreated:
+
+    @pytest.mark.asyncio
+    async def test_an_instance_made_for_a_create_that_fails_is_closed_not_orphaned(self, recording_factory):
+        # The factory fires, then variable substitution fails on a reference
+        # nothing can resolve — create() raises and the caller never gets a
+        # client to close.
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config={"variables": {"DERIVED": "${NOWHERE_TO_BE_FOUND}"}})
+
+        assert len(recording_factory) == 1
+        assert recording_factory[0].closed == 1
+
+    @pytest.mark.asyncio
+    async def test_a_factory_that_raises_leaves_the_instances_before_it_closed(self, recording_factory):
+        def broken_factory() -> CommunicationProtocol:
+            raise RuntimeError("no transport available")
+
+        CommunicationProtocol.communication_protocol_factories["cli"] = broken_factory
+
+        with pytest.raises(RuntimeError, match="no transport available"):
+            await UtcpClient.create()
+
+        assert len(recording_factory) == 1
+        assert recording_factory[0].closed == 1
+
+    @pytest.mark.asyncio
+    async def test_a_shared_instance_survives_a_failed_create(self, recording_factory):
+        shared = RecordingProtocol()
+        CommunicationProtocol.communication_protocols["cli"] = shared
+
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config={"variables": {"DERIVED": "${NOWHERE_TO_BE_FOUND}"}})
+
+        assert recording_factory[0].closed == 1
+        assert shared.closed == 0
+
+    @pytest.mark.asyncio
+    async def test_a_failing_cleanup_is_reported_and_the_original_error_surfaces(self, isolated_registries, caplog):
+        class FailingProtocol(RecordingProtocol):
+            async def close(self) -> None:
+                raise RuntimeError("transport refused to close")
+
+        CommunicationProtocol.communication_protocol_factories["http"] = FailingProtocol
+
+        with caplog.at_level(logging.ERROR, logger="utcp.implementations.utcp_client_implementation"):
+            with pytest.raises(UtcpVariableNotFound):
+                await UtcpClient.create(config={"variables": {"DERIVED": "${NOWHERE_TO_BE_FOUND}"}})
+
+        reported = [record for record in caplog.records if "closing the protocols it had created failed too" in record.getMessage()]
+        assert len(reported) == 1
+        assert "transport refused to close" in reported[0].exc_text
