@@ -197,10 +197,10 @@ class McpCommunicationProtocol(CommunicationProtocol):
         # concurrent first calls for the same server dial once instead of each
         # spawning a session and leaking all but the last.
         self._session_creations: "Dict[Tuple[int, str], asyncio.Task]" = {}
-        # One MCPClient per distinct server configuration. This protocol object is
-        # registered once per process and shared by every manual, so a single
-        # client would make manuals with different configurations evict each
-        # other's sessions, including sessions still in use by a concurrent call.
+        # One MCPClient per distinct server configuration. This protocol object
+        # serves every manual of the UtcpClient that owns it, so a single client
+        # would make manuals with different configurations evict each other's
+        # sessions, including sessions still in use by a concurrent call.
         self._mcp_clients: Dict[str, MCPClient] = {}
         # Which configuration each owner (calling UtcpClient plus manual name)
         # currently uses, so a client nothing references any more can be closed
@@ -844,7 +844,7 @@ class McpCommunicationProtocol(CommunicationProtocol):
         """Close all active sessions and clean up resources."""
         self._log_info("Closing MCP communication protocol and cleaning up all sessions")
         await self._cleanup_all_sessions()
-        # Drain the OAuth state so this shared instance holds no credentials past
+        # Drain the OAuth state so this instance holds no credentials past
         # close(). Cancel in-flight fetches (asyncio can) and drop their entries;
         # a fetch that still lands finds it is no longer the current entry and,
         # by the caching rule in _on_oauth_fetch_done, does not repopulate the
