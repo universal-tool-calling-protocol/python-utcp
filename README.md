@@ -74,7 +74,30 @@ client = await UtcpClient.create(config={
 
 # Call a tool
 result = await client.call_tool("my_api.get_data", {"id": "123"})
+
+# Release the connections this client opened
+await client.close()
 ```
+
+### Protocol Lifetime: Shared vs. Per-Client Instances
+
+A protocol plugin registers itself in one of two registries, and the choice decides who its state belongs to.
+
+An instance registered with `register_communication_protocol` is **shared by every `UtcpClient` in the process**, and so is any state it keeps. That is right for state that is *meant* to be shared — a credential cache, a registry a decorator writes into — and wrong for state that belongs to one client. A shared instance lives as long as the process; no client closes it.
+
+A protocol whose state **must not be shared between clients** registers a **factory** instead: live sessions or connections keyed per manual, child processes — anything one client's use or `close()` would take away from another. Each `UtcpClient` calls the factory once — at creation, or on first use if it was registered later — so each client gets its own instance, its own connections, and its own teardown on `close()`:
+
+```python
+from utcp.plugins.discovery import register_communication_protocol_factory
+
+register_communication_protocol_factory("custom_type", CustomCommunicationProtocol)
+```
+
+This is what makes "a client per tenant / per user / per pooled connection" actually isolate them, rather than every client reaching into one shared instance. A type registered as a factory wins over the same type registered as an instance, so a plugin migrates by moving its registration from one call to the other and callers change nothing.
+
+`utcp-mcp` and `utcp-websocket` register this way — MCP sessions (and, for stdio, child processes) and per-manual WebSocket connections belong to the client that opened them. `utcp-http` (HTTP, SSE, streamable HTTP) and `utcp-gql` stay shared instances: the only state they keep is an OAuth token cache, which is meant to be reused across clients; every request opens its own session.
+
+`client.close()` closes the instances the client created — every one of them, even if one fails, after which the failures are raised together as `UtcpProtocolCloseError`. If `UtcpClient.create` fails after creating them, they are closed the same way before the error is re-raised.
 
 ## Protocol Plugins
 

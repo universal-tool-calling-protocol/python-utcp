@@ -6,6 +6,7 @@ from utcp.interfaces.tool_search_strategy import ToolSearchStrategy, ToolSearchS
 from utcp.interfaces.tool_post_processor import ToolPostProcessor, ToolPostProcessorConfigSerializer
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate, CallTemplateSerializer
+from typing import Callable
 import logging
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,34 @@ def register_communication_protocol(communication_protocol_type: str, communicat
         return False
     CommunicationProtocol.communication_protocols[communication_protocol_type] = communication_protocol
     logger.info("Registered communication protocol type: " + communication_protocol_type)
+    return True
+
+def register_communication_protocol_factory(communication_protocol_type: str, factory: Callable[[], CommunicationProtocol], override: bool = False) -> bool:
+    """REQUIRED
+    Register a communication protocol as a factory, so that every `UtcpClient`
+    gets its own instance of it.
+
+    Use this instead of `register_communication_protocol` for a protocol whose
+    state must not be shared between clients: live sessions or connections
+    keyed per manual, child processes — anything one client's use or `close()`
+    would take away from another. (A credential cache is meant to be shared
+    and stays an instance.) Each `UtcpClient` calls the factory once — at
+    creation, or on first use if the factory is registered later — and that
+    client's `close()` tears the instance down. A type registered as a factory
+    wins over the same type registered as an instance.
+
+    Args:
+        communication_protocol_type: The communication protocol type identifier.
+        factory: A callable returning a new communication protocol instance.
+        override: Whether to override an existing factory for this type.
+
+    Returns:
+        True if the factory was registered, False otherwise.
+    """
+    if not override and communication_protocol_type in CommunicationProtocol.communication_protocol_factories:
+        return False
+    CommunicationProtocol.communication_protocol_factories[communication_protocol_type] = factory
+    logger.info("Registered communication protocol factory for type: " + communication_protocol_type)
     return True
 
 def register_tool_repository(tool_repository_type: str, tool_repository: Serializer[ConcurrentToolRepository], override: bool = False) -> bool:
