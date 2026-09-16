@@ -63,7 +63,7 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
     Attributes:
         _connections: Active WebSocket connections by provider key.
         _sessions: aiohttp ClientSessions for connection management.
-        _oauth_tokens: Cache of OAuth2 tokens keyed by the full credential configuration (``OAuth2Auth.cache_key``).
+        _oauth_tokens: Cache of OAuth2 tokens keyed by the full credential configuration (OAuth2Auth's ``cache_key``).
     """
 
     def __init__(self, logger_func: Optional[Callable[[str], None]] = None):

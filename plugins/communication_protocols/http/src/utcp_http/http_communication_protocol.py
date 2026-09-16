@@ -63,7 +63,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
 
     Attributes:
         _session: Optional aiohttp ClientSession for connection reuse.
-        _oauth_tokens: Cache of OAuth2 tokens keyed by the full credential configuration (``OAuth2Auth.cache_key``).
+        _oauth_tokens: Cache of OAuth2 tokens keyed by the full credential configuration (OAuth2Auth's ``cache_key``).
         _log: Logger function for debugging and error reporting.
     """
 

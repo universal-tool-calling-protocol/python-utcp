@@ -147,8 +147,10 @@ class CliCallTemplate(CallTemplate):
         commands: A list of CommandStep objects defining the commands to execute
             in order. Each command can contain UTCP_ARG_argname_UTCP_END placeholders
             that will be replaced with values from tool_args during execution.
-            Placeholders are shell-quoted and therefore expand to exactly one
-            shell token (see class docstring).
+            Each placeholder becomes a shell-variable reference whose value
+            reaches the subprocess through a per-invocation environment
+            variable, so it expands to exactly one shell token and cannot be
+            reinterpreted as shell syntax (see class docstring).
         env_vars: A dictionary of environment variables to set for the command's
             execution context. Values can be static strings or placeholders for
             variables from the UTCP client's variable substitutor. Always
@@ -238,9 +240,11 @@ class CliCallTemplate(CallTemplate):
     Security Considerations:
         - Commands are executed in a subprocess. Ensure that the commands
           specified are from a trusted source.
-        - `tool_args` values are shell-quoted on substitution, but the
-          *command template itself* is not — never assemble it from
-          untrusted input.
+        - `tool_args` values never touch the command text: they reach the
+          subprocess through per-invocation environment variables and the
+          shell expands them only after it has parsed the script. The
+          *command template itself* has no such protection — never assemble
+          it from untrusted input.
         - The host environment is restricted; secrets are not propagated
           unless explicitly named in `env_vars` or `inherit_env_vars`.
         - Commands should use the appropriate syntax for the target platform
