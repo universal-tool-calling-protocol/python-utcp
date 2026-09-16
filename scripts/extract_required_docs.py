@@ -546,15 +546,30 @@ class RequiredDocExtractor:
                         class_anchor = re.sub(r'[^\w\-_]', '-', class_name.lower()).strip('-')
                         link = f"[{class_name}](./{relative_path_str}#{class_anchor})"
                 
-                # Don't replace matches that are in code blocks or inline code spans
-                lines = modified_text.split('\n')
+                # Don't replace matches that are in code blocks or inline code
+                # spans. Fenced blocks are delimited per line; everything
+                # between fences is handed to the inline-span scanner as ONE
+                # segment, so a span that crosses a newline stays a span.
+                segments: List[str] = []
+                prose: List[str] = []
                 in_code_block = False
-                for i, line in enumerate(lines):
+
+                def flush_prose() -> None:
+                    if prose:
+                        segments.append(self._sub_outside_inline_code(pattern, link, '\n'.join(prose)))
+                        prose.clear()
+
+                for line in modified_text.split('\n'):
                     if line.strip().startswith('```'):
+                        flush_prose()
                         in_code_block = not in_code_block
-                    elif not in_code_block:
-                        lines[i] = self._sub_outside_inline_code(pattern, link, line)
-                modified_text = '\n'.join(lines)
+                        segments.append(line)
+                    elif in_code_block:
+                        segments.append(line)
+                    else:
+                        prose.append(line)
+                flush_prose()
+                modified_text = '\n'.join(segments)
 
         return modified_text
 

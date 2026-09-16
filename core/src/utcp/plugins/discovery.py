@@ -91,8 +91,8 @@ def register_communication_protocol_factory(communication_protocol_type: str, fa
     Use this instead of `register_communication_protocol` for a protocol whose
     state must not be shared between clients: live sessions or connections
     keyed per manual, child processes — anything one client's use or `close()`
-    would take away from another. (A credential cache or a pooled HTTP session
-    is meant to be shared and stays an instance.) Each `UtcpClient` calls the factory once — at
+    would take away from another. (A credential cache is meant to be shared
+    and stays an instance.) Each `UtcpClient` calls the factory once — at
     creation, or on first use if the factory is registered later — and that
     client's `close()` tears the instance down. A type registered as a factory
     wins over the same type registered as an instance.

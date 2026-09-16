@@ -31,7 +31,7 @@ class CommunicationProtocol(ABC):
     - `communication_protocols` holds an INSTANCE that is shared by every
       `UtcpClient` in the process, and so is any state it keeps. That is the
       right home for state that is meant to be shared (a credential cache, a
-      pooled HTTP session, a registry a decorator writes into). The instance
+      registry a decorator writes into). The instance
       lives as long as the process that registered it; no client closes it.
     - `communication_protocol_factories` holds a FACTORY, for a protocol whose
       state must not be shared between clients: live sessions or connections

@@ -12,6 +12,7 @@ from utcp.data.register_manual_response import RegisterManualResult
 from utcp.implementations.utcp_client_implementation import UtcpClientImplementation
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.utcp_client import UtcpClient
+from utcp.plugins.plugin_loader import ensure_plugins_initialized
 from utcp.data.utcp_client_config import UtcpClientConfig
 from utcp.exceptions import UtcpVariableNotFound, UtcpSerializerValidationError
 from utcp.interfaces.concurrent_tool_repository import ConcurrentToolRepository
@@ -187,7 +188,12 @@ async def sample_tools():
 
 @pytest.fixture
 def isolated_communication_protocols(monkeypatch):
-    """Isolates the CommunicationProtocol registry for each test."""
+    """Isolates the CommunicationProtocol registry for each test.
+
+    Plugins are loaded first so that their registrations land in the original
+    dict (restored after the test), not in the throwaway one.
+    """
+    ensure_plugins_initialized()
     monkeypatch.setattr(CommunicationProtocol, "communication_protocols", {})
 
 

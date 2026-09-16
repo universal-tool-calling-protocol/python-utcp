@@ -25,6 +25,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def _sanitize_manual_name(name: str) -> str:
+    """The name a manual is registered under: every non-word character becomes an underscore."""
+    return re.sub(r'[^\w]', '_', name)
+
+
 class UtcpClientImplementation(UtcpClient):
     """REQUIRED
     Implementation of the `UtcpClient` interface.
@@ -151,9 +157,14 @@ class UtcpClientImplementation(UtcpClient):
         client = cls(config, DefaultVariableSubstitutor(), root_dir)
 
         # Everything from here on can fail, and the caller never receives a
-        # client it could close — so whatever this client CREATED is closed
-        # here before the failure is re-raised. Only what it created: the shared
-        # instances are in use by every other client and are not this one's.
+        # client it could close — so whatever this client CREATED is undone
+        # here before the failure is re-raised: the manuals this attempt
+        # registered are removed (the tool repository may be caller-supplied
+        # and shared), then the protocol instances it created are closed. Only
+        # what it created: a manual that was in the repository before this
+        # attempt, and the shared protocol instances, are not this client's.
+        attempted_names = [_sanitize_manual_name(t.name) for t in (config.manual_call_templates or [])]
+        present_before = {name for name in attempted_names if await client.config.tool_repository.get_manual(name) is not None}
         try:
             client._adopt_factory_protocols()
 
@@ -167,6 +178,14 @@ class UtcpClientImplementation(UtcpClient):
             if config.manual_call_templates:
                 await client.register_manuals(config.manual_call_templates)
         except BaseException:
+            for name in attempted_names:
+                if name in present_before:
+                    continue
+                try:
+                    if await client.config.tool_repository.get_manual(name) is not None:
+                        await client.deregister_manual(name)
+                except Exception:
+                    logger.error(f"UtcpClient.create failed, and removing the manual '{name}' it had registered failed too", exc_info=True)
             try:
                 await client._close_owned_protocols()
             except Exception:
@@ -204,7 +223,7 @@ class UtcpClientImplementation(UtcpClient):
             ValueError: If manual name is already registered or communication protocol is not found.
         """
         # Replace all non-word characters with underscore
-        manual_call_template.name = re.sub(r'[^\w]', '_', manual_call_template.name)
+        manual_call_template.name = _sanitize_manual_name(manual_call_template.name)
         if await self.config.tool_repository.get_manual(manual_call_template.name) is not None:
             raise ValueError(f"Manual {manual_call_template.name} already registered, please use a different name or deregister the existing manual")
         manual_call_template = self._substitute_call_template_variables(manual_call_template, manual_call_template.name)
@@ -426,7 +445,7 @@ class UtcpClientImplementation(UtcpClient):
         Returns:
             A list of required variables for the manual and its tools.
         """
-        manual_call_template.name = re.sub(r'[^\w]', '_', manual_call_template.name)
+        manual_call_template.name = _sanitize_manual_name(manual_call_template.name)
         variables_for_CallTemplate = self.variable_substitutor.find_required_variables(CallTemplateSerializer().to_dict(manual_call_template), manual_call_template.name)
         if len(variables_for_CallTemplate) > 0:
             try:

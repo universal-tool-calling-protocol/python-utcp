@@ -16,7 +16,10 @@ from utcp.data.register_manual_response import RegisterManualResult
 from utcp.data.tool import JsonSchema, Tool
 from utcp.data.utcp_manual import UtcpManual
 from utcp.exceptions import UtcpProtocolCloseError, UtcpVariableNotFound
+from utcp.data.utcp_client_config import UtcpClientConfig
+from utcp.implementations.in_mem_tool_repository import InMemToolRepository
 from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.plugins.plugin_loader import ensure_plugins_initialized
 from utcp.utcp_client import UtcpClient
 from utcp_http.http_call_template import HttpCallTemplate
 
@@ -66,7 +69,14 @@ def http_manual(name: str) -> HttpCallTemplate:
 
 @pytest.fixture
 def isolated_registries(monkeypatch):
-    """Both registries start empty and are restored after the test."""
+    """Both registries start empty and are restored after the test.
+
+    Plugins load lazily on the first ``UtcpClient.create()`` of the session and
+    register into whatever dict holds the class attribute at that moment. They
+    are loaded here first, so their registrations land in the ORIGINAL dicts
+    (which the fixture restores) and never in the throwaway ones.
+    """
+    ensure_plugins_initialized()
     monkeypatch.setattr(CommunicationProtocol, "communication_protocols", {})
     monkeypatch.setattr(CommunicationProtocol, "communication_protocol_factories", {})
 
@@ -315,3 +325,55 @@ class TestABatchRegistrationSettlesEverySiblingBeforeRaising:
             ]})
 
         assert events == ["registered slow_manual", "closed"]
+
+
+class TestAFailedCreateLeavesNoManualBehind:
+
+    @pytest.mark.asyncio
+    async def test_a_manual_registered_by_the_failed_attempt_is_removed_from_a_shared_repository(self, isolated_registries):
+        # The caller supplies (and keeps) the repository; the second manual
+        # registers fine before the first one's failure surfaces. create()
+        # raises -- and must not leave that manual behind in the caller's repo.
+        CommunicationProtocol.communication_protocols["http"] = RecordingProtocol()
+        repo = InMemToolRepository()
+
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config=UtcpClientConfig(
+                tool_repository=repo,
+                manual_call_templates=[unresolvable_http_manual("bad_manual"), http_manual("good_manual")],
+            ))
+
+        assert await repo.get_manual("good_manual") is None
+        assert await repo.get_tool("good_manual.ping") is None
+
+    @pytest.mark.asyncio
+    async def test_a_manual_that_was_in_the_repository_before_the_attempt_survives_it(self, isolated_registries):
+        # "existing" is already registered by an earlier client on the same
+        # shared repository. This attempt names it again (that registration
+        # fails as a duplicate, without raising) and also fails outright on
+        # the bad manual. The rollback must remove only what THIS attempt
+        # added -- never the pre-existing manual.
+        CommunicationProtocol.communication_protocols["http"] = RecordingProtocol()
+        repo = InMemToolRepository()
+        earlier = await UtcpClient.create(config=UtcpClientConfig(tool_repository=repo, manual_call_templates=[http_manual("existing")]))
+        assert await repo.get_manual("existing") is not None
+
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config=UtcpClientConfig(
+                tool_repository=repo,
+                manual_call_templates=[http_manual("existing"), unresolvable_http_manual("bad_manual"), http_manual("added_by_attempt")],
+            ))
+
+        assert await repo.get_manual("existing") is not None
+        assert await repo.get_manual("added_by_attempt") is None
+        await earlier.close()
+
+
+def test_plugin_registrations_survive_the_isolated_tests_above():
+    # Runs after every isolated test in this file. If any of them had been the
+    # session's first create() and the fixture had patched the registry before
+    # plugins loaded, the plugin instances would have gone into the throwaway
+    # dict and be missing here.
+    ensure_plugins_initialized()
+    assert "http" in CommunicationProtocol.communication_protocols
+    assert "mcp" in CommunicationProtocol.communication_protocol_factories
