@@ -34,6 +34,13 @@ def _manual(url: str) -> UtcpManual:
         "http://127.0.0.2:9200/secret",       # 127.0.0.0/8, slips a naive "127.0.0.1" check
         "http://0.0.0.0:9200/secret",         # wildcard, routes to the local host
         "http://[::ffff:127.0.0.1]/secret",   # IPv4-mapped IPv6 loopback
+        # Spellings the resolver accepts but Python's ipaddress rejects
+        "https://127.1/secret",               # shorthand: inet_aton fills the middle octets
+        "https://2130706433/secret",          # 127.0.0.1 as a single integer
+        "https://0177.0.0.1/secret",          # octal first octet
+        "https://0x7f000001/secret",          # hex
+        "https://127.0.0.1./secret",          # absolute-name form (trailing dot)
+        "https://localhost./secret",          # same, for the hostname
     ],
 )
 def test_remote_manual_with_loopback_tool_url_is_rejected(tool_url):

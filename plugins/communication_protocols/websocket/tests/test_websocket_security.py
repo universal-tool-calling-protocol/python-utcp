@@ -248,3 +248,63 @@ class TestHttpUrlValidator:
         assert is_secure_url("http://169.254.169.254/token") is False
         with pytest.raises(ValueError):
             ensure_secure_url("http://169.254.169.254/token")
+
+
+# ---------------------------------------------------------------------------
+# Mirror of utcp_http: loopback in every spelling the resolver accepts, and a
+# redirect never enters loopback from a non-loopback origin.
+# ---------------------------------------------------------------------------
+
+import pytest as _pytest
+from utcp_websocket._security import is_loopback_url as _is_loopback_url, safe_request_with_redirects as _safe_request_with_redirects
+
+
+@_pytest.mark.parametrize(
+    "url",
+    [
+        "https://127.1/x",           # shorthand: inet_aton fills the middle octets
+        "https://2130706433/x",      # 127.0.0.1 as a single integer
+        "https://0177.0.0.1/x",      # octal
+        "https://0x7f000001/x",      # hex
+        "https://127.0.0.1./x",      # absolute-name form (trailing dot)
+        "https://localhost./x",
+        "https://0.0.0.0/x",         # wildcard routes to the local host
+        "https://[::ffff:127.0.0.1]/x",
+    ],
+)
+def test_loopback_is_recognised_in_every_resolver_spelling(url):
+    assert _is_loopback_url(url)
+
+
+@_pytest.mark.parametrize("url", ["https://localhost.evil.com/x", "https://127.0.0.1.attacker.example/x", "https://10.1/x"])
+def test_lookalikes_and_other_networks_are_not_loopback(url):
+    assert not _is_loopback_url(url)
+
+
+class _FakeResponse:
+    def __init__(self, status, headers, url):
+        self.status, self.headers, self.url = status, headers, url
+
+    def release(self):
+        pass
+
+
+class _ScriptedSession:
+    def __init__(self, script):
+        self.script, self.requested = script, []
+
+    async def request(self, method, url, **kwargs):
+        self.requested.append(url)
+        return self.script[url]
+
+
+@_pytest.mark.asyncio
+@_pytest.mark.parametrize("loopback_target", ["http://127.0.0.1:9200/x", "https://127.1/x", "https://localhost./x"])
+async def test_remote_origin_cannot_redirect_into_loopback(loopback_target):
+    remote = "https://attacker.example/manual"
+    session = _ScriptedSession({remote: _FakeResponse(302, {"Location": loopback_target}, remote)})
+    with _pytest.raises(ValueError, match="never followed into loopback"):
+        async with _safe_request_with_redirects(session, "GET", remote, context="manual discovery"):
+            pass
+    # The request to the agent's own service was never issued.
+    assert session.requested == [remote]

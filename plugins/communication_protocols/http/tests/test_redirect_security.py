@@ -958,3 +958,88 @@ class TestOAuth2TokenUrlExtractedFromOpenApiSpec:
         )
         manual = converter.convert()
         assert len(manual.tools) == 1
+
+
+# ---------------------------------------------------------------------------
+# A redirect never enters loopback from a non-loopback origin.
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status: int, headers: dict, url: str):
+        self.status = status
+        self.headers = headers
+        self.url = url
+        self.released = False
+
+    def release(self) -> None:
+        self.released = True
+
+
+class _ScriptedSession:
+    """Answers each URL from a script and records every request it was asked
+    to issue -- the test servers all live on loopback, so a genuinely remote
+    origin has to be scripted."""
+
+    def __init__(self, script: dict):
+        self.script = script
+        self.requested: list = []
+
+    async def request(self, method: str, url: str, **kwargs):
+        self.requested.append(url)
+        return self.script[url]
+
+
+class TestRedirectNeverEntersLoopback:
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "loopback_target",
+        [
+            "http://127.0.0.1:9200/_cat/indices",   # canonical loopback
+            "http://localhost:9200/_cat/indices",   # loopback hostname
+            "https://127.0.0.1:8443/admin",         # HTTPS does not make loopback remote
+            "http://[::1]:9200/_cat/indices",       # IPv6 loopback
+            # Spellings the resolver routes to loopback but Python's ipaddress
+            # rejects -- over HTTPS, so only the loopback classification stands
+            # between them and being "HTTPS anywhere"
+            "https://127.1/admin",                  # shorthand
+            "https://2130706433/admin",             # single integer
+            "https://0177.0.0.1/admin",             # octal
+            "https://0x7f000001/admin",             # hex
+            "https://127.0.0.1./admin",             # absolute-name form
+            "https://localhost./admin",
+        ],
+    )
+    async def test_remote_origin_cannot_redirect_into_loopback(self, loopback_target) -> None:
+        # The remote hop is secure (HTTPS) and the loopback hop would pass
+        # ensure_secure_url on its own -- only the direction is illegal.
+        remote = "https://attacker.example/manual"
+        session = _ScriptedSession({
+            remote: _FakeResponse(302, {"Location": loopback_target}, remote),
+        })
+
+        with pytest.raises(ValueError, match="never followed into loopback"):
+            async with safe_request_with_redirects(session, "GET", remote, context="manual discovery"):
+                pass
+
+        # The request to the agent's own service was never issued.
+        assert session.requested == [remote]
+
+    @pytest.mark.asyncio
+    async def test_loopback_may_leave_but_a_chain_that_left_cannot_come_back(self) -> None:
+        # loopback -> remote is fine (the remote hop is validated like any
+        # other and the caller loses the local-dev exemption); the remote's
+        # attempt to send us back to loopback is refused.
+        local = "http://127.0.0.1:8765/manual"
+        remote = "https://mirror.example/manual"
+        session = _ScriptedSession({
+            local: _FakeResponse(302, {"Location": remote}, local),
+            remote: _FakeResponse(302, {"Location": "http://127.0.0.1:9200/secret"}, remote),
+        })
+
+        with pytest.raises(ValueError, match="never followed into loopback"):
+            async with safe_request_with_redirects(session, "GET", local, context="manual discovery"):
+                pass
+
+        assert session.requested == [local, remote]
