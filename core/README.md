@@ -85,7 +85,7 @@ A protocol plugin registers itself in one of two registries, and the choice deci
 
 An instance registered with `register_communication_protocol` is **shared by every `UtcpClient` in the process**, and so is any state it keeps. That is right for state that *should* be process-wide — a credential cache, a registry a decorator writes into — and wrong for state that belongs to one client. A shared instance lives as long as the process; no client closes it.
 
-A protocol that holds **connections** registers a **factory** instead. `UtcpClient.create` calls it once per client, so each client gets its own instance, its own connections, and its own teardown on `close()`:
+A protocol that holds **connections** registers a **factory** instead. Each `UtcpClient` calls it once — at creation, or on first use if the factory was registered later — so each client gets its own instance, its own connections, and its own teardown on `close()`:
 
 ```python
 from utcp.plugins.discovery import register_communication_protocol_factory

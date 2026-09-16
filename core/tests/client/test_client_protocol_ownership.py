@@ -128,6 +128,27 @@ class TestPerClientInstances:
         assert shared.registered == ["m"]
 
     @pytest.mark.asyncio
+    async def test_a_factory_registered_after_the_client_exists_is_adopted_on_first_use_and_owned(self, isolated_registries):
+        client = await UtcpClient.create()
+        made: List[RecordingProtocol] = []
+
+        def factory() -> RecordingProtocol:
+            protocol = RecordingProtocol()
+            made.append(protocol)
+            return protocol
+
+        CommunicationProtocol.communication_protocol_factories["http"] = factory
+
+        await client.register_manual(http_manual("m"))
+        await client.register_manual(http_manual("n"))
+        # One instance, made on first use, serving every later call...
+        assert len(made) == 1
+        assert made[0].registered == ["m", "n"]
+        # ...and owned: the client's close() reaches it.
+        await client.close()
+        assert made[0].closed == 1
+
+    @pytest.mark.asyncio
     async def test_a_type_with_no_protocol_in_either_registry_names_what_is_available(self, isolated_registries):
         # "http" has a serializer (the plugin is imported) but, with the
         # registries isolated, no protocol in either of them.
@@ -240,3 +261,57 @@ class TestFailedCreateClosesWhatItCreated:
         reported = [record for record in caplog.records if "closing the protocols it had created failed too" in record.getMessage()]
         assert len(reported) == 1
         assert "transport refused to close" in reported[0].exc_text
+
+
+def unresolvable_http_manual(name: str) -> HttpCallTemplate:
+    """A template whose registration raises UtcpVariableNotFound before it reaches any protocol."""
+    return HttpCallTemplate(name=name, url="https://example.test/${NOWHERE_TO_BE_FOUND}", http_method="POST", call_template_type="http")
+
+
+class SlowRegisteringProtocol(RecordingProtocol):
+    """Registration takes a moment and is recorded in a shared event log, as is close()."""
+
+    def __init__(self, events: List[str]):
+        super().__init__()
+        self.events = events
+
+    async def register_manual(self, caller: UtcpClient, manual_call_template: CallTemplate) -> RegisterManualResult:
+        await asyncio.sleep(0.02)
+        self.events.append(f"registered {manual_call_template.name}")
+        return await super().register_manual(caller, manual_call_template)
+
+    async def close(self) -> None:
+        await super().close()
+        self.events.append("closed")
+
+
+class TestABatchRegistrationSettlesEverySiblingBeforeRaising:
+
+    @pytest.mark.asyncio
+    async def test_register_manuals_raises_only_once_every_sibling_registration_has_finished(self, isolated_registries):
+        # The first manual fails immediately (unresolvable variable); the
+        # second is still registering. A first-failure-wins gather would raise
+        # with the second still running underneath the caller.
+        events: List[str] = []
+        CommunicationProtocol.communication_protocols["http"] = SlowRegisteringProtocol(events)
+        client = await UtcpClient.create()
+
+        with pytest.raises(UtcpVariableNotFound):
+            await client.register_manuals([unresolvable_http_manual("bad_manual"), http_manual("slow_manual")])
+
+        assert events == ["registered slow_manual"]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_create_closes_its_protocols_only_after_every_registration_has_finished(self, isolated_registries):
+        # Same batch, through create(): the owned protocol must not be closed
+        # while a sibling registration is still using it.
+        events: List[str] = []
+        CommunicationProtocol.communication_protocol_factories["http"] = lambda: SlowRegisteringProtocol(events)
+
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config={"manual_call_templates": [
+                unresolvable_http_manual("bad_manual"),
+                http_manual("slow_manual"),
+            ]})
+
+        assert events == ["registered slow_manual", "closed"]

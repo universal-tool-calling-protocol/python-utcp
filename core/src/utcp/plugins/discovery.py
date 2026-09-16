@@ -90,9 +90,10 @@ def register_communication_protocol_factory(communication_protocol_type: str, fa
 
     Use this instead of `register_communication_protocol` for a protocol whose
     state belongs to one client rather than to the process: connections,
-    sessions, child processes. `UtcpClient.create` calls the factory once per
-    client, and that client's `close()` tears the instance down. A type
-    registered as a factory wins over the same type registered as an instance.
+    sessions, child processes. Each `UtcpClient` calls the factory once — at
+    creation, or on first use if the factory is registered later — and that
+    client's `close()` tears the instance down. A type registered as a factory
+    wins over the same type registered as an instance.
 
     Args:
         communication_protocol_type: The communication protocol type identifier.

@@ -4,7 +4,7 @@ import re
 import os
 import json
 import asyncio
-from typing import Dict, Any, List, Union, Optional, AsyncGenerator, TYPE_CHECKING
+from typing import Callable, Dict, Any, List, Union, Optional, AsyncGenerator, TYPE_CHECKING
 
 from utcp.data.call_template import CallTemplate
 from utcp.data.call_template import CallTemplateSerializer
@@ -48,27 +48,42 @@ class UtcpClientImplementation(UtcpClient):
         self._owned_comm_protocols: List[CommunicationProtocol] = []
         self._own_comm_protocols_by_type: Dict[str, CommunicationProtocol] = {}
 
-    def _adopt_factory_protocols(self) -> None:
-        """Instantiate this client's own protocols from the factory registry.
+    def _adopt(self, protocol_type: str, factory: Callable[[], CommunicationProtocol]) -> CommunicationProtocol:
+        """Create this client's own instance of a protocol and record it as owned.
 
-        Each instance is recorded as owned the moment it exists, so a factory
-        that raises part-way leaves the ones before it closable.
+        Recorded the moment it exists, so a factory that raises part-way
+        through a batch leaves the ones before it closable.
         """
+        protocol = factory()
+        self._owned_comm_protocols.append(protocol)
+        self._own_comm_protocols_by_type[protocol_type] = protocol
+        return protocol
+
+    def _adopt_factory_protocols(self) -> None:
+        """Instantiate this client's own protocols from every factory registered so far."""
         for protocol_type, factory in CommunicationProtocol.communication_protocol_factories.items():
-            protocol = factory()
-            self._owned_comm_protocols.append(protocol)
-            self._own_comm_protocols_by_type[protocol_type] = protocol
+            self._adopt(protocol_type, factory)
 
     def _protocol_for(self, call_template_type: str) -> CommunicationProtocol:
         """Resolve the protocol this client uses for a call template type.
 
-        This client's own instance wins over a shared one of the same type,
-        which is what lets a plugin migrate from instance to factory without
-        callers changing anything.
+        In order: this client's own instance; a factory registered since the
+        client was created (adopted now, so it is owned and closed like the
+        rest); a shared instance. Both registries are consulted live, so a
+        type resolves the same way whenever it was registered — and a factory
+        wins over a shared instance of the same type, which is what lets a
+        plugin migrate from instance to factory without callers changing
+        anything.
         """
-        protocol = self._own_comm_protocols_by_type.get(call_template_type) or CommunicationProtocol.communication_protocols.get(call_template_type)
+        protocol = self._own_comm_protocols_by_type.get(call_template_type)
         if protocol is None:
-            available = set(self._own_comm_protocols_by_type) | set(CommunicationProtocol.communication_protocols)
+            factory = CommunicationProtocol.communication_protocol_factories.get(call_template_type)
+            if factory is not None:
+                protocol = self._adopt(call_template_type, factory)
+        if protocol is None:
+            protocol = CommunicationProtocol.communication_protocols.get(call_template_type)
+        if protocol is None:
+            available = set(self._own_comm_protocols_by_type) | set(CommunicationProtocol.communication_protocol_factories) | set(CommunicationProtocol.communication_protocols)
             raise ValueError(f"No registered communication protocol of type {call_template_type} found, available types: {sorted(available)}")
         return protocol
 
@@ -256,8 +271,15 @@ class UtcpClientImplementation(UtcpClient):
             
             tasks.append(try_register_manual())
         
-        # Wait for all tasks to complete and collect results
-        results = await asyncio.gather(*tasks)
+        # Wait for EVERY registration to settle, even when one raises. The
+        # caller receives the failure only once no sibling registration is
+        # still running underneath it — create(), for one, closes the
+        # protocols right after, and a registration still in flight would be
+        # using a closed one.
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise failures[0]
         return [p for p in results if p is not None]
 
     async def deregister_manual(self, manual_name: str) -> bool:
