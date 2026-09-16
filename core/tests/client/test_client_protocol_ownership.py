@@ -16,7 +16,10 @@ from utcp.data.register_manual_response import RegisterManualResult
 from utcp.data.tool import JsonSchema, Tool
 from utcp.data.utcp_manual import UtcpManual
 from utcp.exceptions import UtcpProtocolCloseError, UtcpVariableNotFound
+from utcp.data.utcp_client_config import UtcpClientConfig
+from utcp.implementations.in_mem_tool_repository import InMemToolRepository
 from utcp.interfaces.communication_protocol import CommunicationProtocol
+from utcp.plugins.plugin_loader import ensure_plugins_initialized
 from utcp.utcp_client import UtcpClient
 from utcp_http.http_call_template import HttpCallTemplate
 
@@ -66,7 +69,14 @@ def http_manual(name: str) -> HttpCallTemplate:
 
 @pytest.fixture
 def isolated_registries(monkeypatch):
-    """Both registries start empty and are restored after the test."""
+    """Both registries start empty and are restored after the test.
+
+    Plugins load lazily on the first ``UtcpClient.create()`` of the session and
+    register into whatever dict holds the class attribute at that moment. They
+    are loaded here first, so their registrations land in the ORIGINAL dicts
+    (which the fixture restores) and never in the throwaway ones.
+    """
+    ensure_plugins_initialized()
     monkeypatch.setattr(CommunicationProtocol, "communication_protocols", {})
     monkeypatch.setattr(CommunicationProtocol, "communication_protocol_factories", {})
 
@@ -315,3 +325,124 @@ class TestABatchRegistrationSettlesEverySiblingBeforeRaising:
             ]})
 
         assert events == ["registered slow_manual", "closed"]
+
+
+class TestAFailedCreateLeavesNoManualBehind:
+
+    @pytest.mark.asyncio
+    async def test_a_manual_registered_by_the_failed_attempt_is_removed_from_a_shared_repository(self, isolated_registries):
+        # The caller supplies (and keeps) the repository; the second manual
+        # registers fine before the first one's failure surfaces. create()
+        # raises -- and must not leave that manual behind in the caller's repo.
+        CommunicationProtocol.communication_protocols["http"] = RecordingProtocol()
+        repo = InMemToolRepository()
+
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config=UtcpClientConfig(
+                tool_repository=repo,
+                manual_call_templates=[unresolvable_http_manual("bad_manual"), http_manual("good_manual")],
+            ))
+
+        assert await repo.get_manual("good_manual") is None
+        assert await repo.get_tool("good_manual.ping") is None
+
+    @pytest.mark.asyncio
+    async def test_a_manual_that_was_in_the_repository_before_the_attempt_survives_it(self, isolated_registries):
+        # "existing" is already registered by an earlier client on the same
+        # shared repository. This attempt names it again (that registration
+        # fails as a duplicate, without raising) and also fails outright on
+        # the bad manual. The rollback must remove only what THIS attempt
+        # added -- never the pre-existing manual.
+        CommunicationProtocol.communication_protocols["http"] = RecordingProtocol()
+        repo = InMemToolRepository()
+        earlier = await UtcpClient.create(config=UtcpClientConfig(tool_repository=repo, manual_call_templates=[http_manual("existing")]))
+        assert await repo.get_manual("existing") is not None
+
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config=UtcpClientConfig(
+                tool_repository=repo,
+                manual_call_templates=[http_manual("existing"), unresolvable_http_manual("bad_manual"), http_manual("added_by_attempt")],
+            ))
+
+        assert await repo.get_manual("existing") is not None
+        assert await repo.get_manual("added_by_attempt") is None
+        await earlier.close()
+
+
+def test_plugin_registrations_survive_the_isolated_tests_above():
+    # Runs after every isolated test in this file. If any of them had been the
+    # session's first create() and the fixture had patched the registry before
+    # plugins loaded, the plugin instances would have gone into the throwaway
+    # dict and be missing here.
+    ensure_plugins_initialized()
+    assert "http" in CommunicationProtocol.communication_protocols
+    assert "mcp" in CommunicationProtocol.communication_protocol_factories
+
+
+class TestRollbackRemovesOnlyWhatThisAttemptRegistered:
+
+    @pytest.mark.asyncio
+    async def test_a_manual_another_client_registered_during_the_attempt_survives_the_rollback(self, isolated_registries):
+        # While attempt A is registering its batch, client B (same shared
+        # repository) registers "contested". A's own registration of
+        # "contested" then fails as a duplicate; A fails outright on the bad
+        # manual. The rollback must remove what A registered -- and not B's
+        # "contested", which merely appeared after A started.
+        repo = InMemToolRepository()
+        client_b = await UtcpClient.create(config=UtcpClientConfig(tool_repository=repo))
+
+        class InterleavingProtocol(RecordingProtocol):
+            async def register_manual(self, caller, manual_call_template):
+                if manual_call_template.name == "trigger":
+                    await client_b.register_manual(http_manual("contested"))
+                return await super().register_manual(caller, manual_call_template)
+
+        CommunicationProtocol.communication_protocols["http"] = InterleavingProtocol()
+
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config=UtcpClientConfig(
+                tool_repository=repo,
+                manual_call_templates=[http_manual("trigger"), http_manual("contested"), unresolvable_http_manual("bad_manual")],
+            ))
+
+        assert await repo.get_manual("trigger") is None          # A's own registration: rolled back
+        assert await repo.get_manual("contested") is not None    # B's: untouched
+        await client_b.close()
+
+
+class TestCancellationDuringRollbackStillClosesOwnedProtocols:
+
+    @pytest.mark.asyncio
+    async def test_cancel_while_deregistering_closes_the_protocols_and_propagates_the_cancellation(self, isolated_registries):
+        # The rollback's deregistration blocks; the caller cancels create()
+        # while it is blocked. The owned protocol must still be closed, and
+        # the caller must see the cancellation.
+        deregister_started = asyncio.Event()
+        release_deregister = asyncio.Event()
+
+        class BlockingDeregisterProtocol(RecordingProtocol):
+            async def deregister_manual(self, caller, manual_call_template):
+                deregister_started.set()
+                await release_deregister.wait()
+
+        made: List[RecordingProtocol] = []
+
+        def factory() -> RecordingProtocol:
+            protocol = BlockingDeregisterProtocol()
+            made.append(protocol)
+            return protocol
+
+        CommunicationProtocol.communication_protocol_factories["http"] = factory
+
+        creating = asyncio.create_task(UtcpClient.create(config={"manual_call_templates": [
+            {"name": "good_manual", "call_template_type": "http", "url": "https://example.test/utcp", "http_method": "POST"},
+            {"name": "bad_manual", "call_template_type": "http", "url": "https://example.test/${NOWHERE_TO_BE_FOUND}", "http_method": "POST"},
+        ]}))
+        await asyncio.wait_for(deregister_started.wait(), timeout=5)
+        creating.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await creating
+
+        assert len(made) == 1
+        assert made[0].closed == 1
