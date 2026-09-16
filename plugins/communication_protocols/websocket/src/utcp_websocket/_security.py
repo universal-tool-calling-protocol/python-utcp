@@ -16,6 +16,7 @@ in addition to the HTTP-scheme helpers. ``wss://`` is always allowed;
 from __future__ import annotations
 
 import re
+import socket
 from contextlib import asynccontextmanager
 from ipaddress import IPv6Address, ip_address
 from typing import Any, AsyncIterator, Dict, Optional
@@ -25,19 +26,41 @@ from urllib.parse import urljoin, urlparse
 _LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
 
+# An IPv4 literal in any of the spellings the resolver accepts: dotted
+# quads, fewer than four parts (``127.1``), a single integer
+# (``2130706433``), octal (``0177.0.0.1``) or hex (``0x7f000001``) parts.
+_RESOLVER_IPV4_LITERAL = re.compile(r"^[0-9a-fx.]+$")
+
+
 def _ip_is_loopback_like(host: str) -> bool:
-    """Mirror of ``utcp_http._security._ip_is_loopback_like``."""
-    if host in {"0.0.0.0", "::"}:
+    """Mirror of ``utcp_http._security._is_loopback_host``: True if ``host``
+    names the machine running the agent, in any spelling the resolver routes
+    locally -- ``localhost``/``127.0.0.1``/``::1``, a trailing-dot absolute
+    name, ``0.0.0.0``/``::``, any 127.0.0.0/8 address, IPv4-mapped IPv6 forms,
+    and the shorthand/integer/octal/hex IPv4 spellings ``inet_aton`` accepts
+    (``127.1``, ``2130706433``, ``0177.0.0.1``, ``0x7f000001``) that
+    ``ipaddress`` rejects.
+    """
+    host = host.rstrip(".")
+    if not host:
+        return False
+    if host in _LOOPBACK_HOSTNAMES or host in {"0.0.0.0", "::"}:
         return True
     try:
         addr = ip_address(host)
     except ValueError:
-        return False
-    if addr.is_loopback:
+        # Not a form ``ipaddress`` understands; ask the resolver's parser.
+        if not _RESOLVER_IPV4_LITERAL.match(host):
+            return False
+        try:
+            addr = ip_address(socket.inet_ntoa(socket.inet_aton(host)))
+        except (OSError, ValueError):
+            return False
+    if addr.is_loopback or addr.is_unspecified:
         return True
     if isinstance(addr, IPv6Address):
         mapped = addr.ipv4_mapped
-        if mapped is not None and mapped.is_loopback:
+        if mapped is not None and (mapped.is_loopback or mapped.is_unspecified):
             return True
     return False
 
@@ -390,6 +413,19 @@ async def safe_request_with_redirects(
                 ensure_secure_url(
                     next_url, context=f"{context} (redirect target)"
                 )
+                # Mirror of utcp_http: a redirect never enters loopback from
+                # a non-loopback URL. The loopback allowance is for requests
+                # the caller addressed to loopback, not for ones a remote
+                # server steers there.
+                if is_loopback_url(next_url) and not is_loopback_url(current_url):
+                    raise ValueError(
+                        f"Security error during {context} (redirect target): "
+                        f"{current_url!r} redirected to the loopback address "
+                        f"{next_url!r}. A redirect is never followed into "
+                        "loopback from a non-loopback origin: the loopback "
+                        "allowance is for requests addressed to loopback by "
+                        "the caller, not for ones a remote server steers there."
+                    )
             except Exception:
                 response.release()
                 raise
