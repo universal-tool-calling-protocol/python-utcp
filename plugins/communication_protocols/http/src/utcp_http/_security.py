@@ -10,6 +10,7 @@ explicit ``ensure_secure_url`` to call before every aiohttp request.
 from __future__ import annotations
 
 import re
+import socket
 from contextlib import asynccontextmanager
 from ipaddress import IPv6Address, ip_address
 from typing import Any, AsyncIterator, Dict, Optional
@@ -55,49 +56,64 @@ def is_secure_url(url: str) -> bool:
         return True
 
     # http:// is only allowed for loopback.
-    if host in _LOOPBACK_HOSTNAMES:
-        return True
-
-    # Catch any other literal loopback IP that urlparse normalised
-    # (e.g. ``http://127.000.000.001``).
-    try:
-        return ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return _is_loopback_host(host)
 
 
-def _ip_is_loopback_like(host: str) -> bool:
-    """Return True if ``host`` is an IP literal that the local kernel will
-    route to the host running the agent.
+# An IPv4 literal in any of the spellings the resolver accepts: dotted
+# quads, fewer than four parts (``127.1``), a single integer
+# (``2130706433``), octal (``0177.0.0.1``) or hex (``0x7f000001``) parts.
+_RESOLVER_IPV4_LITERAL = re.compile(r"^[0-9a-fx.]+$")
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Return True if ``host`` names the machine running the agent.
+
+    ``host`` is a hostname as ``urlparse`` returns it (lowercase, no
+    brackets). One classifier for every loopback decision -- the plain-HTTP
+    allowance, the remote-manual rule, the redirect guard, the OpenAPI
+    converter -- so they cannot disagree about what loopback is.
 
     Wider than Python's stdlib ``ip_address(...).is_loopback`` because we
-    must also defend against:
+    must classify every spelling the *resolver* will route locally:
 
-    * ``0.0.0.0`` -- on Linux a TCP connect to 0.0.0.0 lands on 127.0.0.1.
-    * ``::`` -- the IPv6 equivalent of ``0.0.0.0``.
-    * IPv4-mapped IPv6 forms of any 127.0.0.0/8 address (e.g.
-      ``::ffff:127.0.0.1``, ``::ffff:127.0.0.2``) -- ``ipaddress`` does
-      not treat these as loopback per RFC 4291, but the dual-stack
-      socket layer routes them to the v4 loopback.
+    * ``localhost`` and the canonical ``127.0.0.1`` / ``::1``.
+    * A trailing dot (``localhost.``, ``127.0.0.1.``): the absolute-name
+      form, which resolves the same.
+    * ``0.0.0.0`` -- on Linux a TCP connect to 0.0.0.0 lands on 127.0.0.1;
+      ``::`` is the IPv6 equivalent.
+    * Any 127.0.0.0/8 address.
+    * IPv4-mapped IPv6 forms of those (``::ffff:127.0.0.1``) -- not
+      loopback per RFC 4291, but the dual-stack socket layer routes them
+      to the v4 loopback.
+    * The shorthand, integer, octal and hex IPv4 spellings ``inet_aton``
+      accepts (``127.1``, ``2130706433``, ``0177.0.0.1``, ``0x7f000001``)
+      -- ``ipaddress`` rejects them, the OS resolver does not.
 
-    Used by the OpenAPI converter to detect attacker-controlled
-    ``servers[0].url`` values that point at the agent's own loopback
-    interface (the GHSA-39j6-4867-gg4w SSRF pattern). Hostname-based,
-    never prefix-based.
+    Hostname-based, never prefix-based: ``localhost.evil.com`` and
+    ``127.0.0.1.attacker.example`` are not loopback.
     """
-    if host in {"0.0.0.0", "::"}:
+    host = host.rstrip(".")
+    if not host:
+        return False
+    if host in _LOOPBACK_HOSTNAMES or host in {"0.0.0.0", "::"}:
         return True
     try:
         addr = ip_address(host)
     except ValueError:
-        return False
-    if addr.is_loopback:
+        # Not a form ``ipaddress`` understands; ask the resolver's parser.
+        if not _RESOLVER_IPV4_LITERAL.match(host):
+            return False
+        try:
+            addr = ip_address(socket.inet_ntoa(socket.inet_aton(host)))
+        except (OSError, ValueError):
+            return False
+    if addr.is_loopback or addr.is_unspecified:
         return True
     # IPv4-mapped IPv6 loopback (``::ffff:127.0.0.1`` etc.) -- the
     # ``ipv4_mapped`` accessor surfaces the embedded v4 address.
     if isinstance(addr, IPv6Address):
         mapped = addr.ipv4_mapped
-        if mapped is not None and mapped.is_loopback:
+        if mapped is not None and (mapped.is_loopback or mapped.is_unspecified):
             return True
     return False
 
@@ -124,10 +140,7 @@ def is_loopback_url(url: str) -> bool:
     if not host:
         return False
 
-    if host in _LOOPBACK_HOSTNAMES:
-        return True
-
-    return _ip_is_loopback_like(host)
+    return _is_loopback_host(host)
 
 
 def ensure_secure_url(url: str, *, context: Optional[str] = None) -> None:

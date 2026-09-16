@@ -1000,6 +1000,15 @@ class TestRedirectNeverEntersLoopback:
             "http://localhost:9200/_cat/indices",   # loopback hostname
             "https://127.0.0.1:8443/admin",         # HTTPS does not make loopback remote
             "http://[::1]:9200/_cat/indices",       # IPv6 loopback
+            # Spellings the resolver routes to loopback but Python's ipaddress
+            # rejects -- over HTTPS, so only the loopback classification stands
+            # between them and being "HTTPS anywhere"
+            "https://127.1/admin",                  # shorthand
+            "https://2130706433/admin",             # single integer
+            "https://0177.0.0.1/admin",             # octal
+            "https://0x7f000001/admin",             # hex
+            "https://127.0.0.1./admin",             # absolute-name form
+            "https://localhost./admin",
         ],
     )
     async def test_remote_origin_cannot_redirect_into_loopback(self, loopback_target) -> None:
