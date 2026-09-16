@@ -380,6 +380,14 @@ async def safe_request_with_redirects(
         target against the current URL and runs ``ensure_secure_url``
         on it before issuing the next hop. Rejection raises and the
         redirect chain is aborted with the connection released.
+      * Never follows a redirect INTO loopback from a non-loopback URL.
+        The loopback allowance in ``ensure_secure_url`` exists for
+        requests the caller addressed to loopback (local development);
+        a remote server must not be able to steer a request at the
+        agent's own services, nor make a loopback-served manual look
+        locally discovered (``reject_remote_loopback_tool_urls`` judges
+        by the final URL, which this rule keeps honest: a final loopback
+        URL means the chain started on loopback and never left it).
       * Caps the chain at ``max_redirects`` hops. Exceeding that raises
         ``RuntimeError``.
       * Mirrors RFC 7231 method semantics: 303 forces ``GET`` and drops
@@ -450,6 +458,15 @@ async def safe_request_with_redirects(
                 ensure_secure_url(
                     next_url, context=f"{context} (redirect target)"
                 )
+                if is_loopback_url(next_url) and not is_loopback_url(current_url):
+                    raise ValueError(
+                        f"Security error during {context} (redirect target): "
+                        f"{current_url!r} redirected to the loopback address "
+                        f"{next_url!r}. A redirect is never followed into "
+                        "loopback from a non-loopback origin: the loopback "
+                        "allowance is for requests addressed to loopback by "
+                        "the caller, not for ones a remote server steers there."
+                    )
             except Exception:
                 response.release()
                 raise
