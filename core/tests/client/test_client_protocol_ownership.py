@@ -377,3 +377,72 @@ def test_plugin_registrations_survive_the_isolated_tests_above():
     ensure_plugins_initialized()
     assert "http" in CommunicationProtocol.communication_protocols
     assert "mcp" in CommunicationProtocol.communication_protocol_factories
+
+
+class TestRollbackRemovesOnlyWhatThisAttemptRegistered:
+
+    @pytest.mark.asyncio
+    async def test_a_manual_another_client_registered_during_the_attempt_survives_the_rollback(self, isolated_registries):
+        # While attempt A is registering its batch, client B (same shared
+        # repository) registers "contested". A's own registration of
+        # "contested" then fails as a duplicate; A fails outright on the bad
+        # manual. The rollback must remove what A registered -- and not B's
+        # "contested", which merely appeared after A started.
+        repo = InMemToolRepository()
+        client_b = await UtcpClient.create(config=UtcpClientConfig(tool_repository=repo))
+
+        class InterleavingProtocol(RecordingProtocol):
+            async def register_manual(self, caller, manual_call_template):
+                if manual_call_template.name == "trigger":
+                    await client_b.register_manual(http_manual("contested"))
+                return await super().register_manual(caller, manual_call_template)
+
+        CommunicationProtocol.communication_protocols["http"] = InterleavingProtocol()
+
+        with pytest.raises(UtcpVariableNotFound):
+            await UtcpClient.create(config=UtcpClientConfig(
+                tool_repository=repo,
+                manual_call_templates=[http_manual("trigger"), http_manual("contested"), unresolvable_http_manual("bad_manual")],
+            ))
+
+        assert await repo.get_manual("trigger") is None          # A's own registration: rolled back
+        assert await repo.get_manual("contested") is not None    # B's: untouched
+        await client_b.close()
+
+
+class TestCancellationDuringRollbackStillClosesOwnedProtocols:
+
+    @pytest.mark.asyncio
+    async def test_cancel_while_deregistering_closes_the_protocols_and_propagates_the_cancellation(self, isolated_registries):
+        # The rollback's deregistration blocks; the caller cancels create()
+        # while it is blocked. The owned protocol must still be closed, and
+        # the caller must see the cancellation.
+        deregister_started = asyncio.Event()
+        release_deregister = asyncio.Event()
+
+        class BlockingDeregisterProtocol(RecordingProtocol):
+            async def deregister_manual(self, caller, manual_call_template):
+                deregister_started.set()
+                await release_deregister.wait()
+
+        made: List[RecordingProtocol] = []
+
+        def factory() -> RecordingProtocol:
+            protocol = BlockingDeregisterProtocol()
+            made.append(protocol)
+            return protocol
+
+        CommunicationProtocol.communication_protocol_factories["http"] = factory
+
+        creating = asyncio.create_task(UtcpClient.create(config={"manual_call_templates": [
+            {"name": "good_manual", "call_template_type": "http", "url": "https://example.test/utcp", "http_method": "POST"},
+            {"name": "bad_manual", "call_template_type": "http", "url": "https://example.test/${NOWHERE_TO_BE_FOUND}", "http_method": "POST"},
+        ]}))
+        await asyncio.wait_for(deregister_started.wait(), timeout=5)
+        creating.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await creating
+
+        assert len(made) == 1
+        assert made[0].closed == 1

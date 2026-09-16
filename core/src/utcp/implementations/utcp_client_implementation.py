@@ -160,11 +160,11 @@ class UtcpClientImplementation(UtcpClient):
         # client it could close — so whatever this client CREATED is undone
         # here before the failure is re-raised: the manuals this attempt
         # registered are removed (the tool repository may be caller-supplied
-        # and shared), then the protocol instances it created are closed. Only
-        # what it created: a manual that was in the repository before this
-        # attempt, and the shared protocol instances, are not this client's.
-        attempted_names = [_sanitize_manual_name(t.name) for t in (config.manual_call_templates or [])]
-        present_before = {name for name in attempted_names if await client.config.tool_repository.get_manual(name) is not None}
+        # and shared), then the protocol instances it created are closed.
+        # Exactly what it registered — recorded as each registration
+        # succeeds, never inferred from repository state, which another client
+        # sharing the repository may have changed in the meantime.
+        registered_by_this_attempt: List[str] = []
         try:
             client._adopt_factory_protocols()
 
@@ -176,23 +176,29 @@ class UtcpClientImplementation(UtcpClient):
 
             # Load the manuals if any
             if config.manual_call_templates:
-                await client.register_manuals(config.manual_call_templates)
+                results = await client._register_each(config.manual_call_templates, registered_by_this_attempt)
+                failures = [result for result in results if isinstance(result, BaseException)]
+                if failures:
+                    raise failures[0]
         except BaseException:
-            for name in attempted_names:
-                if name in present_before:
-                    continue
-                try:
-                    if await client.config.tool_repository.get_manual(name) is not None:
-                        await client.deregister_manual(name)
-                except Exception:
-                    logger.error(f"UtcpClient.create failed, and removing the manual '{name}' it had registered failed too", exc_info=True)
+            # Rollback first (deregistration needs the protocols open), then
+            # close — in a finally, so a cancellation that lands during the
+            # rollback still closes what this client created and then reaches
+            # the caller, as a cancellation must.
             try:
-                await client._close_owned_protocols()
-            except Exception:
-                # The initialization failure stays the error the caller sees;
-                # the cleanup failure is reported rather than swallowed, because
-                # the caller has no client through which to retry it.
-                logger.error("UtcpClient.create failed, and closing the protocols it had created failed too", exc_info=True)
+                for name in registered_by_this_attempt:
+                    try:
+                        await client.deregister_manual(name)
+                    except Exception:
+                        logger.error(f"UtcpClient.create failed, and removing the manual '{name}' it had registered failed too", exc_info=True)
+            finally:
+                try:
+                    await client._close_owned_protocols()
+                except Exception:
+                    # The initialization failure stays the error the caller sees;
+                    # the cleanup failure is reported rather than swallowed, because
+                    # the caller has no client through which to retry it.
+                    logger.error("UtcpClient.create failed, and closing the protocols it had created failed too", exc_info=True)
             raise
 
         return client
@@ -266,40 +272,54 @@ class UtcpClientImplementation(UtcpClient):
         Returns:
             A list of `RegisterManualResult` instances representing the results of the registration.
         """
-        # Create tasks for parallel CallTemplate registration
-        tasks = []
-        for manual_call_template in manual_call_templates:
-            async def try_register_manual(manual_call_template=manual_call_template):
-                try:
-                    result = await self.register_manual(manual_call_template)
-                    if result.success:
-                        logger.info(f"Successfully registered manual '{manual_call_template.name}' with {len(result.manual.tools)} tools")
-                    else:
-                        logger.error(f"Error registering manual '{manual_call_template.name}': {result.errors}")
-                    return result
-                except UtcpVariableNotFound as e:
-                    raise e
-                except Exception as e:
-                    logger.error(f"Error registering manual '{manual_call_template.name}': {traceback.format_exc()}")
-                    return RegisterManualResult(
-                        manual_call_template=manual_call_template,
-                        manual=UtcpManual(manual_version="0.0.0", tools=[]),
-                        success=False,
-                        errors=[traceback.format_exc()]
-                    )
-            
-            tasks.append(try_register_manual())
-        
-        # Wait for EVERY registration to settle, even when one raises. The
-        # caller receives the failure only once no sibling registration is
-        # still running underneath it — create(), for one, closes the
-        # protocols right after, and a registration still in flight would be
-        # using a closed one.
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await self._register_each(manual_call_templates)
         failures = [result for result in results if isinstance(result, BaseException)]
         if failures:
             raise failures[0]
         return [p for p in results if p is not None]
+
+    async def _register_each(
+        self,
+        manual_call_templates: List[CallTemplate],
+        registered_names: Optional[List[str]] = None,
+    ) -> List[Union[RegisterManualResult, BaseException]]:
+        """Register every template in parallel and wait for EVERY one to settle.
+
+        A raised failure is returned in place of its result rather than
+        propagated at once, so no sibling registration is still running
+        underneath a caller that holds the failure — create(), for one, closes
+        the protocols right after, and a registration still in flight would be
+        using a closed one.
+
+        When ``registered_names`` is given, the registered name of each manual
+        that succeeded is appended to it AS it succeeds, so a caller that
+        fails part-way knows exactly what it registered — and only that.
+        """
+        async def try_register_manual(manual_call_template: CallTemplate):
+            try:
+                result = await self.register_manual(manual_call_template)
+                if result.success:
+                    if registered_names is not None:
+                        registered_names.append(manual_call_template.name)
+                    logger.info(f"Successfully registered manual '{manual_call_template.name}' with {len(result.manual.tools)} tools")
+                else:
+                    logger.error(f"Error registering manual '{manual_call_template.name}': {result.errors}")
+                return result
+            except UtcpVariableNotFound as e:
+                raise e
+            except Exception as e:
+                logger.error(f"Error registering manual '{manual_call_template.name}': {traceback.format_exc()}")
+                return RegisterManualResult(
+                    manual_call_template=manual_call_template,
+                    manual=UtcpManual(manual_version="0.0.0", tools=[]),
+                    success=False,
+                    errors=[traceback.format_exc()]
+                )
+
+        return await asyncio.gather(
+            *(try_register_manual(manual_call_template) for manual_call_template in manual_call_templates),
+            return_exceptions=True,
+        )
 
     async def deregister_manual(self, manual_name: str) -> bool:
         """REQUIRED
