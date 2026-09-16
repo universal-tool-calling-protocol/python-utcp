@@ -423,3 +423,133 @@ def test_openapi_converter_example_dedup_is_type_aware_and_order_insensitive():
     assert tool.inputs.properties.get("body").examples == [{"a": 1, "b": 2}]
     # True vs 1 kept distinct (== would have collapsed them); duplicate True removed
     assert tool.outputs.examples == [True, 1]
+
+
+def test_openapi_converter_request_body_falls_back_to_first_schema_bearing_media_type():
+    """A requestBody declared only in a non-JSON media type must not be dropped.
+
+    _extract_inputs hard-coded content["application/json"] with no fallback, unlike
+    _extract_outputs which already falls back to the first schema-bearing media type.
+    A body declared only as e.g. application/xml produced a tool with no body input at all.
+    """
+    openapi_spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/items": {
+                "post": {
+                    "operationId": "createItem",
+                    "requestBody": {
+                        "content": {
+                            "application/xml": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {"name": {"type": "string"}},
+                                },
+                                "example": {"name": "widget"},
+                            }
+                        }
+                    },
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+
+    tool = next((t for t in manual.tools if t.name == "createItem"), None)
+    assert tool is not None
+
+    body_param = tool.inputs.properties.get("body")
+    assert body_param is not None
+    assert body_param.properties.get("name").type == "string"
+    assert body_param.examples == [{"name": "widget"}]
+    # The fallback media type must reach the call template, or the tool would still
+    # send this body as application/json and JSON-encode an XML payload.
+    assert tool.tool_call_template.content_type == "application/xml"
+
+
+def test_openapi_converter_request_body_required_flag_is_the_outer_flag():
+    """requestBody.required (the outer flag) must drive the tool's own required list,
+    not json_schema.get("required") (the body object's own required properties).
+
+    A requestBody marked required=true whose schema has no property-level "required"
+    list previously left the "body" tool input optional, even though OpenAPI says the
+    body itself may not be omitted.
+    """
+    openapi_spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/items": {
+                "post": {
+                    "operationId": "createItem",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+
+    tool = next((t for t in manual.tools if t.name == "createItem"), None)
+    assert tool is not None
+    assert tool.inputs.required == ["body"]
+
+
+def test_openapi_converter_parameter_content_form_schema_and_examples():
+    """A Parameter Object may carry its schema under 'content' instead of 'schema'.
+
+    _extract_inputs only read param["schema"], so a parameter declared with the OAS3
+    content form (content: {<media-type>: {schema, example}}) lost both its schema and
+    its examples.
+    """
+    openapi_spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/items": {
+                "get": {
+                    "operationId": "listItems",
+                    "parameters": [
+                        {
+                            "name": "filter",
+                            "in": "query",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"status": {"type": "string"}},
+                                    },
+                                    "example": {"status": "active"},
+                                }
+                            },
+                        }
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    converter = OpenApiConverter(openapi_spec)
+    manual = converter.convert()
+
+    tool = next((t for t in manual.tools if t.name == "listItems"), None)
+    assert tool is not None
+
+    filter_param = tool.inputs.properties.get("filter")
+    assert filter_param is not None
+    assert filter_param.properties.get("status").type == "string"
+    assert filter_param.examples == [{"status": "active"}]
