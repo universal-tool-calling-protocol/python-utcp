@@ -148,44 +148,52 @@ class RequiredDocExtractor:
                 line = line.replace('{', '\\{').replace('}', '\\}')
                 stripped = line.strip()
 
-                # Check if this looks like a parameter/item definition (name: description)
+                # Check if this looks like a parameter/item definition (name: description).
+                # A line with a colon that is NOT one -- prose such as "(note: ...)" or a
+                # quoted URL -- is ordinary text and falls through to the branches below;
+                # it must never be dropped.
+                param_match = None
                 if ':' in stripped and not stripped.endswith(':'):
                     colon_pos = stripped.find(':')
-                    param_name = stripped[:colon_pos].strip()
-                    param_desc = stripped[colon_pos + 1:].strip()
-                    
-                    # Check if param_name looks like a parameter (no spaces, reasonable length)
-                    if ' ' not in param_name and len(param_name) <= 50 and param_name.replace('_', '').isalnum():
-                        # This is likely a parameter definition
-                        processed.append(f"- **`{param_name}`**: {param_desc}")
-                        
-                        # Check for continuation lines (indented more than the parameter line)
-                        base_indent = len(line) - len(line.lstrip())
-                        i += 1
-                        while i < len(content_lines):
-                            next_line = content_lines[i]
-                            next_stripped = next_line.strip()
-                            next_indent = len(next_line) - len(next_line.lstrip()) if next_stripped else 0
-                            
-                            # Check if we hit a code block
-                            if next_stripped.startswith('```'):
-                                break
-                            
-                            if not next_stripped:
-                                # Empty line - add it and continue
-                                processed.append('')
-                                i += 1
-                            elif next_indent > base_indent:
-                                # Continuation line - add with proper spacing
-                                processed.append(f"  {next_stripped}")
-                                i += 1
-                            else:
-                                # Not a continuation, back up and break
-                                break
-                        continue
-                
+                    candidate = stripped[:colon_pos].strip()
+                    # A parameter name has no spaces and is a plain identifier, and a
+                    # definition puts a space after its colon ("name: description") --
+                    # which is what separates it from a URL such as https://example.com
+                    if (' ' not in candidate and len(candidate) <= 50 and candidate.replace('_', '').isalnum()
+                            and stripped[colon_pos + 1] == ' '):
+                        param_match = (candidate, stripped[colon_pos + 1:].strip())
+
+                if param_match is not None:
+                    param_name, param_desc = param_match
+                    processed.append(f"- **`{param_name}`**: {param_desc}")
+
+                    # Check for continuation lines (indented more than the parameter line)
+                    base_indent = len(line) - len(line.lstrip())
+                    i += 1
+                    while i < len(content_lines):
+                        next_line = content_lines[i]
+                        next_stripped = next_line.strip()
+                        next_indent = len(next_line) - len(next_line.lstrip()) if next_stripped else 0
+
+                        # Check if we hit a code block
+                        if next_stripped.startswith('```'):
+                            break
+
+                        if not next_stripped:
+                            # Empty line - add it and continue
+                            processed.append('')
+                            i += 1
+                        elif next_indent > base_indent:
+                            # Continuation line - add with proper spacing
+                            processed.append(f"  {next_stripped}")
+                            i += 1
+                        else:
+                            # Not a continuation, back up and break
+                            break
+                    continue
+
                 # Check if line starts with a list marker
-                elif stripped.startswith(('- ', '* ', '+ ')):
+                if stripped.startswith(('- ', '* ', '+ ')):
                     # This is already a markdown list item
                     processed.append(stripped)
                 elif stripped.startswith(('1. ', '2. ', '3. ', '4. ', '5. ', '6. ', '7. ', '8. ', '9. ')):
@@ -204,9 +212,13 @@ class RequiredDocExtractor:
         # Parse the docstring line by line
         for line in lines:
             stripped_lower = line.strip().lower()
-            
-            # Check if this line is a section header
-            if stripped_lower in section_headers or stripped_lower.endswith(':'):
+
+            # Check if this line is a section header: a known Google-style header, or a
+            # Title-Cased line ending in a colon ("Security Considerations:",
+            # "Return Values (Complex):"). A sentence that merely ends in a colon
+            # ("Inheritance is controlled by `x`:", "Use the following:") is content --
+            # treating it as a header would title-case it, code span included.
+            if stripped_lower in section_headers or self._is_custom_section_header(line.strip()):
                 # Save previous section if it exists
                 if current_section:
                     processed_content = process_section_content(current_section_content)
@@ -231,6 +243,10 @@ class RequiredDocExtractor:
             if processed_content:
                 result.append(f"\n**{current_section.title()}**\n")
                 result.extend(processed_content)
+        else:
+            # No section header anywhere: the whole docstring is the preamble,
+            # which is otherwise only flushed when a header follows it.
+            result.extend(process_section_content(current_section_content))
         
         # Clean up the result
         final_result = []
@@ -530,18 +546,102 @@ class RequiredDocExtractor:
                         class_anchor = re.sub(r'[^\w\-_]', '-', class_name.lower()).strip('-')
                         link = f"[{class_name}](./{relative_path_str}#{class_anchor})"
                 
-                # Don't replace matches that are in code blocks
+                # Don't replace matches that are in code blocks or inline code spans
                 lines = modified_text.split('\n')
                 in_code_block = False
                 for i, line in enumerate(lines):
                     if line.strip().startswith('```'):
                         in_code_block = not in_code_block
                     elif not in_code_block:
-                        lines[i] = re.sub(pattern, link, line)
+                        lines[i] = self._sub_outside_inline_code(pattern, link, line)
                 modified_text = '\n'.join(lines)
-        
+
         return modified_text
+
+    @staticmethod
+    def _is_custom_section_header(stripped: str) -> bool:
+        """A custom section header is a Title-Cased line ending in a colon.
+
+        Every word starts with a capital letter or a digit (leading punctuation such
+        as an opening parenthesis is skipped), and there is no code span. Length is
+        not a criterion: "Return Values (Complex):" and "Section 1/2:" are headers,
+        "Use the following:" and "def tool1():" are content.
+        """
+        if not stripped.endswith(':') or '`' in stripped:
+            return False
+        words = stripped[:-1].split()
+        if not words:
+            return False
+        for word in words:
+            first = next((ch for ch in word if ch.isalnum()), None)
+            if first is None or not (first.isupper() or first.isdigit()):
+                return False
+        return True
+
+    @staticmethod
+    def _split_inline_code(line: str) -> List[Tuple[str, bool]]:
+        """Split a line into (text, is_code) parts.
+
+        A code span opened by a run of N backticks closes only on the next run of
+        exactly N backticks, so ``a`b`` is one span. An unclosed run is text.
+        """
+        parts: List[Tuple[str, bool]] = []
+        pos = 0
+        text_start = 0
+        while pos < len(line):
+            if line[pos] != '`':
+                pos += 1
+                continue
+            run_end = pos
+            while run_end < len(line) and line[run_end] == '`':
+                run_end += 1
+            fence = line[pos:run_end]
+            close = line.find(fence, run_end)
+            # The closing run must be exactly as long: skip longer runs
+            while close != -1 and close + len(fence) < len(line) and line[close + len(fence)] == '`':
+                skip = close
+                while skip < len(line) and line[skip] == '`':
+                    skip += 1
+                close = line.find(fence, skip)
+            if close == -1:
+                pos = run_end
+                continue
+            if text_start < pos:
+                parts.append((line[text_start:pos], False))
+            span_end = close + len(fence)
+            parts.append((line[pos:span_end], True))
+            pos = text_start = span_end
+        if text_start < len(line):
+            parts.append((line[text_start:], False))
+        return parts
+
+    @classmethod
+    def _sub_outside_inline_code(cls, pattern: str, replacement: str, line: str) -> str:
+        """Substitute only outside `...` / ``...`` spans.
+
+        Markdown renders a code span literally, so a link inserted inside one shows up
+        as raw brackets instead of a link.
+        """
+        return ''.join(text if is_code else re.sub(pattern, replacement, text) for text, is_code in cls._split_inline_code(line))
     
+    def _render_methods(self, content: List[str], methods: List[DocEntry], file_path: str) -> None:
+        """Append a class's documented methods to ``content``."""
+        content.extend(["#### Methods:", ""])
+        for method in methods:
+            # Add cross-references to method signature
+            linked_signature = self.add_cross_references(method.signature, file_path)
+            docstrings = method.docstring if method.docstring else "*No method documentation available*"
+            content.extend(
+                [
+                    "<details>",
+                    f"<summary>{linked_signature}</summary>",
+                    "",
+                    docstrings,
+                    "</details>",
+                    "",
+                ]
+            )
+
     def generate_module_markdown(self, file_path: str, file_data: Dict[str, List[DocEntry]]) -> str:
         """Generate markdown content for a single module/file."""
         if not any(file_data.values()):
@@ -632,34 +732,27 @@ class RequiredDocExtractor:
                 
                 # Add methods for this class
                 if class_entry.name in methods_by_class:
-                    content.extend(["#### Methods:", ""])
-                    
-                    for method in methods_by_class[class_entry.name]:
-                        method_anchor = re.sub(r'[^\w\-_]', '-', f"{class_entry.name}-{method.name}".lower()).strip('-')
-                        
-                        # Add cross-references to method signature
-                        linked_signature = self.add_cross_references(method.signature, file_path)
-                        
-                        docstrings = ""
-                        
-                        if method.docstring:
-                            docstrings = method.docstring
-                        else:
-                            docstrings = "*No method documentation available*"
-                            
-                        content.extend(
-                            [
-                                "<details>",
-                                f"<summary>{linked_signature}</summary>",
-                                "",
-                                docstrings,
-                                "</details>",
-                                "",
-                            ]
-                        )
-                
+                    self._render_methods(content, methods_by_class[class_entry.name], file_path)
+
                 content.extend(["---", ""])
-        
+
+        # A class whose own docstring is not REQUIRED can still have REQUIRED
+        # methods. They are required documentation and the index counts them,
+        # so they are rendered under a bare class heading rather than lost.
+        documented_classes = {class_entry.name for class_entry in file_data['classes']}
+        for class_name, methods in methods_by_class.items():
+            if class_name in documented_classes:
+                continue
+            class_anchor = re.sub(r'[^\w\-_]', '-', class_name.lower()).strip('-')
+            content.extend([
+                f"### class {class_name} {{#{class_anchor}}}",
+                "",
+                "*No class documentation available*",
+                "",
+            ])
+            self._render_methods(content, methods, file_path)
+            content.extend(["---", ""])
+
         # Add standalone functions
         if file_data['functions']:
             for func_entry in file_data['functions']:
@@ -748,7 +841,7 @@ class RequiredDocExtractor:
                     index_path = output_path / "index.md"
                     target_path = Path(output_file_path)
                     try:
-                        relative_path = target_path.relative_to(output_path)
+                        relative_path = target_path.relative_to(output_path).as_posix()
                         link_path = f"./{relative_path}"
                     except ValueError:
                         # Fallback to simple filename if relative path calculation fails
@@ -805,7 +898,7 @@ class RequiredDocExtractor:
                     index_path = output_path / "index.md"
                     target_path = Path(output_file_path)
                     try:
-                        relative_path = target_path.relative_to(output_path)
+                        relative_path = target_path.relative_to(output_path).as_posix()
                         link_path = f"./{relative_path}"
                     except ValueError:
                         # Fallback to simple filename if relative path calculation fails
@@ -900,10 +993,11 @@ class RequiredDocExtractor:
         
         # Second pass: Add cross-references and write files
         for file_path, (content, output_file_path) in generated_files.items():
-            # Post-process content to add proper cross-references
-            processed_content = self.add_cross_references_post_generation(content, str(output_file_path).replace('\\', '/'))
-            # Also process field references
-            lines = processed_content.split('\n')
+            # Field lines were emitted as "- `name: type`" -- the backticks are a
+            # placeholder (see format_field_with_references), not a code span.
+            # Unwrap them BEFORE cross-referencing: the cross-reference pass
+            # leaves real code spans alone, and these must receive links.
+            lines = content.split('\n')
             processed_lines = []
             for line in lines:
                 if line.strip().startswith('- `') and ':' in line:
@@ -916,8 +1010,9 @@ class RequiredDocExtractor:
                         processed_lines.append(line)
                 else:
                     processed_lines.append(line)
-            
-            final_content = '\n'.join(processed_lines)
+
+            # Post-process content to add proper cross-references
+            final_content = self.add_cross_references_post_generation('\n'.join(processed_lines), str(output_file_path).replace('\\', '/'))
             
             with open(output_file_path, 'w', encoding='utf-8') as f:
                 f.write(final_content)
