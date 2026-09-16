@@ -4,7 +4,7 @@ import re
 import os
 import json
 import asyncio
-from typing import Dict, Any, List, Union, Optional, AsyncGenerator, TYPE_CHECKING
+from typing import Callable, Dict, Any, List, Union, Optional, AsyncGenerator, TYPE_CHECKING
 
 from utcp.data.call_template import CallTemplate
 from utcp.data.call_template import CallTemplateSerializer
@@ -15,7 +15,7 @@ from utcp.interfaces.variable_substitutor import VariableSubstitutor
 from utcp.data.utcp_client_config import UtcpClientConfig, UtcpClientConfigSerializer
 from utcp.implementations.default_variable_substitutor import DefaultVariableSubstitutor
 from utcp.implementations.tag_search import TagAndDescriptionWordMatchStrategy
-from utcp.exceptions import UtcpVariableNotFound
+from utcp.exceptions import UtcpVariableNotFound, UtcpProtocolCloseError
 from utcp.data.register_manual_response import RegisterManualResult
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.exceptions import UtcpSerializerValidationError
@@ -39,6 +39,77 @@ class UtcpClientImplementation(UtcpClient):
     ):
         super().__init__(config, root_dir)
         self.variable_substitutor = variable_substitutor
+        # The protocol instances this client CREATED (from the factory registry)
+        # and therefore owns: what its teardown closes. They are adopted by
+        # `create()` after construction, inside its cleanup guard — a
+        # constructor cannot await, so nothing that needs closing on failure is
+        # created here. Shared instances stay in the process registry, looked up
+        # live, and are never closed on this client's behalf.
+        self._owned_comm_protocols: List[CommunicationProtocol] = []
+        self._own_comm_protocols_by_type: Dict[str, CommunicationProtocol] = {}
+
+    def _adopt(self, protocol_type: str, factory: Callable[[], CommunicationProtocol]) -> CommunicationProtocol:
+        """Create this client's own instance of a protocol and record it as owned.
+
+        Recorded the moment it exists, so a factory that raises part-way
+        through a batch leaves the ones before it closable.
+        """
+        protocol = factory()
+        self._owned_comm_protocols.append(protocol)
+        self._own_comm_protocols_by_type[protocol_type] = protocol
+        return protocol
+
+    def _adopt_factory_protocols(self) -> None:
+        """Instantiate this client's own protocols from every factory registered so far."""
+        for protocol_type, factory in CommunicationProtocol.communication_protocol_factories.items():
+            self._adopt(protocol_type, factory)
+
+    def _protocol_for(self, call_template_type: str) -> CommunicationProtocol:
+        """Resolve the protocol this client uses for a call template type.
+
+        In order: this client's own instance; a factory registered since the
+        client was created (adopted now, so it is owned and closed like the
+        rest); a shared instance. Both registries are consulted live, so a
+        type resolves the same way whenever it was registered — and a factory
+        wins over a shared instance of the same type, which is what lets a
+        plugin migrate from instance to factory without callers changing
+        anything.
+        """
+        protocol = self._own_comm_protocols_by_type.get(call_template_type)
+        if protocol is None:
+            factory = CommunicationProtocol.communication_protocol_factories.get(call_template_type)
+            if factory is not None:
+                protocol = self._adopt(call_template_type, factory)
+        if protocol is None:
+            protocol = CommunicationProtocol.communication_protocols.get(call_template_type)
+        if protocol is None:
+            available = set(self._own_comm_protocols_by_type) | set(CommunicationProtocol.communication_protocol_factories) | set(CommunicationProtocol.communication_protocols)
+            raise ValueError(f"No registered communication protocol of type {call_template_type} found, available types: {sorted(available)}")
+        return protocol
+
+    async def _close_owned_protocols(self) -> None:
+        """Close every protocol this client created, waiting for all of them even when one fails."""
+        results = await asyncio.gather(*(protocol.close() for protocol in self._owned_comm_protocols), return_exceptions=True)
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise UtcpProtocolCloseError(failures, len(results))
+
+    async def close(self) -> None:
+        """REQUIRED
+        Close the protocol instances this client created and release their resources.
+
+        Only what this client created. A shared instance is in use by every
+        other client in the process — closing it here would clear their state
+        too (a credential cache, a decorator's registry), which is the
+        cross-client damage per-client instances exist to prevent. Shared
+        instances live as long as the process that registered them.
+
+        Raises:
+            UtcpProtocolCloseError: If one or more owned instances failed to close.
+                Every instance is still asked to close first.
+        """
+        await self._close_owned_protocols()
+        logger.info("UTCP client closed, with the protocols it owned.")
 
     @classmethod
     async def create(
@@ -79,16 +150,32 @@ class UtcpClientImplementation(UtcpClient):
         # Create the client
         client = cls(config, DefaultVariableSubstitutor(), root_dir)
 
-        # Substitute variables in the config
-        if client.config.variables:
-            config_without_vars = client_config_serializer.copy(client.config)
-            config_without_vars.variables = None
-            client.config.variables = client.variable_substitutor.substitute(client.config.variables, config_without_vars)
+        # Everything from here on can fail, and the caller never receives a
+        # client it could close — so whatever this client CREATED is closed
+        # here before the failure is re-raised. Only what it created: the shared
+        # instances are in use by every other client and are not this one's.
+        try:
+            client._adopt_factory_protocols()
 
-        # Load the manuals if any
-        if config.manual_call_templates:
-            await client.register_manuals(config.manual_call_templates)
-        
+            # Substitute variables in the config
+            if client.config.variables:
+                config_without_vars = client_config_serializer.copy(client.config)
+                config_without_vars.variables = None
+                client.config.variables = client.variable_substitutor.substitute(client.config.variables, config_without_vars)
+
+            # Load the manuals if any
+            if config.manual_call_templates:
+                await client.register_manuals(config.manual_call_templates)
+        except BaseException:
+            try:
+                await client._close_owned_protocols()
+            except Exception:
+                # The initialization failure stays the error the caller sees;
+                # the cleanup failure is reported rather than swallowed, because
+                # the caller has no client through which to retry it.
+                logger.error("UtcpClient.create failed, and closing the protocols it had created failed too", exc_info=True)
+            raise
+
         return client
 
     async def register_manual(self, manual_call_template: CallTemplate) -> RegisterManualResult:
@@ -121,10 +208,8 @@ class UtcpClientImplementation(UtcpClient):
         if await self.config.tool_repository.get_manual(manual_call_template.name) is not None:
             raise ValueError(f"Manual {manual_call_template.name} already registered, please use a different name or deregister the existing manual")
         manual_call_template = self._substitute_call_template_variables(manual_call_template, manual_call_template.name)
-        if manual_call_template.call_template_type not in CommunicationProtocol.communication_protocols:
-            raise ValueError(f"No registered communication protocol of type {manual_call_template.call_template_type} found, available types: {CommunicationProtocol.communication_protocols.keys()}")
-        
-        result = await CommunicationProtocol.communication_protocols[manual_call_template.call_template_type].register_manual(self, manual_call_template)
+
+        result = await self._protocol_for(manual_call_template.call_template_type).register_manual(self, manual_call_template)
 
         if result.success:
             # Determine allowed protocols: use explicit list or default to manual's own protocol
@@ -186,8 +271,15 @@ class UtcpClientImplementation(UtcpClient):
             
             tasks.append(try_register_manual())
         
-        # Wait for all tasks to complete and collect results
-        results = await asyncio.gather(*tasks)
+        # Wait for EVERY registration to settle, even when one raises. The
+        # caller receives the failure only once no sibling registration is
+        # still running underneath it — create(), for one, closes the
+        # protocols right after, and a registration still in flight would be
+        # using a closed one.
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise failures[0]
         return [p for p in results if p is not None]
 
     async def deregister_manual(self, manual_name: str) -> bool:
@@ -203,7 +295,7 @@ class UtcpClientImplementation(UtcpClient):
         manual_call_template = await self.config.tool_repository.get_manual_call_template(manual_name)
         if manual_call_template is None:
             return False
-        await CommunicationProtocol.communication_protocols[manual_call_template.call_template_type].deregister_manual(self, manual_call_template)
+        await self._protocol_for(manual_call_template.call_template_type).deregister_manual(self, manual_call_template)
         return await self.config.tool_repository.remove_manual(manual_name)
 
     async def call_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Any:
@@ -250,7 +342,7 @@ class UtcpClientImplementation(UtcpClient):
                     f"Allowed protocols: {allowed_protocols}"
                 )
         
-        result = await CommunicationProtocol.communication_protocols[tool_call_template.call_template_type].call_tool(self, tool_name, tool_args, tool_call_template)
+        result = await self._protocol_for(tool_call_template.call_template_type).call_tool(self, tool_name, tool_args, tool_call_template)
         
         for post_processor in self.config.post_processing:
             result = post_processor.post_process(self, tool, tool_call_template, result)
@@ -300,7 +392,7 @@ class UtcpClientImplementation(UtcpClient):
                     f"Allowed protocols: {allowed_protocols}"
                 )
         
-        async for item in CommunicationProtocol.communication_protocols[tool_call_template.call_template_type].call_tool_streaming(self, tool_name, tool_args, tool_call_template):
+        async for item in self._protocol_for(tool_call_template.call_template_type).call_tool_streaming(self, tool_name, tool_args, tool_call_template):
             for post_processor in self.config.post_processing:
                 item = post_processor.post_process(self, tool, tool_call_template, item)
             yield item
@@ -342,9 +434,7 @@ class UtcpClientImplementation(UtcpClient):
             except UtcpVariableNotFound as e:
                 return variables_for_CallTemplate
             return variables_for_CallTemplate
-        if manual_call_template.call_template_type not in CommunicationProtocol.communication_protocols:
-            raise ValueError(f"CallTemplate type not supported: {manual_call_template.call_template_type}")
-        register_manual_result: RegisterManualResult = await CommunicationProtocol.communication_protocols[manual_call_template.call_template_type].register_manual(self, manual_call_template)
+        register_manual_result: RegisterManualResult = await self._protocol_for(manual_call_template.call_template_type).register_manual(self, manual_call_template)
         for tool in register_manual_result.manual.tools:
             variables_for_CallTemplate.extend(self.variable_substitutor.find_required_variables(CallTemplateSerializer().to_dict(tool.tool_call_template), manual_call_template.name))
         return variables_for_CallTemplate
