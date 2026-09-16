@@ -30,16 +30,18 @@ class CommunicationProtocol(ABC):
 
     - `communication_protocols` holds an INSTANCE that is shared by every
       `UtcpClient` in the process, and so is any state it keeps. That is the
-      right home for state that should be process-wide (a credential cache, a
-      registry a decorator writes into). The instance lives as long as the
-      process that registered it; no client closes it.
-    - `communication_protocol_factories` holds a FACTORY. Each `UtcpClient`
-      calls it once — at creation, or on first use for a factory registered
-      later — so each client gets its own instance, its own connections, and
-      its own teardown on `close()`. That is what makes a
-      client per tenant, per user, or per pooled connection actually isolate
-      them, rather than every client reaching into one shared instance. A
-      protocol that holds connections or sessions belongs here.
+      right home for state that is meant to be shared (a credential cache, a
+      pooled HTTP session, a registry a decorator writes into). The instance
+      lives as long as the process that registered it; no client closes it.
+    - `communication_protocol_factories` holds a FACTORY, for a protocol whose
+      state must not be shared between clients: live sessions or connections
+      keyed per manual, child processes — anything one client's use or
+      `close()` would take away from another. Each `UtcpClient` calls it once
+      — at creation, or on first use for a factory registered later — so each
+      client gets its own instance, its own connections, and its own teardown
+      on `close()`. That is what makes a client per tenant, per user, or per
+      pooled connection actually isolate them, rather than every client
+      reaching into one shared instance.
 
     A type registered as a factory wins over the same type registered as an
     instance, so a plugin migrates by moving its registration from one
