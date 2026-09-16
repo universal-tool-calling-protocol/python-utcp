@@ -156,8 +156,11 @@ class RequiredDocExtractor:
                 if ':' in stripped and not stripped.endswith(':'):
                     colon_pos = stripped.find(':')
                     candidate = stripped[:colon_pos].strip()
-                    # A parameter name has no spaces and is a plain identifier
-                    if ' ' not in candidate and len(candidate) <= 50 and candidate.replace('_', '').isalnum():
+                    # A parameter name has no spaces and is a plain identifier, and a
+                    # definition puts a space after its colon ("name: description") --
+                    # which is what separates it from a URL such as https://example.com
+                    if (' ' not in candidate and len(candidate) <= 50 and candidate.replace('_', '').isalnum()
+                            and stripped[colon_pos + 1] == ' '):
                         param_match = (candidate, stripped[colon_pos + 1:].strip())
 
                 if param_match is not None:
@@ -211,11 +214,11 @@ class RequiredDocExtractor:
             stripped_lower = line.strip().lower()
 
             # Check if this line is a section header: a known Google-style header, or a
-            # short title made of words only ("Security Considerations:"). A sentence
-            # that merely ends in a colon ("Inheritance is controlled by `x`:") is
-            # content -- treating it as a header would title-case it, code span included.
-            is_custom_header = re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 \-]{0,40}:', line.strip()) is not None
-            if stripped_lower in section_headers or is_custom_header:
+            # Title-Cased line ending in a colon ("Security Considerations:",
+            # "Return Values (Complex):"). A sentence that merely ends in a colon
+            # ("Inheritance is controlled by `x`:", "Use the following:") is content --
+            # treating it as a header would title-case it, code span included.
+            if stripped_lower in section_headers or self._is_custom_section_header(line.strip()):
                 # Save previous section if it exists
                 if current_section:
                     processed_content = process_section_content(current_section_content)
@@ -556,14 +559,70 @@ class RequiredDocExtractor:
         return modified_text
 
     @staticmethod
-    def _sub_outside_inline_code(pattern: str, replacement: str, line: str) -> str:
+    def _is_custom_section_header(stripped: str) -> bool:
+        """A custom section header is a Title-Cased line ending in a colon.
+
+        Every word starts with a capital letter or a digit (leading punctuation such
+        as an opening parenthesis is skipped), and there is no code span. Length is
+        not a criterion: "Return Values (Complex):" and "Section 1/2:" are headers,
+        "Use the following:" and "def tool1():" are content.
+        """
+        if not stripped.endswith(':') or '`' in stripped:
+            return False
+        words = stripped[:-1].split()
+        if not words:
+            return False
+        for word in words:
+            first = next((ch for ch in word if ch.isalnum()), None)
+            if first is None or not (first.isupper() or first.isdigit()):
+                return False
+        return True
+
+    @staticmethod
+    def _split_inline_code(line: str) -> List[Tuple[str, bool]]:
+        """Split a line into (text, is_code) parts.
+
+        A code span opened by a run of N backticks closes only on the next run of
+        exactly N backticks, so ``a`b`` is one span. An unclosed run is text.
+        """
+        parts: List[Tuple[str, bool]] = []
+        pos = 0
+        text_start = 0
+        while pos < len(line):
+            if line[pos] != '`':
+                pos += 1
+                continue
+            run_end = pos
+            while run_end < len(line) and line[run_end] == '`':
+                run_end += 1
+            fence = line[pos:run_end]
+            close = line.find(fence, run_end)
+            # The closing run must be exactly as long: skip longer runs
+            while close != -1 and close + len(fence) < len(line) and line[close + len(fence)] == '`':
+                skip = close
+                while skip < len(line) and line[skip] == '`':
+                    skip += 1
+                close = line.find(fence, skip)
+            if close == -1:
+                pos = run_end
+                continue
+            if text_start < pos:
+                parts.append((line[text_start:pos], False))
+            span_end = close + len(fence)
+            parts.append((line[pos:span_end], True))
+            pos = text_start = span_end
+        if text_start < len(line):
+            parts.append((line[text_start:], False))
+        return parts
+
+    @classmethod
+    def _sub_outside_inline_code(cls, pattern: str, replacement: str, line: str) -> str:
         """Substitute only outside `...` / ``...`` spans.
 
         Markdown renders a code span literally, so a link inserted inside one shows up
         as raw brackets instead of a link.
         """
-        parts = re.split(r'(`+[^`]*`+)', line)
-        return ''.join(part if part.startswith('`') else re.sub(pattern, replacement, part) for part in parts)
+        return ''.join(text if is_code else re.sub(pattern, replacement, text) for text, is_code in cls._split_inline_code(line))
     
     def _render_methods(self, content: List[str], methods: List[DocEntry], file_path: str) -> None:
         """Append a class's documented methods to ``content``."""
