@@ -82,6 +82,45 @@ result = await client.call_tool("mcp_server.filesystem.read_file", {
 }
 ```
 
+### Free Web Search and Page Fetching with Parallel
+
+Use [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)
+to search the web and fetch page excerpts without an account or API key.
+Anonymous search uses Fast mode and has lower rate limits than authenticated
+access. Add this server to an MCP manual's `config.mcpServers`:
+
+```json
+{
+  "search": {
+    "transport": "http",
+    "url": "https://search.parallel.ai/mcp",
+    "headers": {"User-Agent": "python-utcp/parallel-search-example"}
+  }
+}
+```
+
+The [runnable example](examples/parallel_search.py) creates a manual named
+`parallel`, discovers its tools, and calls `parallel.search.web_search` and
+`parallel.search.web_fetch` through `UtcpClient.call_tool`. It prints search
+results and fetched page content, then closes the client. It is an opt-in
+example and does not change existing client configuration.
+
+From the repository root, install the core and MCP plugin in a Python 3.11+
+virtual environment and run:
+
+```bash
+python -m venv .venv
+# Activate .venv using your shell's activation command, then:
+python -m pip install -e core -e plugins/communication_protocols/mcp
+python plugins/communication_protocols/mcp/examples/parallel_search.py
+# Or supply a search query and a specific page to fetch:
+python plugins/communication_protocols/mcp/examples/parallel_search.py "Python asyncio documentation" --url https://docs.python.org/3/library/asyncio.html
+```
+
+The example calls the tools directly; no LLM or model credentials are needed.
+For an agent, use the discovered input schemas to construct tool arguments and
+reuse a stable `session_id` across search and fetch calls in the conversation.
+
 ### With OAuth2 Authentication
 ```json
 {
