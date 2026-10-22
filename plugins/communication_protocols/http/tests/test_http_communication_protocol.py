@@ -1,6 +1,9 @@
 import pytest
 import pytest_asyncio
 import aiohttp
+import json
+from collections import OrderedDict, UserDict
+from copy import deepcopy
 from aiohttp import web
 from utcp_http.http_communication_protocol import HttpCommunicationProtocol
 from utcp_http.http_call_template import HttpCallTemplate
@@ -189,6 +192,168 @@ async def app():
 async def http_transport():
     """Create an HTTP communication protocol instance."""
     return HttpCommunicationProtocol()
+
+
+@pytest_asyncio.fixture
+async def query_endpoint(aiohttp_client):
+    application = web.Application()
+    received = []
+
+    async def echo(request):
+        query = list(request.query.items())
+        received.append(query)
+        return web.json_response({"query": query})
+
+    application.router.add_get("/query", echo)
+    client = await aiohttp_client(application)
+    template = HttpCallTemplate(name="query-values", url=str(client.make_url("/query")))
+    yield template, received
+    print(f"Query endpoint observations: {received!r}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        pytest.param("", [""], id="empty-string"),
+        pytest.param("a+b /?&=é", ["a+b /?&=é"], id="escaped-string"),
+        pytest.param(7, ["7"], id="integer"),
+        pytest.param(-2, ["-2"], id="negative-integer"),
+        pytest.param(1.25, ["1.25"], id="float"),
+        pytest.param(float("inf"), ValueError, id="infinity"),
+        pytest.param(float("-inf"), ValueError, id="negative-infinity"),
+        pytest.param(float("nan"), ValueError, id="nan"),
+        pytest.param(["b", "a", "b"], ["b", "a", "b"], id="repeated-list"),
+        pytest.param([1, 2.5, ""], ["1", "2.5", ""], id="mixed-scalars"),
+        pytest.param(("b", "a", "b"), ["b", "a", "b"], id="repeated-tuple"),
+        pytest.param([], [], id="empty-list"),
+        pytest.param((), [], id="empty-tuple"),
+    ],
+)
+async def test_call_tool_query_controls(http_transport, query_endpoint, value, expected):
+    template, received = query_endpoint
+    arguments = {"value": value, "marker": "unchanged"}
+    if expected is ValueError:
+        with pytest.raises(ValueError, match=r"float\('(inf|nan)'\) is not supported"):
+            await http_transport.call_tool(None, "echo", arguments, template)
+        assert arguments["value"] is value
+        assert received == []
+        return
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert result["query"] == [["value", item] for item in expected] + [["marker", "unchanged"]]
+    assert arguments["value"] is value
+    assert arguments["marker"] == "unchanged"
+    assert len(received) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param({"name": "a+b /?&=é"}, id="object"),
+        pytest.param({}, id="empty-object"),
+        pytest.param({"nested": {"tags": ["a&b", 2, True, None], "enabled": False}}, id="nested-object"),
+        pytest.param(OrderedDict([("first", 1), ("second", {"value": None})]), id="dict-subclass"),
+        pytest.param(True, id="true"),
+        pytest.param(False, id="false"),
+        pytest.param(None, id="null"),
+    ],
+)
+async def test_call_tool_json_query_values(http_transport, query_endpoint, value):
+    template, received = query_endpoint
+    arguments = {"value": value, "tags": ["b", "a", "b"], "scalar": "a+b /?&=é", "number": 17, "fraction": 1.25}
+    original = deepcopy(arguments)
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert result["query"][0][0] == "value"
+    assert json.loads(result["query"][0][1]) == value
+    assert result["query"][1:] == [
+        ["tags", "b"], ["tags", "a"], ["tags", "b"],
+        ["scalar", "a+b /?&=é"], ["number", "17"], ["fraction", "1.25"],
+    ]
+    assert arguments == original
+    assert arguments["value"] is value
+    assert len(received) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param([{}], id="list-object"),
+        pytest.param([[1]], id="list-list"),
+        pytest.param([True], id="list-bool"),
+        pytest.param([None], id="list-null"),
+        pytest.param(({},), id="tuple-object"),
+        pytest.param(object(), id="custom-object"),
+        pytest.param(UserDict({"key": 1}), id="non-dict-mapping"),
+        pytest.param({"key": object()}, id="non-json-object-member"),
+    ],
+)
+async def test_call_tool_rejects_unsupported_query_values(http_transport, query_endpoint, value):
+    template, received = query_endpoint
+    arguments = {"value": value}
+    with pytest.raises(TypeError, match="Invalid variable type|is not JSON serializable"):
+        await http_transport.call_tool(None, "echo", arguments, template)
+    assert received == []
+    assert arguments["value"] is value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content_type, headers, payload, expected_body, expected_content_type",
+    [
+        pytest.param("application/json", {}, {"key": "value"}, '{"key": "value"}', "application/json", id="json"),
+        pytest.param("text/plain", {}, "raw body", "raw body", "text/plain", id="text"),
+        pytest.param("application/json", {"Content-Type": "text/plain"}, "explicit", "explicit", "text/plain", id="explicit-content-type"),
+        pytest.param("application/x-www-form-urlencoded", {}, {"field": "value"}, "field=value", "application/x-www-form-urlencoded", id="form"),
+        pytest.param("application/json", {}, None, "", "application/octet-stream", id="null-body"),
+    ],
+)
+async def test_call_tool_preserves_request_mapping(
+    http_transport, aiohttp_client, content_type, headers, payload, expected_body, expected_content_type
+):
+    application = web.Application()
+
+    async def echo(request):
+        return web.json_response({
+            "query": list(request.query.items()),
+            "item": request.match_info["item"],
+            "header": request.headers.get("X-Argument"),
+            "static": request.headers.get("X-Static"),
+            "body": await request.text(),
+            "content_type": request.headers.get("Content-Type"),
+        })
+
+    application.router.add_post("/items/{item}", echo)
+    client = await aiohttp_client(application)
+    template = HttpCallTemplate(
+        name="request-mapping", url=str(client.make_url("/items/")) + "{item}", http_method="POST",
+        headers={"X-Static": "fixed", **headers}, header_fields=["X-Argument", "absent"],
+        body_field="payload", content_type=content_type,
+        auth=ApiKeyAuth(api_key="local-key", var_name="token", location="query"),
+    )
+    arguments = {"item": "a b/?&", "X-Argument": 23, "payload": payload, "token": "caller", "keep": "query"}
+    original = deepcopy(arguments)
+    original_headers = template.headers.copy()
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert result == {
+        "query": [["token", "local-key"], ["keep", "query"]],
+        "item": "a b/?&", "header": "23", "static": "fixed",
+        "body": expected_body, "content_type": expected_content_type,
+    }
+    assert arguments == original
+    assert template.headers == original_headers
+
+
+@pytest.mark.asyncio
+async def test_call_tool_validates_url_before_query_encoding(http_transport):
+    template = HttpCallTemplate(name="insecure-query", url="http://remote.invalid/{item}")
+    value = {"unsupported": object()}
+    arguments = {"item": "sample", "value": value}
+    with pytest.raises(ValueError, match="Security error during tool invocation"):
+        await http_transport.call_tool(None, "echo", arguments, template)
+    assert arguments["item"] == "sample"
+    assert arguments["value"] is value
 
 
 @pytest_asyncio.fixture
