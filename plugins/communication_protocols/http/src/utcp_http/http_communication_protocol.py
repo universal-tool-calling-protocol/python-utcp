@@ -21,6 +21,7 @@ import base64
 import re
 import traceback
 from urllib.parse import quote
+from multidict import MultiDict, MultiMapping
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate
@@ -322,6 +323,16 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                 data = body_content
         return data, json_data
 
+    def _normalize_query_params(self, query_params):
+        items = [
+            (name, json.dumps(value)
+             if isinstance(value, (dict, bool, type(None))) else value)
+            for name, value in query_params.items()
+        ]
+        if isinstance(query_params, MultiMapping):
+            return MultiDict(items)
+        return dict(items)
+
     async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
         """REQUIRED
         Execute a tool call through this transport.
@@ -348,12 +359,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
             token = await self._handle_oauth2(tool_call_template.auth)
             request_headers["Authorization"] = f"Bearer {token}"
 
-        query_items = [
-            (name, json.dumps(value) if isinstance(value, (dict, bool, type(None))) else value)
-            for name, value in query_params.items()
-        ]
-        query_params.clear()
-        query_params.update(query_items)
+        query_params = self._normalize_query_params(query_params)
 
         async with aiohttp.ClientSession() as session:
             try:

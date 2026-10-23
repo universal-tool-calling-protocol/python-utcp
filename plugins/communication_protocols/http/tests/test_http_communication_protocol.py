@@ -1241,3 +1241,74 @@ async def test_call_tool_non_query_auth_preserves_query_json(http_transport, aio
     assert result[{"header": "cookie", "cookie": "header"}[location]] is None
     assert arguments["filter"]["nested"] is nested
     _assert_query_items_unchanged(arguments, original)
+
+
+from collections import Counter
+from multidict import CIMultiDict, CIMultiDictProxy, MultiDictProxy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mapping_type",
+    [
+        pytest.param(dict, id="dict"),
+        pytest.param(OrderedDict, id="ordered-dict"),
+        pytest.param(UserDict, id="user-dict"),
+        pytest.param(Counter, id="counter"),
+    ],
+)
+async def test_call_tool_preserves_scalar_mapping_query(http_transport, query_endpoint, mapping_type):
+    template, received = query_endpoint
+    template.url += "?existing=ok"
+    arguments = mapping_type({"value": 2, "marker": 1})
+    original = _snapshot_query_items(arguments)
+    try:
+        result = await http_transport.call_tool(None, "echo", arguments, template)
+    finally:
+        _assert_query_items_unchanged(arguments, original)
+    assert result["query"] == [["existing", "ok"], ["value", "2"], ["marker", "1"]]
+    assert len(received) == 1
+    assert received == [[("existing", "ok"), ("value", "2"), ("marker", "1")]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param(MultiDictProxy(MultiDict(_mixed_query_items())), id="multidict-proxy"),
+        pytest.param(CIMultiDict(_mixed_query_items()), id="ci-multidict"),
+        pytest.param(CIMultiDictProxy(CIMultiDict(_mixed_query_items())), id="ci-multidict-proxy"),
+    ],
+)
+async def test_call_tool_preserves_multidict_variant_query(http_transport, query_endpoint, arguments):
+    template, received = query_endpoint
+    template.url += "?existing=ok"
+    original = _snapshot_query_items(arguments)
+    nested = arguments["filter"]["nested"]
+    nested_tags = nested["tags"]
+    try:
+        result = await http_transport.call_tool(None, "echo", arguments, template)
+    finally:
+        _assert_query_items_unchanged(arguments, original)
+        assert arguments["filter"]["nested"] is nested
+        assert nested["tags"] is nested_tags
+    assert _decode_json_query(result["query"]) == [["existing", "ok"]] + _expected_mixed_query()
+    assert result["query"][4:6] == [["enabled", "true"], ["nullable", "null"]]
+    assert result["query"][6:9] == [["tags", "b"], ["tags", "a"], ["tags", "b"]]
+    assert len(received) == 1
+    assert received == [list(map(tuple, result["query"]))]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_none_query_key(http_transport, query_endpoint):
+    template, received = query_endpoint
+    template.url += "?existing=ok"
+    arguments = {None: 2, "marker": 1}
+    original = _snapshot_query_items(arguments)
+    try:
+        result = await http_transport.call_tool(None, "echo", arguments, template)
+    finally:
+        _assert_query_items_unchanged(arguments, original)
+    assert result["query"] == [["existing", "ok"], ["None", "2"], ["marker", "1"]]
+    assert len(received) == 1
+    assert received == [[("existing", "ok"), ("None", "2"), ("marker", "1")]]
