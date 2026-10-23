@@ -304,10 +304,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         ensure_secure_url(url, context="tool invocation")
 
         # The rest of the arguments are query parameters
-        query_params = {
-            name: json.dumps(value) if isinstance(value, (dict, bool, type(None))) else value
-            for name, value in remaining_args.items()
-        }
+        query_params = remaining_args
         return request_headers, body_content, url, query_params
 
     def _prepare_request_body(self, body_content: Any, request_headers: Dict[str, str], tool_call_template: HttpCallTemplate) -> tuple:
@@ -350,6 +347,13 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         if tool_call_template.auth and isinstance(tool_call_template.auth, OAuth2Auth):
             token = await self._handle_oauth2(tool_call_template.auth)
             request_headers["Authorization"] = f"Bearer {token}"
+
+        query_items = [
+            (name, json.dumps(value) if isinstance(value, (dict, bool, type(None))) else value)
+            for name, value in query_params.items()
+        ]
+        query_params.clear()
+        query_params.update(query_items)
 
         async with aiohttp.ClientSession() as session:
             try:

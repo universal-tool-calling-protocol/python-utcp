@@ -5,6 +5,7 @@ import json
 from collections import OrderedDict, UserDict
 from copy import deepcopy
 from aiohttp import web
+from multidict import MultiDict
 from utcp_http.http_communication_protocol import HttpCommunicationProtocol
 from utcp_http.http_call_template import HttpCallTemplate
 from utcp.data.auth_implementations import ApiKeyAuth
@@ -1052,3 +1053,191 @@ async def test_deeply_nested_error_body_still_raises_client_response_error(http_
 def test_error_detail_collapses_control_characters():
     from utcp_http._errors import error_detail_from_body
     assert error_detail_from_body('{"error": "line one\\nline two\\u001b[31m"}') == "line one line two [31m"
+
+
+def _snapshot_query_items(arguments, memo=None):
+    items = list(arguments.items())
+    return items, deepcopy(items, memo)
+
+
+def _assert_query_items_unchanged(arguments, snapshot):
+    items, contents = snapshot
+    assert list(arguments.items()) == contents
+    for current, original in zip(arguments.items(), items):
+        assert current[0] == original[0]
+        assert current[1] is original[1]
+
+
+def _decode_json_query(query):
+    return [
+        [name, json.loads(value) if name in {"filter", "other", "enabled", "nullable"} else value]
+        for name, value in query
+    ]
+
+
+def _mixed_query_items():
+    return [
+        ("filter", {"nested": {"tags": ["a&b", 2, True, None]}}),
+        ("marker", "keep"), ("filter", {}), ("enabled", True), ("nullable", None),
+        ("tags", ["b", "a", "b"]), ("filter", {"n": 2}), ("tail", "a+b /?&=é"),
+        ("steps", ("y", "x")), ("empty", []),
+    ]
+
+
+def _expected_mixed_query():
+    return [
+        ["filter", {"nested": {"tags": ["a&b", 2, True, None]}}],
+        ["marker", "keep"], ["filter", {}], ["enabled", True], ["nullable", None],
+        ["tags", "b"], ["tags", "a"], ["tags", "b"], ["filter", {"n": 2}],
+        ["tail", "a+b /?&=é"], ["steps", "y"], ["steps", "x"],
+    ]
+
+
+def _auth_query_items(token):
+    return [
+        ("token", token), ("filter", {"nested": ["a&b", True, None]}), ("marker", "keep"),
+        ("other", {}), ("enabled", True), ("nullable", None), ("tags", ["b", "a", "b"]),
+        ("tail", "a+b /?&=é"), ("steps", ("y", "x")), ("empty", []),
+    ]
+
+
+def _expected_auth_query():
+    return [
+        ["token", "local-query-key+&="], ["filter", {"nested": ["a&b", True, None]}],
+        ["marker", "keep"], ["other", {}], ["enabled", True], ["nullable", None],
+        ["tags", "b"], ["tags", "a"], ["tags", "b"], ["tail", "a+b /?&=é"],
+        ["steps", "y"], ["steps", "x"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_interleaved_multidict_query(http_transport, query_endpoint):
+    template, received = query_endpoint
+    template.url += "?existing=ok"
+    arguments = MultiDict([("value", "b"), ("marker", "keep"), ("value", "a"), ("value", "b")])
+    original = _snapshot_query_items(arguments)
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert len(received) == 1
+    assert result["query"] == [
+        ["existing", "ok"], ["value", "b"], ["marker", "keep"], ["value", "a"], ["value", "b"],
+    ]
+    assert arguments.getall("value") == ["b", "a", "b"]
+    _assert_query_items_unchanged(arguments, original)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_multidict_json_query_values(http_transport, query_endpoint):
+    template, received = query_endpoint
+    arguments = MultiDict(_mixed_query_items())
+    original = _snapshot_query_items(arguments)
+    nested = arguments["filter"]["nested"]
+    nested_tags = nested["tags"]
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert len(received) == 1
+    assert _decode_json_query(result["query"]) == _expected_mixed_query()
+    assert [value for name, value in result["query"] if name == "enabled"] == ["true"]
+    assert [value for name, value in result["query"] if name == "nullable"] == ["null"]
+    assert arguments["filter"]["nested"] is nested
+    assert nested["tags"] is nested_tags
+    _assert_query_items_unchanged(arguments, original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mapping_kind", ["dict", "multidict"])
+async def test_call_tool_query_auth_precedes_json_encoding(http_transport, query_endpoint, mapping_kind):
+    template, received = query_endpoint
+    template.auth = ApiKeyAuth(var_name="token", location="query", api_key="local-query-key+&=")
+    toxic = object()
+    second_toxic = object()
+    items = _auth_query_items({"bad": toxic})
+    expected = _expected_auth_query()
+    if mapping_kind == "multidict":
+        items[3:3] = [("token", {"bad": second_toxic}), ("filter", {"n": 2})]
+        expected[3:3] = [["filter", {"n": 2}]]
+    arguments = {"dict": dict, "multidict": MultiDict}[mapping_kind](items)
+    original = _snapshot_query_items(arguments, {id(toxic): toxic, id(second_toxic): second_toxic})
+    nested = arguments["filter"]["nested"]
+    try:
+        result = await http_transport.call_tool(None, "echo", arguments, template)
+    finally:
+        _assert_query_items_unchanged(arguments, original)
+        assert arguments["token"]["bad"] is toxic
+        assert arguments["filter"]["nested"] is nested
+    assert len(received) == 1
+    assert _decode_json_query(result["query"]) == expected
+    assert [value for name, value in result["query"] if name == "token"] == ["local-query-key+&="]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_kind", ["absent", "scalar", "serializable"])
+async def test_call_tool_query_auth_multikey_controls(http_transport, query_endpoint, token_kind):
+    template, received = query_endpoint
+    template.auth = ApiKeyAuth(var_name="token", location="query", api_key="local-query-key+&=")
+    arguments = dict(_auth_query_items({"caller": [True, None]}))
+    expected = _expected_auth_query()
+    if token_kind == "absent":
+        arguments.pop("token")
+        expected.append(expected.pop(0))
+    if token_kind == "scalar":
+        arguments["token"] = "caller-token"
+    original = _snapshot_query_items(arguments)
+    nested = arguments["filter"]["nested"]
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert len(received) == 1
+    assert _decode_json_query(result["query"]) == expected
+    assert [value for name, value in result["query"] if name == "token"] == ["local-query-key+&="]
+    assert arguments["filter"]["nested"] is nested
+    _assert_query_items_unchanged(arguments, original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mapping_kind", ["dict", "multidict"])
+async def test_call_tool_query_auth_does_not_hide_unrelated_serialization_error(
+    http_transport, query_endpoint, mapping_kind
+):
+    template, received = query_endpoint
+    template.auth = ApiKeyAuth(var_name="token", location="query", api_key="local-query-key+&=")
+    toxic = object()
+    arguments = {"dict": dict, "multidict": MultiDict}[mapping_kind]([
+        ("token", "caller-token"), ("filter", {"bad": toxic}), ("marker", "keep"),
+    ])
+    original = _snapshot_query_items(arguments, {id(toxic): toxic})
+    with pytest.raises(TypeError, match="Object of type object is not JSON serializable"):
+        await http_transport.call_tool(None, "echo", arguments, template)
+    assert received == []
+    assert arguments["filter"]["bad"] is toxic
+    _assert_query_items_unchanged(arguments, original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["header", "cookie"])
+async def test_call_tool_non_query_auth_preserves_query_json(http_transport, aiohttp_client, location):
+    application = web.Application()
+    received = []
+
+    async def echo(request):
+        query = list(request.query.items())
+        received.append(query)
+        return web.json_response({
+            "query": query, "header": request.headers.get("token"), "cookie": request.cookies.get("token"),
+        })
+
+    application.router.add_get("/query", echo)
+    client = await aiohttp_client(application)
+    template = HttpCallTemplate(
+        name="auth-location-query", url=str(client.make_url("/query")),
+        auth=ApiKeyAuth(var_name="token", location=location, api_key="local-query-key+&="),
+    )
+    arguments = {"token": {"caller": True}, "filter": {"nested": [False, None]}, "tags": ["b", "a", "b"]}
+    original = _snapshot_query_items(arguments)
+    nested = arguments["filter"]["nested"]
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert len(received) == 1
+    assert [name for name, value in result["query"]] == ["token", "filter", "tags", "tags", "tags"]
+    assert json.loads(result["query"][0][1]) == {"caller": True}
+    assert json.loads(result["query"][1][1]) == {"nested": [False, None]}
+    assert result["query"][2:] == [["tags", "b"], ["tags", "a"], ["tags", "b"]]
+    assert result[location] == "local-query-key+&="
+    assert result[{"header": "cookie", "cookie": "header"}[location]] is None
+    assert arguments["filter"]["nested"] is nested
+    _assert_query_items_unchanged(arguments, original)
