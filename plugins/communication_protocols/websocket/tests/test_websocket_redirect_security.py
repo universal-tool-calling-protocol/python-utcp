@@ -221,3 +221,33 @@ async def test_failed_discovery_leaves_a_socket_it_did_not_open_alone(aiohttp_se
         assert not pooled.closed
     finally:
         await proto.close()
+
+
+@pytest.mark.asyncio
+async def test_peer_closing_without_a_manual_leaves_no_connection_in_the_pool(aiohttp_server) -> None:
+    """The discovery loop can end without raising: the peer closes the socket
+    (or sends an error frame) before any manual arrives. That failure takes
+    the same cleanup path as the others."""
+
+    async def socket(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.receive()  # the discovery message
+        await ws.close()    # and goodbye, no manual
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/utcp", socket)
+    server = await aiohttp_server(app)
+
+    proto = WebSocketCommunicationProtocol()
+    template = WebSocketCallTemplate(
+        name="ws", url=str(server.make_url("/utcp")).replace("http://", "ws://", 1), timeout=5
+    )
+    try:
+        with pytest.raises(ValueError, match="Failed to discover tools"):
+            await proto.register_manual(None, template)
+        assert proto._connections == {}
+        assert proto._sessions == {}
+    finally:
+        await proto.close()

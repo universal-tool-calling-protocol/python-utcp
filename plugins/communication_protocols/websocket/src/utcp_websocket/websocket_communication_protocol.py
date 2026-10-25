@@ -359,6 +359,14 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
 
         ws = await self._get_connection(manual_call_template)
 
+        async def _close_what_this_discovery_opened() -> None:
+            # Only the socket this discovery opened, and only while it is
+            # still the pooled one: a concurrent operation that replaced it
+            # owns the replacement. (Two operations sharing one socket read
+            # the same stream and were never safe; that is not made worse.)
+            if opened_here and self._connections.get(provider_key) is ws:
+                await self._cleanup_connection(provider_key)
+
         try:
             # Send discovery request (matching UDP pattern)
             discovery_message = json.dumps({"type": "utcp"})
@@ -404,18 +412,19 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
                 logger.error(f"Discovery timeout for {manual_call_template.url}")
                 raise ValueError(f"Tool discovery timeout for WebSocket manual {manual_call_template.url}")
 
+            # The peer closed the socket, or sent an error frame, before any
+            # manual arrived. Raised inside the ``try`` so it takes the same
+            # cleanup path as every other failed discovery.
+            raise ValueError(f"Failed to discover tools from {manual_call_template.url}")
+
         except Exception as e:
             logger.error(f"Error registering WebSocket manual '{manual_call_template.name}': {e}")
             # A failed discovery (timeout, malformed manual, a manual the
-            # loopback rule refuses) must not leave the socket and session it
-            # opened in the pool: the client only tears down manuals it
-            # registered. A socket that was already pooled is left alone.
-            if opened_here:
-                await self._cleanup_connection(provider_key)
+            # loopback rule refuses, a peer that closed without answering)
+            # must not leave the socket and session it opened in the pool:
+            # the client only tears down manuals it registered.
+            await _close_what_this_discovery_opened()
             raise
-
-        # Should not reach here, but just in case
-        raise ValueError(f"Failed to discover tools from {manual_call_template.url}")
 
     async def deregister_manual(self, caller, manual_call_template: CallTemplate) -> None:
         """REQUIRED
