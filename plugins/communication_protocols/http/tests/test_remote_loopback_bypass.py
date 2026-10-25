@@ -210,7 +210,16 @@ class TestOpenApiConverterRemoteSpecRules:
 
     @pytest.mark.parametrize(
         "token_url",
-        ["http://127.0.0.1:46373/internal-oauth", "https://localhost/token", "//localhost/token", "http://[::1]:1/token"],
+        [
+            "http://127.0.0.1:46373/internal-oauth",
+            "https://localhost/token",
+            "//localhost/token",
+            "http://[::1]:1/token",
+            # A placeholder port keeps the host literal (pinned here because
+            # the TypeScript port needed a fix for exactly this spelling).
+            "http://127.0.0.1:${PORT}/token",
+            "http://localhost:{port}/token",
+        ],
     )
     def test_remote_spec_may_not_route_the_token_post_at_loopback(self, token_url: str) -> None:
         with pytest.raises(ValueError, match="loopback OAuth2 tokenUrl"):
