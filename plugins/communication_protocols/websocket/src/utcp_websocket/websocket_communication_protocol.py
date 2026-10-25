@@ -379,17 +379,19 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
                                     try:
                                         # Parse as UtcpManual
                                         utcp_manual = UtcpManualSerializer().validate_dict(response_data)
-                                        # A manual read from a remote origin may not aim tool calls, or
-                                        # the OAuth2 token POST, at the agent's own loopback interface.
-                                        reject_remote_loopback_tool_urls(manual_call_template.url, utcp_manual)
-                                        logger.info(f"Discovered {len(utcp_manual.tools)} tools from WebSocket manual '{manual_call_template.name}'")
-                                        return RegisterManualResult(
-                                            call_template=manual_call_template,
-                                            manual=utcp_manual
-                                        )
                                     except Exception as e:
                                         logger.error(f"Invalid UtcpManual response from WebSocket manual '{manual_call_template.name}': {e}")
                                         raise ValueError(f"Invalid UtcpManual format: {e}")
+                                    # A manual read from a remote origin may not aim tool calls, or
+                                    # the OAuth2 token POST, at the agent's own loopback interface.
+                                    # Outside the parse guard: this is a security error, not a
+                                    # malformed manual, and its message says so.
+                                    reject_remote_loopback_tool_urls(manual_call_template.url, utcp_manual)
+                                    logger.info(f"Discovered {len(utcp_manual.tools)} tools from WebSocket manual '{manual_call_template.name}'")
+                                    return RegisterManualResult(
+                                        call_template=manual_call_template,
+                                        manual=utcp_manual
+                                    )
 
                             except json.JSONDecodeError as e:
                                 logger.error(f"Invalid JSON response from WebSocket manual '{manual_call_template.name}': {e}")
