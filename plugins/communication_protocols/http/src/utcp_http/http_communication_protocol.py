@@ -21,6 +21,7 @@ import base64
 import re
 import traceback
 from urllib.parse import quote
+from multidict import MultiDict, MultiMapping
 
 from utcp.interfaces.communication_protocol import CommunicationProtocol
 from utcp.data.call_template import CallTemplate
@@ -285,22 +286,7 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         """
         pass
 
-    async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
-        """REQUIRED
-        Execute a tool call through this transport.
-        
-        Args:
-            caller: The UTCP client that is calling this method.
-            tool_name: Name of the tool to call (may include provider prefix).
-            tool_args: Dictionary of arguments to pass to the tool.
-            tool_call_template: Call template of the tool to call.
-            
-        Returns:
-            The tool's response, with type depending on the tool's output schema.
-        """
-        if not isinstance(tool_call_template, HttpCallTemplate):
-            raise ValueError("HttpCommunicationProtocol can only be used with HttpCallTemplate")
-
+    def _prepare_request_arguments(self, tool_args: Dict[str, Any], tool_call_template: HttpCallTemplate) -> tuple:
         request_headers = tool_call_template.headers.copy() if tool_call_template.headers else {}
         body_content = None
         remaining_args = tool_args.copy()
@@ -333,6 +319,50 @@ class HttpCommunicationProtocol(CommunicationProtocol):
 
         # The rest of the arguments are query parameters
         query_params = remaining_args
+        return request_headers, body_content, url, query_params
+
+    def _prepare_request_body(self, body_content: Any, request_headers: Dict[str, str], tool_call_template: HttpCallTemplate) -> tuple:
+        # Set content-type header if body is provided and header not already set
+        if body_content is not None and "Content-Type" not in request_headers:
+            request_headers["Content-Type"] = tool_call_template.content_type
+
+        # Prepare body content based on content type
+        data = None
+        json_data = None
+        if body_content is not None:
+            if "application/json" in request_headers.get("Content-Type", ""):
+                json_data = body_content
+            else:
+                data = body_content
+        return data, json_data
+
+    def _normalize_query_params(self, query_params):
+        items = [
+            (name, json.dumps(value)
+             if isinstance(value, (dict, bool, type(None))) else value)
+            for name, value in query_params.items()
+        ]
+        if isinstance(query_params, MultiMapping):
+            return MultiDict(items)
+        return dict(items)
+
+    async def call_tool(self, caller, tool_name: str, tool_args: Dict[str, Any], tool_call_template: CallTemplate) -> Any:
+        """REQUIRED
+        Execute a tool call through this transport.
+
+        Args:
+            caller: The UTCP client that is calling this method.
+            tool_name: Name of the tool to call (may include provider prefix).
+            tool_args: Dictionary of arguments to pass to the tool.
+            tool_call_template: Call template of the tool to call.
+
+        Returns:
+            The tool's response, with type depending on the tool's output schema.
+        """
+        if not isinstance(tool_call_template, HttpCallTemplate):
+            raise ValueError("HttpCommunicationProtocol can only be used with HttpCallTemplate")
+
+        request_headers, body_content, url, query_params = self._prepare_request_arguments(tool_args, tool_call_template)
 
         # Handle authentication
         auth, cookies, auth_header_names = self._apply_auth(tool_call_template, request_headers, query_params)
@@ -342,20 +372,11 @@ class HttpCommunicationProtocol(CommunicationProtocol):
             token = await self._handle_oauth2(tool_call_template.auth)
             request_headers["Authorization"] = f"Bearer {token}"
 
+        query_params = self._normalize_query_params(query_params)
+
         async with aiohttp.ClientSession() as session:
             try:
-                # Set content-type header if body is provided and header not already set
-                if body_content is not None and "Content-Type" not in request_headers:
-                    request_headers["Content-Type"] = tool_call_template.content_type
-
-                # Prepare body content based on content type
-                data = None
-                json_data = None
-                if body_content is not None:
-                    if "application/json" in request_headers.get("Content-Type", ""):
-                        json_data = body_content
-                    else:
-                        data = body_content
+                data, json_data = self._prepare_request_body(body_content, request_headers, tool_call_template)
 
                 # Re-validate every redirect hop -- aiohttp's default
                 # ``allow_redirects=True`` would otherwise let an

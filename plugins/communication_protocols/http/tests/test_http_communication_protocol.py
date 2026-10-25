@@ -1,7 +1,11 @@
 import pytest
 import pytest_asyncio
 import aiohttp
+import json
+from collections import OrderedDict, UserDict
+from copy import deepcopy
 from aiohttp import web
+from multidict import MultiDict
 from utcp_http.http_communication_protocol import HttpCommunicationProtocol
 from utcp_http.http_call_template import HttpCallTemplate
 from utcp.data.auth_implementations import ApiKeyAuth
@@ -189,6 +193,168 @@ async def app():
 async def http_transport():
     """Create an HTTP communication protocol instance."""
     return HttpCommunicationProtocol()
+
+
+@pytest_asyncio.fixture
+async def query_endpoint(aiohttp_client):
+    application = web.Application()
+    received = []
+
+    async def echo(request):
+        query = list(request.query.items())
+        received.append(query)
+        return web.json_response({"query": query})
+
+    application.router.add_get("/query", echo)
+    client = await aiohttp_client(application)
+    template = HttpCallTemplate(name="query-values", url=str(client.make_url("/query")))
+    yield template, received
+    print(f"Query endpoint observations: {received!r}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        pytest.param("", [""], id="empty-string"),
+        pytest.param("a+b /?&=é", ["a+b /?&=é"], id="escaped-string"),
+        pytest.param(7, ["7"], id="integer"),
+        pytest.param(-2, ["-2"], id="negative-integer"),
+        pytest.param(1.25, ["1.25"], id="float"),
+        pytest.param(float("inf"), ValueError, id="infinity"),
+        pytest.param(float("-inf"), ValueError, id="negative-infinity"),
+        pytest.param(float("nan"), ValueError, id="nan"),
+        pytest.param(["b", "a", "b"], ["b", "a", "b"], id="repeated-list"),
+        pytest.param([1, 2.5, ""], ["1", "2.5", ""], id="mixed-scalars"),
+        pytest.param(("b", "a", "b"), ["b", "a", "b"], id="repeated-tuple"),
+        pytest.param([], [], id="empty-list"),
+        pytest.param((), [], id="empty-tuple"),
+    ],
+)
+async def test_call_tool_query_controls(http_transport, query_endpoint, value, expected):
+    template, received = query_endpoint
+    arguments = {"value": value, "marker": "unchanged"}
+    if expected is ValueError:
+        with pytest.raises(ValueError, match=r"float\('(inf|nan)'\) is not supported"):
+            await http_transport.call_tool(None, "echo", arguments, template)
+        assert arguments["value"] is value
+        assert received == []
+        return
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert result["query"] == [["value", item] for item in expected] + [["marker", "unchanged"]]
+    assert arguments["value"] is value
+    assert arguments["marker"] == "unchanged"
+    assert len(received) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param({"name": "a+b /?&=é"}, id="object"),
+        pytest.param({}, id="empty-object"),
+        pytest.param({"nested": {"tags": ["a&b", 2, True, None], "enabled": False}}, id="nested-object"),
+        pytest.param(OrderedDict([("first", 1), ("second", {"value": None})]), id="dict-subclass"),
+        pytest.param(True, id="true"),
+        pytest.param(False, id="false"),
+        pytest.param(None, id="null"),
+    ],
+)
+async def test_call_tool_json_query_values(http_transport, query_endpoint, value):
+    template, received = query_endpoint
+    arguments = {"value": value, "tags": ["b", "a", "b"], "scalar": "a+b /?&=é", "number": 17, "fraction": 1.25}
+    original = deepcopy(arguments)
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert result["query"][0][0] == "value"
+    assert json.loads(result["query"][0][1]) == value
+    assert result["query"][1:] == [
+        ["tags", "b"], ["tags", "a"], ["tags", "b"],
+        ["scalar", "a+b /?&=é"], ["number", "17"], ["fraction", "1.25"],
+    ]
+    assert arguments == original
+    assert arguments["value"] is value
+    assert len(received) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param([{}], id="list-object"),
+        pytest.param([[1]], id="list-list"),
+        pytest.param([True], id="list-bool"),
+        pytest.param([None], id="list-null"),
+        pytest.param(({},), id="tuple-object"),
+        pytest.param(object(), id="custom-object"),
+        pytest.param(UserDict({"key": 1}), id="non-dict-mapping"),
+        pytest.param({"key": object()}, id="non-json-object-member"),
+    ],
+)
+async def test_call_tool_rejects_unsupported_query_values(http_transport, query_endpoint, value):
+    template, received = query_endpoint
+    arguments = {"value": value}
+    with pytest.raises(TypeError, match="Invalid variable type|is not JSON serializable"):
+        await http_transport.call_tool(None, "echo", arguments, template)
+    assert received == []
+    assert arguments["value"] is value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content_type, headers, payload, expected_body, expected_content_type",
+    [
+        pytest.param("application/json", {}, {"key": "value"}, '{"key": "value"}', "application/json", id="json"),
+        pytest.param("text/plain", {}, "raw body", "raw body", "text/plain", id="text"),
+        pytest.param("application/json", {"Content-Type": "text/plain"}, "explicit", "explicit", "text/plain", id="explicit-content-type"),
+        pytest.param("application/x-www-form-urlencoded", {}, {"field": "value"}, "field=value", "application/x-www-form-urlencoded", id="form"),
+        pytest.param("application/json", {}, None, "", "application/octet-stream", id="null-body"),
+    ],
+)
+async def test_call_tool_preserves_request_mapping(
+    http_transport, aiohttp_client, content_type, headers, payload, expected_body, expected_content_type
+):
+    application = web.Application()
+
+    async def echo(request):
+        return web.json_response({
+            "query": list(request.query.items()),
+            "item": request.match_info["item"],
+            "header": request.headers.get("X-Argument"),
+            "static": request.headers.get("X-Static"),
+            "body": await request.text(),
+            "content_type": request.headers.get("Content-Type"),
+        })
+
+    application.router.add_post("/items/{item}", echo)
+    client = await aiohttp_client(application)
+    template = HttpCallTemplate(
+        name="request-mapping", url=str(client.make_url("/items/")) + "{item}", http_method="POST",
+        headers={"X-Static": "fixed", **headers}, header_fields=["X-Argument", "absent"],
+        body_field="payload", content_type=content_type,
+        auth=ApiKeyAuth(api_key="local-key", var_name="token", location="query"),
+    )
+    arguments = {"item": "a b/?&", "X-Argument": 23, "payload": payload, "token": "caller", "keep": "query"}
+    original = deepcopy(arguments)
+    original_headers = template.headers.copy()
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert result == {
+        "query": [["token", "local-key"], ["keep", "query"]],
+        "item": "a b/?&", "header": "23", "static": "fixed",
+        "body": expected_body, "content_type": expected_content_type,
+    }
+    assert arguments == original
+    assert template.headers == original_headers
+
+
+@pytest.mark.asyncio
+async def test_call_tool_validates_url_before_query_encoding(http_transport):
+    template = HttpCallTemplate(name="insecure-query", url="http://remote.invalid/{item}")
+    value = {"unsupported": object()}
+    arguments = {"item": "sample", "value": value}
+    with pytest.raises(ValueError, match="Security error during tool invocation"):
+        await http_transport.call_tool(None, "echo", arguments, template)
+    assert arguments["item"] == "sample"
+    assert arguments["value"] is value
 
 
 @pytest_asyncio.fixture
@@ -887,3 +1053,262 @@ async def test_deeply_nested_error_body_still_raises_client_response_error(http_
 def test_error_detail_collapses_control_characters():
     from utcp_http._errors import error_detail_from_body
     assert error_detail_from_body('{"error": "line one\\nline two\\u001b[31m"}') == "line one line two [31m"
+
+
+def _snapshot_query_items(arguments, memo=None):
+    items = list(arguments.items())
+    return items, deepcopy(items, memo)
+
+
+def _assert_query_items_unchanged(arguments, snapshot):
+    items, contents = snapshot
+    assert list(arguments.items()) == contents
+    for current, original in zip(arguments.items(), items):
+        assert current[0] == original[0]
+        assert current[1] is original[1]
+
+
+def _decode_json_query(query):
+    return [
+        [name, json.loads(value) if name in {"filter", "other", "enabled", "nullable"} else value]
+        for name, value in query
+    ]
+
+
+def _mixed_query_items():
+    return [
+        ("filter", {"nested": {"tags": ["a&b", 2, True, None]}}),
+        ("marker", "keep"), ("filter", {}), ("enabled", True), ("nullable", None),
+        ("tags", ["b", "a", "b"]), ("filter", {"n": 2}), ("tail", "a+b /?&=é"),
+        ("steps", ("y", "x")), ("empty", []),
+    ]
+
+
+def _expected_mixed_query():
+    return [
+        ["filter", {"nested": {"tags": ["a&b", 2, True, None]}}],
+        ["marker", "keep"], ["filter", {}], ["enabled", True], ["nullable", None],
+        ["tags", "b"], ["tags", "a"], ["tags", "b"], ["filter", {"n": 2}],
+        ["tail", "a+b /?&=é"], ["steps", "y"], ["steps", "x"],
+    ]
+
+
+def _auth_query_items(token):
+    return [
+        ("token", token), ("filter", {"nested": ["a&b", True, None]}), ("marker", "keep"),
+        ("other", {}), ("enabled", True), ("nullable", None), ("tags", ["b", "a", "b"]),
+        ("tail", "a+b /?&=é"), ("steps", ("y", "x")), ("empty", []),
+    ]
+
+
+def _expected_auth_query():
+    return [
+        ["token", "local-query-key+&="], ["filter", {"nested": ["a&b", True, None]}],
+        ["marker", "keep"], ["other", {}], ["enabled", True], ["nullable", None],
+        ["tags", "b"], ["tags", "a"], ["tags", "b"], ["tail", "a+b /?&=é"],
+        ["steps", "y"], ["steps", "x"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_interleaved_multidict_query(http_transport, query_endpoint):
+    template, received = query_endpoint
+    template.url += "?existing=ok"
+    arguments = MultiDict([("value", "b"), ("marker", "keep"), ("value", "a"), ("value", "b")])
+    original = _snapshot_query_items(arguments)
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert len(received) == 1
+    assert result["query"] == [
+        ["existing", "ok"], ["value", "b"], ["marker", "keep"], ["value", "a"], ["value", "b"],
+    ]
+    assert arguments.getall("value") == ["b", "a", "b"]
+    _assert_query_items_unchanged(arguments, original)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_multidict_json_query_values(http_transport, query_endpoint):
+    template, received = query_endpoint
+    arguments = MultiDict(_mixed_query_items())
+    original = _snapshot_query_items(arguments)
+    nested = arguments["filter"]["nested"]
+    nested_tags = nested["tags"]
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert len(received) == 1
+    assert _decode_json_query(result["query"]) == _expected_mixed_query()
+    assert [value for name, value in result["query"] if name == "enabled"] == ["true"]
+    assert [value for name, value in result["query"] if name == "nullable"] == ["null"]
+    assert arguments["filter"]["nested"] is nested
+    assert nested["tags"] is nested_tags
+    _assert_query_items_unchanged(arguments, original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mapping_kind", ["dict", "multidict"])
+async def test_call_tool_query_auth_precedes_json_encoding(http_transport, query_endpoint, mapping_kind):
+    template, received = query_endpoint
+    template.auth = ApiKeyAuth(var_name="token", location="query", api_key="local-query-key+&=")
+    toxic = object()
+    second_toxic = object()
+    items = _auth_query_items({"bad": toxic})
+    expected = _expected_auth_query()
+    if mapping_kind == "multidict":
+        items[3:3] = [("token", {"bad": second_toxic}), ("filter", {"n": 2})]
+        expected[3:3] = [["filter", {"n": 2}]]
+    arguments = {"dict": dict, "multidict": MultiDict}[mapping_kind](items)
+    original = _snapshot_query_items(arguments, {id(toxic): toxic, id(second_toxic): second_toxic})
+    nested = arguments["filter"]["nested"]
+    try:
+        result = await http_transport.call_tool(None, "echo", arguments, template)
+    finally:
+        _assert_query_items_unchanged(arguments, original)
+        assert arguments["token"]["bad"] is toxic
+        assert arguments["filter"]["nested"] is nested
+    assert len(received) == 1
+    assert _decode_json_query(result["query"]) == expected
+    assert [value for name, value in result["query"] if name == "token"] == ["local-query-key+&="]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_kind", ["absent", "scalar", "serializable"])
+async def test_call_tool_query_auth_multikey_controls(http_transport, query_endpoint, token_kind):
+    template, received = query_endpoint
+    template.auth = ApiKeyAuth(var_name="token", location="query", api_key="local-query-key+&=")
+    arguments = dict(_auth_query_items({"caller": [True, None]}))
+    expected = _expected_auth_query()
+    if token_kind == "absent":
+        arguments.pop("token")
+        expected.append(expected.pop(0))
+    if token_kind == "scalar":
+        arguments["token"] = "caller-token"
+    original = _snapshot_query_items(arguments)
+    nested = arguments["filter"]["nested"]
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert len(received) == 1
+    assert _decode_json_query(result["query"]) == expected
+    assert [value for name, value in result["query"] if name == "token"] == ["local-query-key+&="]
+    assert arguments["filter"]["nested"] is nested
+    _assert_query_items_unchanged(arguments, original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mapping_kind", ["dict", "multidict"])
+async def test_call_tool_query_auth_does_not_hide_unrelated_serialization_error(
+    http_transport, query_endpoint, mapping_kind
+):
+    template, received = query_endpoint
+    template.auth = ApiKeyAuth(var_name="token", location="query", api_key="local-query-key+&=")
+    toxic = object()
+    arguments = {"dict": dict, "multidict": MultiDict}[mapping_kind]([
+        ("token", "caller-token"), ("filter", {"bad": toxic}), ("marker", "keep"),
+    ])
+    original = _snapshot_query_items(arguments, {id(toxic): toxic})
+    with pytest.raises(TypeError, match="Object of type object is not JSON serializable"):
+        await http_transport.call_tool(None, "echo", arguments, template)
+    assert received == []
+    assert arguments["filter"]["bad"] is toxic
+    _assert_query_items_unchanged(arguments, original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["header", "cookie"])
+async def test_call_tool_non_query_auth_preserves_query_json(http_transport, aiohttp_client, location):
+    application = web.Application()
+    received = []
+
+    async def echo(request):
+        query = list(request.query.items())
+        received.append(query)
+        return web.json_response({
+            "query": query, "header": request.headers.get("token"), "cookie": request.cookies.get("token"),
+        })
+
+    application.router.add_get("/query", echo)
+    client = await aiohttp_client(application)
+    template = HttpCallTemplate(
+        name="auth-location-query", url=str(client.make_url("/query")),
+        auth=ApiKeyAuth(var_name="token", location=location, api_key="local-query-key+&="),
+    )
+    arguments = {"token": {"caller": True}, "filter": {"nested": [False, None]}, "tags": ["b", "a", "b"]}
+    original = _snapshot_query_items(arguments)
+    nested = arguments["filter"]["nested"]
+    result = await http_transport.call_tool(None, "echo", arguments, template)
+    assert len(received) == 1
+    assert [name for name, value in result["query"]] == ["token", "filter", "tags", "tags", "tags"]
+    assert json.loads(result["query"][0][1]) == {"caller": True}
+    assert json.loads(result["query"][1][1]) == {"nested": [False, None]}
+    assert result["query"][2:] == [["tags", "b"], ["tags", "a"], ["tags", "b"]]
+    assert result[location] == "local-query-key+&="
+    assert result[{"header": "cookie", "cookie": "header"}[location]] is None
+    assert arguments["filter"]["nested"] is nested
+    _assert_query_items_unchanged(arguments, original)
+
+
+from collections import Counter
+from multidict import CIMultiDict, CIMultiDictProxy, MultiDictProxy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mapping_type",
+    [
+        pytest.param(dict, id="dict"),
+        pytest.param(OrderedDict, id="ordered-dict"),
+        pytest.param(UserDict, id="user-dict"),
+        pytest.param(Counter, id="counter"),
+    ],
+)
+async def test_call_tool_preserves_scalar_mapping_query(http_transport, query_endpoint, mapping_type):
+    template, received = query_endpoint
+    template.url += "?existing=ok"
+    arguments = mapping_type({"value": 2, "marker": 1})
+    original = _snapshot_query_items(arguments)
+    try:
+        result = await http_transport.call_tool(None, "echo", arguments, template)
+    finally:
+        _assert_query_items_unchanged(arguments, original)
+    assert result["query"] == [["existing", "ok"], ["value", "2"], ["marker", "1"]]
+    assert len(received) == 1
+    assert received == [[("existing", "ok"), ("value", "2"), ("marker", "1")]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param(MultiDictProxy(MultiDict(_mixed_query_items())), id="multidict-proxy"),
+        pytest.param(CIMultiDict(_mixed_query_items()), id="ci-multidict"),
+        pytest.param(CIMultiDictProxy(CIMultiDict(_mixed_query_items())), id="ci-multidict-proxy"),
+    ],
+)
+async def test_call_tool_preserves_multidict_variant_query(http_transport, query_endpoint, arguments):
+    template, received = query_endpoint
+    template.url += "?existing=ok"
+    original = _snapshot_query_items(arguments)
+    nested = arguments["filter"]["nested"]
+    nested_tags = nested["tags"]
+    try:
+        result = await http_transport.call_tool(None, "echo", arguments, template)
+    finally:
+        _assert_query_items_unchanged(arguments, original)
+        assert arguments["filter"]["nested"] is nested
+        assert nested["tags"] is nested_tags
+    assert _decode_json_query(result["query"]) == [["existing", "ok"]] + _expected_mixed_query()
+    assert result["query"][4:6] == [["enabled", "true"], ["nullable", "null"]]
+    assert result["query"][6:9] == [["tags", "b"], ["tags", "a"], ["tags", "b"]]
+    assert len(received) == 1
+    assert received == [list(map(tuple, result["query"]))]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_none_query_key(http_transport, query_endpoint):
+    template, received = query_endpoint
+    template.url += "?existing=ok"
+    arguments = {None: 2, "marker": 1}
+    original = _snapshot_query_items(arguments)
+    try:
+        result = await http_transport.call_tool(None, "echo", arguments, template)
+    finally:
+        _assert_query_items_unchanged(arguments, original)
+    assert result["query"] == [["existing", "ok"], ["None", "2"], ["marker", "1"]]
+    assert len(received) == 1
+    assert received == [[("existing", "ok"), ("None", "2"), ("marker", "1")]]
