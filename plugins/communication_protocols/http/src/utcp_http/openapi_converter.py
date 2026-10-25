@@ -164,7 +164,8 @@ class OpenApiConverter:
             # trust decision, no further validation here.
             base_url = self._base_url_override
         elif self.spec.get("servers"):
-            base_url = self.spec["servers"][0].get("url", "/")
+            server = self.spec["servers"][0]
+            base_url = self._resolve_server_variables(server)
 
             # Rule: a spec fetched from a non-loopback source cannot declare
             # a loopback server URL. A user pointing the converter at their
@@ -186,6 +187,12 @@ class OpenApiConverter:
                     "the call template's ``base_url`` override "
                     "explicitly to bypass this check."
                 )
+
+            # A server URL whose host is still a placeholder after that
+            # (``http://{host}:7777``) becomes a path parameter of every
+            # generated tool. The protocols refuse, at call time, to let such
+            # an argument move a request onto loopback
+            # (``ensure_loopback_was_declared``), so it is not judged here.
         elif self.spec_url:
             parsed_url = urlparse(self.spec_url)
             base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -203,13 +210,60 @@ class OpenApiConverter:
 
         return UtcpManual(tools=tools)
 
+    @staticmethod
+    def _resolve_server_variables(server: Dict[str, Any]) -> str:
+        """Return the server's URL with its declared variables filled in.
+
+        OpenAPI 3.x lets ``servers[].url`` carry ``{name}`` placeholders whose
+        values come from ``servers[].variables``; every such variable must
+        declare a ``default``, and the default is what a client is meant to
+        use. A placeholder without a declared default is left in place.
+        """
+        url = server.get("url", "/")
+        if not isinstance(url, str):
+            return "/"
+        variables = server.get("variables")
+        if isinstance(variables, dict):
+            for name, variable in variables.items():
+                if not isinstance(variable, dict) or "default" not in variable:
+                    continue
+                default = variable["default"]
+                if default is None:
+                    continue
+                url = url.replace("{" + str(name) + "}", str(default))
+        return url
+
+    def _reject_remote_loopback_token_url(self, token_url: str) -> None:
+        """A remote spec may not route the token POST at loopback.
+
+        The same boundary ``convert`` enforces for ``servers[0].url``: the
+        client-credentials POST is a request the agent host makes on the
+        spec's behalf, so a spec fetched from a non-loopback origin must not
+        aim it at the agent's own interface. ``ensure_secure_url`` cannot
+        catch this -- it allows loopback by design, for local development.
+        A spec fetched from loopback keeps the local-dev exemption.
+        """
+        if (
+            self.spec_url
+            and not is_loopback_url(self.spec_url)
+            and is_loopback_url(token_url)
+        ):
+            raise ValueError(
+                "Security error: OpenAPI spec fetched from "
+                f"{self.spec_url!r} declares a loopback OAuth2 tokenUrl "
+                f"({token_url!r}). A remote spec is not allowed to route the "
+                "client-credentials POST at the agent's own loopback "
+                "interface."
+            )
+
     def _validate_token_url_eagerly(self, token_url: str) -> str:
         """Validate (and, when relative, resolve) an OpenAPI OAuth2
         ``tokenUrl`` at conversion time. Returns the absolute URL
         that should be embedded in the generated ``OAuth2Auth`` so
         the runtime check in ``_handle_oauth2`` sees a usable value
         instead of an unresolved relative reference. Backs
-        GHSA-8cp3-qxj6-px34.
+        GHSA-8cp3-qxj6-px34; the loopback rule
+        (``_reject_remote_loopback_token_url``) closes its residual.
 
         OpenAPI 3.0 / 3.1 explicitly allow ``tokenUrl`` to be a
         relative reference resolved against the spec's own location.
@@ -232,6 +286,7 @@ class OpenApiConverter:
 
         if is_absolute:
             ensure_secure_url(token_url, context="OAuth2 tokenUrl in OpenAPI spec")
+            self._reject_remote_loopback_token_url(token_url)
             return token_url
 
         if self.spec_url:
@@ -245,6 +300,7 @@ class OpenApiConverter:
                     resolved,
                     context="OAuth2 tokenUrl in OpenAPI spec (resolved from relative URL)",
                 )
+                self._reject_remote_loopback_token_url(resolved)
                 return resolved
 
         return token_url

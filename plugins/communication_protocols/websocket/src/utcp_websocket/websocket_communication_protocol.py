@@ -32,6 +32,8 @@ from utcp_websocket.websocket_call_template import WebSocketCallTemplate
 from utcp_websocket._security import (
     ensure_secure_url,
     ensure_secure_ws_url,
+    refuse_upgrade_redirects,
+    reject_remote_loopback_tool_urls,
     safe_request_with_redirects,
 )
 
@@ -266,10 +268,10 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         Enforces the "WSS or loopback" guarantee that the module
         docstring advertises. The previous implementation skipped this
         check entirely, letting any URL through, which is the
-        WebSocket half of GHSA-ppx3-28rw-8fpf. Also disables
-        redirect-following on the upgrade request to prevent a
-        post-validation redirect from steering the handshake into an
-        internal service (GHSA-9qhg-99ww-9mqc).
+        WebSocket half of GHSA-ppx3-28rw-8fpf. The session that opens
+        the socket also refuses to follow a redirect of the upgrade, so
+        a ``3xx`` answer cannot steer the handshake (and its auth
+        headers) at a host this check never saw (GHSA-6mfx-q9f2-jwx8).
         """
         # Hostname-based validation -- never let attacker-controlled or
         # plain-WS-to-non-loopback URLs through, regardless of headers
@@ -290,15 +292,17 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         # Create new connection
         headers = await self._prepare_headers(call_template)
 
-        session = ClientSession()
+        # ``ws_connect`` issues the upgrade through the ordinary request
+        # path, which follows redirects by default and offers no switch to
+        # turn that off. The trace hook fails the connection on the first
+        # ``3xx`` instead, before any redirected request is built, so the
+        # URL validated above is the only one ever contacted.
+        session = ClientSession(
+            trace_configs=[refuse_upgrade_redirects("WebSocket connection")]
+        )
         self._sessions[provider_key] = session
 
         try:
-            # ``ws_connect`` does not expose ``allow_redirects`` -- aiohttp
-            # treats the upgrade handshake as one-shot, so a 3xx response
-            # naturally fails the handshake instead of being followed.
-            # The URL itself was already validated by ``ensure_secure_ws_url``
-            # above. There is no second hop to harden.
             ws = await session.ws_connect(
                 call_template.url,
                 headers=headers,
@@ -368,6 +372,9 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
                                     try:
                                         # Parse as UtcpManual
                                         utcp_manual = UtcpManualSerializer().validate_dict(response_data)
+                                        # A manual read from a remote origin may not aim tool calls, or
+                                        # the OAuth2 token POST, at the agent's own loopback interface.
+                                        reject_remote_loopback_tool_urls(manual_call_template.url, utcp_manual)
                                         logger.info(f"Discovered {len(utcp_manual.tools)} tools from WebSocket manual '{manual_call_template.name}'")
                                         return RegisterManualResult(
                                             call_template=manual_call_template,
