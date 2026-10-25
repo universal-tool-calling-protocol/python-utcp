@@ -23,7 +23,7 @@ This addresses the UTCP principle: "Talk to as many WebSocket endpoints as possi
 - ✅ **Multiple Authentication**: API Key, Basic Auth, and OAuth2 support
 - ✅ **Connection Management**: Keep-alive, reconnection, and connection pooling
 - ✅ **Streaming Support**: Both single-response and streaming execution
-- ✅ **Security Enforced**: WSS required (or ws://localhost for development)
+- ✅ **Security Enforced**: WSS required (or ws://localhost for development); a redirect of the upgrade is never followed, and a manual discovered from a remote origin may not point tool calls or an OAuth2 token URL at loopback
 
 ## Installation
 

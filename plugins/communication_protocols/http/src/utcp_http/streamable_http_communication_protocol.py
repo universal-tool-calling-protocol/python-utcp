@@ -16,7 +16,12 @@ from utcp.data.auth_implementations import OAuth2Auth
 from utcp_http.streamable_http_call_template import StreamableHttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth, ClientResponse
 from utcp_http._errors import raise_for_status_with_body
-from utcp_http._security import ensure_secure_url, safe_request_with_redirects, reject_remote_loopback_tool_urls
+from utcp_http._security import (
+    ensure_secure_url,
+    ensure_loopback_was_declared,
+    safe_request_with_redirects,
+    reject_remote_loopback_tool_urls,
+)
 import logging
 
 logging.basicConfig(
@@ -239,6 +244,11 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         # Defends against SSRF via attacker-controlled OpenAPI specs that point
         # ``servers[0].url`` at internal services. See issue #83.
         ensure_secure_url(url, context="tool invocation")
+        # A loopback destination must be written in the template itself: a
+        # placeholder in the host (``http://{host}:7777/admin``) would let the
+        # tool's arguments move the request onto the agent's own interface
+        # after every registration-time check has passed.
+        ensure_loopback_was_declared(tool_call_template.url, url, context="tool invocation")
 
         # The rest of the arguments are query parameters
         query_params = remaining_args

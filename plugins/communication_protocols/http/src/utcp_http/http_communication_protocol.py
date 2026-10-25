@@ -33,7 +33,12 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 from utcp_http.http_call_template import HttpCallTemplate
 from aiohttp import ClientSession, BasicAuth as AiohttpBasicAuth
 from utcp_http.openapi_converter import OpenApiConverter
-from utcp_http._security import ensure_secure_url, safe_request_with_redirects, reject_remote_loopback_tool_urls
+from utcp_http._security import (
+    ensure_secure_url,
+    ensure_loopback_was_declared,
+    safe_request_with_redirects,
+    reject_remote_loopback_tool_urls,
+)
 from utcp_http._errors import raise_for_status_with_body
 import logging
 
@@ -232,7 +237,10 @@ class HttpCommunicationProtocol(CommunicationProtocol):
                             reject_remote_loopback_tool_urls(str(response.url), utcp_manual)
                         else:
                             logger.info(f"Assuming OpenAPI spec from '{manual_call_template.name}'. Converting to UTCP manual.")
-                            converter = OpenApiConverter(response_data, spec_url=manual_call_template.url, call_template_name=manual_call_template.name, auth_tools=manual_call_template.auth_tools)
+                            # The final (post-redirect) URL is where the spec really
+                            # came from: it decides whether the spec is local or
+                            # remote, and relative ``tokenUrl`` values resolve against it.
+                            converter = OpenApiConverter(response_data, spec_url=str(response.url), call_template_name=manual_call_template.name, auth_tools=manual_call_template.auth_tools)
                             utcp_manual = converter.convert()
                         
                         return RegisterManualResult(
@@ -317,6 +325,11 @@ class HttpCommunicationProtocol(CommunicationProtocol):
         # for an unauthenticated Elasticsearch). Without this re-check, tool
         # invocation is a blind SSRF primitive — see GHSA / issue #83.
         ensure_secure_url(url, context="tool invocation")
+        # A loopback destination must be written in the template itself: a
+        # placeholder in the host (``http://{host}:7777/admin``) would let the
+        # tool's arguments move the request onto the agent's own interface
+        # after every registration-time check has passed.
+        ensure_loopback_was_declared(tool_call_template.url, url, context="tool invocation")
 
         # The rest of the arguments are query parameters
         query_params = remaining_args

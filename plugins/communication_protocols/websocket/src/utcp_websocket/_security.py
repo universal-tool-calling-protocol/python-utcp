@@ -449,3 +449,84 @@ async def safe_request_with_redirects(
     finally:
         if final_response is not None:
             final_response.release()
+
+
+def reject_remote_loopback_tool_urls(
+    discovery_url: str, manual: Any, *, context: str = "manual discovery"
+) -> None:
+    """Reject a remotely-discovered manual that points at loopback.
+
+    Mirror of ``utcp_http._security.reject_remote_loopback_tool_urls`` for
+    manuals discovered over a WebSocket. ``ensure_secure_ws_url`` allows
+    plain ``ws://`` to loopback so local development works, which leaves the
+    same gap the HTTP plugin closed in GHSA-8vxx-v7r9-948g: a manual served
+    from a remote (non-loopback) origin could declare tool URLs, or an OAuth2
+    ``token_url``, on the agent's own loopback interface and turn every tool
+    call into a request against a service that only trusts local callers.
+
+    A manual discovered from loopback (local dev) is exempt. ``discovery_url``
+    is the URL the manual was actually read from; the upgrade never follows a
+    redirect (``refuse_upgrade_redirects``), so that is the template's URL.
+    """
+    if is_loopback_url(discovery_url):
+        return
+    for tool in getattr(manual, "tools", None) or []:
+        tool_name = getattr(tool, "name", "?")
+        call_template = getattr(tool, "tool_call_template", None)
+        url = getattr(call_template, "url", None)
+        if isinstance(url, str) and is_loopback_url(url):
+            raise ValueError(
+                f"Security error during {context}: a manual fetched from "
+                f"{discovery_url!r} declares a loopback tool URL ({url!r}) "
+                f"for tool {tool_name!r}. A remote manual is not allowed to "
+                "redirect tool calls at the agent's own loopback interface."
+            )
+        token_url = getattr(getattr(call_template, "auth", None), "token_url", None)
+        if isinstance(token_url, str) and is_loopback_url(token_url):
+            raise ValueError(
+                f"Security error during {context}: a manual fetched from "
+                f"{discovery_url!r} declares a loopback OAuth2 token URL "
+                f"({token_url!r}) for tool {tool_name!r}. A remote manual is not "
+                "allowed to route the client-credentials POST at the agent's "
+                "own loopback interface."
+            )
+
+
+def refuse_upgrade_redirects(context: str) -> Any:
+    """An ``aiohttp.TraceConfig`` that stops a redirect of the WebSocket
+    upgrade before the next hop is requested.
+
+    ``ClientSession.ws_connect`` issues the upgrade through the ordinary
+    request path with aiohttp's default ``allow_redirects=True`` and no way
+    to turn it off, and only checks for ``101`` on the *final* response. A
+    provider that answers the upgrade with a ``3xx`` therefore steers a GET,
+    carrying every header prepared for the handshake (the ``ApiKeyAuth``
+    header among them), at a host ``ensure_secure_ws_url`` never saw: a
+    blind SSRF into the agent's own services, and a credential leak to
+    wherever ``Location`` points (GHSA-6mfx-q9f2-jwx8).
+
+    Browsers never follow a redirect of a WebSocket handshake, and neither
+    does this plugin: ``on_request_redirect`` fires after the ``3xx`` is read
+    and before the redirected request is built, so raising here fails the
+    connection with the original URL still the only one contacted.
+
+    Attach it to the session that opens the socket:
+    ``ClientSession(trace_configs=[refuse_upgrade_redirects("WebSocket connection")])``.
+    """
+    import aiohttp
+
+    async def _on_redirect(session: Any, trace_ctx: Any, params: Any) -> None:
+        response = params.response
+        location = response.headers.get("Location")
+        response.release()
+        raise ValueError(
+            f"Security error during {context}: the WebSocket upgrade request "
+            f"to {str(params.url)!r} was answered with HTTP {response.status} "
+            f"redirecting to {location!r}. A redirect of the upgrade is never "
+            "followed: it would carry the handshake headers to a host the URL "
+            "check never saw. Connect to the WebSocket's real URL instead."
+        )
+
+    trace_config = aiohttp.TraceConfig()
+    trace_config.on_request_redirect.append(_on_redirect)
+    return trace_config
