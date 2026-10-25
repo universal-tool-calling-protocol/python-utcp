@@ -161,3 +161,33 @@ def test_remote_manual_with_remote_tool_url_is_allowed() -> None:
     reject_remote_loopback_tool_urls(
         "wss://attacker.example/utcp", _manual("wss://api.example.com/socket")
     )
+
+
+@pytest.mark.asyncio
+async def test_failed_discovery_leaves_no_connection_in_the_pool(aiohttp_server) -> None:
+    """Every discovery failure (a malformed manual here, a timeout, a manual the
+    loopback rule refuses) closes the socket and session it opened; the
+    client only tears down manuals it actually registered."""
+
+    async def socket(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        async for _ in ws:
+            await ws.send_str('{"tools": "not a list"}')
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/utcp", socket)
+    server = await aiohttp_server(app)
+
+    proto = WebSocketCommunicationProtocol()
+    template = WebSocketCallTemplate(
+        name="ws", url=str(server.make_url("/utcp")).replace("http://", "ws://", 1), timeout=5
+    )
+    try:
+        with pytest.raises(ValueError, match="Invalid UtcpManual"):
+            await proto.register_manual(None, template)
+        assert proto._connections == {}
+        assert proto._sessions == {}
+    finally:
+        await proto.close()

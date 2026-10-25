@@ -27,7 +27,7 @@ from utcp.data.auth_implementations import ApiKeyAuth, BasicAuth, OAuth2Auth
 from utcp.data.utcp_manual import UtcpManual
 from utcp.data.tool import Tool, JsonSchema
 from utcp_http.http_call_template import HttpCallTemplate
-from utcp_http._security import ensure_secure_url, is_loopback_url
+from utcp_http._security import ensure_secure_url, is_loopback_url, url_template_host_is_loopback
 
 # All HTTP methods that OpenAPI defines as operation fields on a Path Item
 # Object. The conversion loop uses this to tell operations apart from the other
@@ -175,7 +175,7 @@ class OpenApiConverter:
             if (
                 self.spec_url
                 and not is_loopback_url(self.spec_url)
-                and is_loopback_url(base_url)
+                and (is_loopback_url(base_url) or url_template_host_is_loopback(base_url))
             ):
                 raise ValueError(
                     "Security error: OpenAPI spec fetched from "
@@ -241,8 +241,13 @@ class OpenApiConverter:
         spec's behalf, so a spec fetched from a non-loopback origin must not
         aim it at the agent's own interface. ``ensure_secure_url`` cannot
         catch this -- it allows loopback by design, for local development.
-        A spec fetched from loopback keeps the local-dev exemption.
+        A spec fetched from loopback keeps the local-dev exemption, and so
+        does a spec registered with an explicit ``base_url`` override: that
+        override is the caller's statement that they trust the spec, and it
+        lifts the server-URL rule for the same reason.
         """
+        if self._base_url_override:
+            return
         if (
             self.spec_url
             and not is_loopback_url(self.spec_url)

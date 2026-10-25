@@ -397,6 +397,10 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
 
         except Exception as e:
             logger.error(f"Error registering WebSocket manual '{manual_call_template.name}': {e}")
+            # A failed discovery (timeout, malformed manual, a manual the
+            # loopback rule refuses) must not leave its socket and session in
+            # the pool: the client only tears down manuals it registered.
+            await self._cleanup_connection(f"{manual_call_template.name}_{manual_call_template.url}")
             raise
 
         # Should not reach here, but just in case

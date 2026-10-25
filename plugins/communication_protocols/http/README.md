@@ -140,9 +140,11 @@ there.
   local-dev exemption is judged by the final URL a manual or spec was served
   from, not the one first requested.
 
-The same rules apply to the HTTP, SSE and Streamable HTTP protocols. A spec
-you trust that trips the OpenAPI rules can be registered with an explicit
-`base_url` override, which bypasses them.
+The same rules apply to the HTTP, SSE and Streamable HTTP protocols. The
+OpenAPI rules can be lifted for a spec you trust: the text call template's
+`base_url` (or `OpenApiConverter(..., base_url=...)` when you drive the
+converter yourself) replaces the spec's servers with your own choice and is
+treated as your trust decision for the spec's OAuth token URL as well.
 
 ## Error Handling
 

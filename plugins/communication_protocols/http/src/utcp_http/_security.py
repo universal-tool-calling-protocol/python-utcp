@@ -627,7 +627,10 @@ def reject_remote_loopback_tool_urls(
         call_template = getattr(tool, "tool_call_template", None)
         url = getattr(call_template, "url", None)
         if isinstance(url, str):
-            if is_loopback_url(url):
+            # Both classifiers: a template whose port is a placeholder
+            # (``http://localhost:{port}/x``) may not parse as a URL, yet it
+            # names a loopback host as literally as any other.
+            if is_loopback_url(url) or url_template_host_is_loopback(url):
                 raise ValueError(
                     f"Security error during {context}: a manual fetched from "
                     f"{discovery_url!r} declares a loopback tool URL ({url!r}) "
@@ -635,7 +638,9 @@ def reject_remote_loopback_tool_urls(
                     "redirect tool calls at the agent's own loopback interface."
                 )
         token_url = getattr(getattr(call_template, "auth", None), "token_url", None)
-        if isinstance(token_url, str) and is_loopback_url(token_url):
+        if isinstance(token_url, str) and (
+            is_loopback_url(token_url) or url_template_host_is_loopback(token_url)
+        ):
             raise ValueError(
                 f"Security error during {context}: a manual fetched from "
                 f"{discovery_url!r} declares a loopback OAuth2 token URL "

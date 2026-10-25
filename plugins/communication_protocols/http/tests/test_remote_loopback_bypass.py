@@ -216,6 +216,18 @@ class TestOpenApiConverterRemoteSpecRules:
         with pytest.raises(ValueError, match="loopback OAuth2 tokenUrl"):
             OpenApiConverter(_spec([{"url": "https://api.example.com"}], token_url), spec_url=REMOTE_SPEC).convert()
 
+    def test_remote_spec_may_not_leave_only_the_port_of_a_loopback_server_open(self) -> None:
+        with pytest.raises(ValueError, match="loopback server URL"):
+            OpenApiConverter(_spec([{"url": "http://127.0.0.1:{port}"}]), spec_url=REMOTE_SPEC).convert()
+
+    def test_explicit_base_url_override_lifts_the_token_url_rule_too(self) -> None:
+        manual = OpenApiConverter(
+            _spec([{"url": "https://api.example.com"}], "http://127.0.0.1:9000/token"),
+            spec_url=REMOTE_SPEC,
+            base_url="https://api.example.com",
+        ).convert()
+        assert manual.tools[0].tool_call_template.auth.token_url == "http://127.0.0.1:9000/token"
+
     def test_local_spec_may_use_a_loopback_token_endpoint(self) -> None:
         manual = OpenApiConverter(
             _spec([{"url": "http://127.0.0.1:8000"}], "http://127.0.0.1:9000/token"), spec_url=LOCAL_SPEC
