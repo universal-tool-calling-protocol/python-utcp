@@ -350,6 +350,13 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         if not isinstance(manual_call_template, WebSocketCallTemplate):
             raise ValueError("WebSocketCommunicationProtocol can only be used with WebSocketCallTemplate")
 
+        # Remember whether this discovery opens the socket or borrows a pooled
+        # one, so a failure below closes only what it opened: a pooled socket
+        # may be carrying another registration's or a tool call's traffic.
+        provider_key = f"{manual_call_template.name}_{manual_call_template.url}"
+        pooled = self._connections.get(provider_key)
+        opened_here = pooled is None or pooled.closed
+
         ws = await self._get_connection(manual_call_template)
 
         try:
@@ -398,9 +405,11 @@ class WebSocketCommunicationProtocol(CommunicationProtocol):
         except Exception as e:
             logger.error(f"Error registering WebSocket manual '{manual_call_template.name}': {e}")
             # A failed discovery (timeout, malformed manual, a manual the
-            # loopback rule refuses) must not leave its socket and session in
-            # the pool: the client only tears down manuals it registered.
-            await self._cleanup_connection(f"{manual_call_template.name}_{manual_call_template.url}")
+            # loopback rule refuses) must not leave the socket and session it
+            # opened in the pool: the client only tears down manuals it
+            # registered. A socket that was already pooled is left alone.
+            if opened_here:
+                await self._cleanup_connection(provider_key)
             raise
 
         # Should not reach here, but just in case

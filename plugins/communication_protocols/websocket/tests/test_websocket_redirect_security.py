@@ -191,3 +191,33 @@ async def test_failed_discovery_leaves_no_connection_in_the_pool(aiohttp_server)
         assert proto._sessions == {}
     finally:
         await proto.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_discovery_leaves_a_socket_it_did_not_open_alone(aiohttp_server) -> None:
+    """Cleanup is scoped to what the discovery opened: a socket already in the
+    pool (another registration's, or a tool call's) survives a failed retry."""
+
+    async def socket(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        async for _ in ws:
+            await ws.send_str('{"tools": "not a list"}')
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/utcp", socket)
+    server = await aiohttp_server(app)
+
+    proto = WebSocketCommunicationProtocol()
+    template = WebSocketCallTemplate(
+        name="ws", url=str(server.make_url("/utcp")).replace("http://", "ws://", 1), timeout=5
+    )
+    try:
+        pooled = await proto._get_connection(template)
+        with pytest.raises(ValueError, match="Invalid UtcpManual"):
+            await proto.register_manual(None, template)
+        assert proto._connections[f"{template.name}_{template.url}"] is pooled
+        assert not pooled.closed
+    finally:
+        await proto.close()
