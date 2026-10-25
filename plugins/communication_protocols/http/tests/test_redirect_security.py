@@ -867,27 +867,18 @@ class TestOAuth2TokenUrlExtractedFromOpenApiSpec:
         """The named attack: remote attacker spec uses
         ``//localhost/token`` so the eager check resolves against the
         spec's scheme. If the spec is HTTPS the resolved URL is
-        ``https://localhost/token`` -- still loopback. The
-        ``isLoopbackUrl`` defense from the parent OpenAPI ``servers``
-        check does not apply to ``tokenUrl``; we want to reject this
-        specifically because routing credentials at a localhost
-        OAuth server from a remote-spec context is the SSRF pattern
-        from GHSA-39j6-4867-gg4w.
+        ``https://localhost/token`` -- still loopback, and
+        ``ensure_secure_url`` accepts it (HTTPS anywhere). The remote
+        spec may not route the credential POST at the agent's own
+        loopback interface, so conversion is refused outright
+        (GHSA-32vv-p32r-hxxp, the residual of GHSA-8cp3-qxj6-px34).
         """
         converter = OpenApiConverter(
             self._spec_with_relative_token("//localhost/oauth/token"),
             spec_url="https://attacker.example/openapi.json",
         )
-        # The validator currently allows https://localhost (loopback
-        # https is fine for the ``ensure_secure_url`` rule). The
-        # tokenUrl loopback-redirect defense is enforced by the
-        # ``isLoopbackUrl``-based check on ``servers[0]``, not on
-        # ``tokenUrl``. Document the current behaviour explicitly --
-        # the resolved URL must at minimum be the absolute form so
-        # the runtime check sees what it would actually fetch.
-        manual = converter.convert()
-        resolved = manual.tools[0].tool_call_template.auth.token_url
-        assert resolved == "https://localhost/oauth/token"
+        with pytest.raises(ValueError, match="loopback OAuth2 tokenUrl"):
+            converter.convert()
 
     def test_relative_token_url_without_spec_url_accepted(self) -> None:
         """If spec_url is absent the eager validator cannot resolve a

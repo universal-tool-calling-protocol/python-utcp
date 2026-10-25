@@ -118,6 +118,34 @@ client = await UtcpClient.create()
 await client.register_manual(manual)
 ```
 
+## Security
+
+Every outbound request must use HTTPS or address a literal loopback host over
+plain HTTP; plain HTTP to any other host is refused. Loopback is a trust
+boundary: it exists for local development, so a manual or OpenAPI spec
+fetched from a remote (non-loopback) origin may not aim requests at the
+agent's own interface, and nothing that happens later may move a request
+there.
+
+- A remote manual or spec may not declare a loopback tool URL, server URL or
+  OAuth2 `token_url` (`http://127.0.0.1:9200/...`, `https://localhost/token`,
+  any `127.0.0.0/8`, `0.0.0.0`, `::1` or IPv4-mapped spelling).
+- At call time a resolved URL may only be loopback when the call template
+  names a loopback host literally. `http://localhost:8080/items/{id}` works;
+  `http://{host}:8080/items` with `host=127.0.0.1` is refused, whoever wrote
+  the template. A template may still take its host from an argument for any
+  other destination, and OpenAPI server variables with a `default` are
+  resolved when a spec is converted.
+- A redirect is never followed into loopback from a non-loopback URL, and the
+  local-dev exemption is judged by the final URL a manual or spec was served
+  from, not the one first requested.
+
+The same rules apply to the HTTP, SSE and Streamable HTTP protocols. The
+OpenAPI rules can be lifted for a spec you trust: the text call template's
+`base_url` (or `OpenApiConverter(..., base_url=...)` when you drive the
+converter yourself) replaces the spec's servers with your own choice and is
+treated as your trust decision for the spec's OAuth token URL as well.
+
 ## Error Handling
 
 ```python

@@ -41,6 +41,10 @@ def _manual(url: str) -> UtcpManual:
         "https://0x7f000001/secret",          # hex
         "https://127.0.0.1./secret",          # absolute-name form (trailing dot)
         "https://localhost./secret",          # same, for the hostname
+        # A placeholder port keeps the host literal; the template may not
+        # parse as a URL, but it names loopback all the same.
+        "http://localhost:{port}/secret",
+        "http://127.0.0.1:{port}/secret",
     ],
 )
 def test_remote_manual_with_loopback_tool_url_is_rejected(tool_url):

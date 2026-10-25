@@ -162,6 +162,81 @@ def ensure_secure_url(url: str, *, context: Optional[str] = None) -> None:
     )
 
 
+# The scheme and authority of an absolute URL template, kept verbatim so a
+# placeholder in the host position survives for the caller to notice
+# (``urlparse`` lower-cases the host and may choke on a templated port).
+_ABSOLUTE_URL_ORIGIN = re.compile(r"^\s*([A-Za-z][A-Za-z0-9+.\-]*)://([^/?#]*)")
+
+
+def _host_of_authority(authority: str) -> str:
+    """The host inside a URL authority (``user:pw@host:port``), verbatim."""
+    hostport = authority.rsplit("@", 1)[-1]
+    if hostport.startswith("["):
+        end = hostport.find("]")
+        return hostport[1:end] if end != -1 else hostport[1:]
+    return hostport.split(":", 1)[0]
+
+
+def url_template_literal_host(url_template: str) -> Optional[str]:
+    """Return the host ``url_template`` names literally, or ``None``.
+
+    ``None`` when the template has no absolute origin of its own (a relative
+    reference, or something that is not a URL) and when the host position
+    holds a placeholder, so the host is only decided at call time.
+    """
+    if not isinstance(url_template, str):
+        return None
+    m = _ABSOLUTE_URL_ORIGIN.match(url_template)
+    if not m:
+        return None
+    host = _host_of_authority(m.group(2))
+    if not host or "{" in host:
+        return None
+    return host.lower()
+
+
+def url_template_host_is_loopback(url_template: str) -> bool:
+    """Return True if ``url_template`` literally names a loopback host.
+
+    The placeholder-aware twin of :func:`is_loopback_url`: a template whose
+    host is a placeholder is *not* loopback, whatever it resolves to later.
+    """
+    host = url_template_literal_host(url_template)
+    return host is not None and _is_loopback_host(host)
+
+
+def ensure_loopback_was_declared(
+    url_template: str, resolved_url: str, *, context: str
+) -> None:
+    """Raise ``ValueError`` if filling ``url_template`` produced a loopback
+    ``resolved_url`` that the template did not declare.
+
+    ``ensure_secure_url`` allows plain HTTP to loopback so local development
+    works, and ``reject_remote_loopback_tool_urls`` and the OpenAPI converter
+    judge a *template* at registration. All three see
+    ``http://{host}:7777/admin`` as harmless; the request it produces with
+    ``host=127.0.0.1`` is not. This is the one rule that covers a host chosen
+    by a tool argument, and it holds whoever wrote the template: a request may
+    target loopback only when the template itself names a loopback host
+    literally. Tool arguments may choose the rest of the URL, never move the
+    request onto the agent's own interface.
+
+    Call it on every tool invocation, right after ``ensure_secure_url`` on the
+    resolved URL.
+    """
+    if not is_loopback_url(resolved_url):
+        return
+    if url_template_host_is_loopback(url_template):
+        return
+    raise ValueError(
+        f"Security error during {context}: the resolved URL {resolved_url!r} "
+        "targets the agent's own loopback interface, but the call template's "
+        f"URL ({url_template!r}) does not name a loopback host literally. Tool "
+        "arguments substituted into a URL template may choose the path, never "
+        "the host; write the loopback host in the template itself."
+    )
+
+
 # HTTP statuses where the server expects the client to re-issue the request
 # against the URL given in the ``Location`` header. 303 forces a GET; the
 # rest preserve the original method.
@@ -531,17 +606,45 @@ def reject_remote_loopback_tool_urls(
     the URL originally requested: a loopback discovery URL that redirects to a
     remote origin is serving a remote manual and must not keep the local-dev
     exemption.
+
+    Two things a remote manual may not do, per tool:
+
+    * declare a loopback tool URL (the original rule);
+    * declare a loopback OAuth2 ``token_url``: the client-credentials POST is a
+      request the agent host makes on the manual's behalf, exactly like a tool
+      call, and it must not be aimed at loopback either.
+
+    A tool URL whose host is a placeholder (``http://{host}:7777/admin``) is
+    accepted here: the host is only known at call time, and that is where
+    ``ensure_loopback_was_declared`` refuses to let the arguments move the
+    request onto loopback. Judging the template here would only break manuals
+    whose tools legitimately take their destination from an argument.
     """
     if is_loopback_url(discovery_url):
         return
     for tool in getattr(manual, "tools", None) or []:
+        tool_name = getattr(tool, "name", "?")
         call_template = getattr(tool, "tool_call_template", None)
         url = getattr(call_template, "url", None)
-        if isinstance(url, str) and is_loopback_url(url):
+        if isinstance(url, str):
+            # Both classifiers: a template whose port is a placeholder
+            # (``http://localhost:{port}/x``) may not parse as a URL, yet it
+            # names a loopback host as literally as any other.
+            if is_loopback_url(url) or url_template_host_is_loopback(url):
+                raise ValueError(
+                    f"Security error during {context}: a manual fetched from "
+                    f"{discovery_url!r} declares a loopback tool URL ({url!r}) "
+                    f"for tool {tool_name!r}. A remote manual is not allowed to "
+                    "redirect tool calls at the agent's own loopback interface."
+                )
+        token_url = getattr(getattr(call_template, "auth", None), "token_url", None)
+        if isinstance(token_url, str) and (
+            is_loopback_url(token_url) or url_template_host_is_loopback(token_url)
+        ):
             raise ValueError(
                 f"Security error during {context}: a manual fetched from "
-                f"{discovery_url!r} declares a loopback tool URL ({url!r}) for "
-                f"tool {getattr(tool, 'name', '?')!r}. A remote manual is not "
-                "allowed to redirect tool calls at the agent's own loopback "
-                "interface."
+                f"{discovery_url!r} declares a loopback OAuth2 token URL "
+                f"({token_url!r}) for tool {tool_name!r}. A remote manual is not "
+                "allowed to route the client-credentials POST at the agent's "
+                "own loopback interface."
             )
