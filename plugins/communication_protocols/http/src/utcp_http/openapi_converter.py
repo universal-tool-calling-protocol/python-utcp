@@ -775,6 +775,11 @@ class OpenApiConverter:
                         break
         elif "schema" in success_response:  # OpenAPI 2.0
             json_schema = success_response.get("schema")
+            # Swagger response examples map MIME types to raw values, not
+            # OpenAPI 3 Example Objects. Normalize before merging with schema examples.
+            examples = success_response.get("examples")
+            if isinstance(examples, dict):
+                media_type_obj = {"examples": list(examples.values())}
 
         if not json_schema:
             return JsonSchema()
