@@ -47,7 +47,7 @@ async def create_populated_repo():
     return repo, tools
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_search_tools_limit_zero_returns_all_tools():
     """Verify limit=0 returns all matching tools without slicing to empty."""
     repo, tools = await create_populated_repo()
@@ -56,7 +56,7 @@ async def test_search_tools_limit_zero_returns_all_tools():
     assert len(results) == len(tools)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_search_tools_positive_limit_respected():
     """Verify limit > 0 returns at most `limit` results."""
     repo, _ = await create_populated_repo()
@@ -66,7 +66,7 @@ async def test_search_tools_positive_limit_respected():
     assert results[0].name in ("add_numbers", "subtract_numbers")
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_search_tools_negative_limit_raises_error():
     """Verify negative limit raises ValueError."""
     repo, _ = await create_populated_repo()
@@ -75,7 +75,7 @@ async def test_search_tools_negative_limit_raises_error():
         await strategy.search_tools(repo, "math", limit=-1)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_search_tools_tag_and_description_matching():
     """Verify tools with matching tags rank highest."""
     repo, _ = await create_populated_repo()
@@ -85,7 +85,7 @@ async def test_search_tools_tag_and_description_matching():
     assert results[0].name == "send_email"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_search_tools_any_of_tags_required():
     """Verify any_of_tags_required filters out non-matching tools."""
     repo, _ = await create_populated_repo()
