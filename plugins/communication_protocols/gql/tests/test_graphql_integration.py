@@ -250,17 +250,15 @@ async def test_error_handling_invalid_query(protocol, client):
 @pytest.mark.asyncio
 async def test_error_handling_missing_selection_set_auto_generated(protocol, client):
     """
-    Demonstrate that auto-generated queries fail for object-returning fields.
-    
-    This test documents the limitation: without a custom query, object fields fail.
-    The fix is to always use the `query` field for object-returning operations.
+    Demonstrate that auto-generated queries fail for object-returning fields when selection generation is disabled.
     """
-    # No custom query - will auto-generate without selection set
+    # Disable selection set auto-generation
     template = GraphQLCallTemplate(
         name="countries_api",
         url=COUNTRIES_API_URL,
         operation_type="query",
         variable_types={"code": "ID!"},
+        auto_generate_selection_set=False,
     )
 
     # This should fail because auto-generated query lacks selection set
@@ -273,3 +271,48 @@ async def test_error_handling_missing_selection_set_auto_generated(protocol, cli
             {"code": "US"},
             template,
         )
+
+
+@pytest.mark.asyncio
+async def test_auto_generated_query_with_selection_set_succeeds(protocol, client):
+    """Test that auto-generated queries succeed when auto_generate_selection_set is True."""
+    template = GraphQLCallTemplate(
+        name="countries_api",
+        url=COUNTRIES_API_URL,
+        operation_type="query",
+        auto_generate_selection_set=True,
+    )
+
+    result = await protocol.call_tool(
+        client,
+        "country",
+        {"code": "US"},
+        template,
+    )
+    assert result is not None
+    assert "country" in result
+    assert result["country"]["name"] == "United States"
+    assert result["country"]["code"] == "US"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_field_selection_override(protocol, client):
+    """Test specifying explicit _fields in tool_args."""
+    template = GraphQLCallTemplate(
+        name="countries_api",
+        url=COUNTRIES_API_URL,
+    )
+
+    result = await protocol.call_tool(
+        client,
+        "country",
+        {"code": "CA", "_fields": ["name", "capital"]},
+        template,
+    )
+    assert result is not None
+    assert "country" in result
+    assert result["country"]["name"] == "Canada"
+    assert result["country"]["capital"] == "Ottawa"
+
+
+

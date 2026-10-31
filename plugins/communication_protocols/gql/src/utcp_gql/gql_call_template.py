@@ -29,6 +29,10 @@ class GraphQLCallTemplate(CallTemplate):
             and variable types. Example: 'query GetUser($id: ID!) { user(id: $id) { id name } }'
         variable_types: Map of variable names to GraphQL types for auto-generated queries.
             Example: {'id': 'ID!', 'limit': 'Int'}. Defaults to 'String' if not specified.
+        auto_generate_selection_set: Whether to automatically generate selection sets for
+            object-returning fields if no custom query is provided. Defaults to True.
+        selection_depth: Maximum depth of subfields to include when auto-generating
+            selection sets. Defaults to 2.
 
     Example:
         # Full flexibility with custom query
@@ -62,6 +66,15 @@ class GraphQLCallTemplate(CallTemplate):
         description="Map of variable names to GraphQL types for auto-generated queries. "
                     "Example: {'id': 'ID!', 'limit': 'Int', 'active': 'Boolean'}. "
                     "Defaults to 'String' if not specified."
+    )
+    auto_generate_selection_set: bool = Field(
+        default=True,
+        description="Whether to automatically generate selection sets for object-returning fields if no custom query is provided."
+    )
+    selection_depth: int = Field(
+        default=2,
+        ge=1,
+        description="Maximum depth of subfields to include when auto-generating selection sets."
     )
 
     @field_serializer("auth")

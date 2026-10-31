@@ -1,3 +1,4 @@
+import inspect
 import logging
 from typing import Dict, Any, List, Optional, AsyncGenerator, TYPE_CHECKING
 
@@ -16,6 +17,12 @@ from utcp.data.auth_implementations.oauth2_auth import OAuth2Auth
 
 from utcp_gql.gql_call_template import GraphQLCallTemplate
 from utcp_gql._security import ensure_secure_url, safe_request_with_redirects
+from utcp_gql.schema_converter import (
+    convert_field_args_to_input_schema,
+    convert_field_output_to_output_schema,
+    format_graphql_type_string,
+    generate_default_selection_set,
+)
 
 if TYPE_CHECKING:
     from utcp.utcp_client import UtcpClient
@@ -151,40 +158,55 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
 
                 # Queries
                 if hasattr(schema, "query_type") and schema.query_type:
+                    query_call_template = (
+                        manual_call_template
+                        if manual_call_template.operation_type == "query"
+                        else manual_call_template.model_copy(update={"operation_type": "query"})
+                    )
                     for name, field in schema.query_type.fields.items():
                         tools.append(
                             Tool(
                                 name=name,
                                 description=getattr(field, "description", "") or "",
-                                inputs=JsonSchema(type="object"),
-                                outputs=JsonSchema(type="object"),
-                                tool_call_template=manual_call_template,
+                                inputs=convert_field_args_to_input_schema(field),
+                                outputs=convert_field_output_to_output_schema(field),
+                                tool_call_template=query_call_template,
                             )
                         )
 
                 # Mutations
                 if hasattr(schema, "mutation_type") and schema.mutation_type:
+                    mut_call_template = (
+                        manual_call_template
+                        if manual_call_template.operation_type == "mutation"
+                        else manual_call_template.model_copy(update={"operation_type": "mutation"})
+                    )
                     for name, field in schema.mutation_type.fields.items():
                         tools.append(
                             Tool(
                                 name=name,
                                 description=getattr(field, "description", "") or "",
-                                inputs=JsonSchema(type="object"),
-                                outputs=JsonSchema(type="object"),
-                                tool_call_template=manual_call_template,
+                                inputs=convert_field_args_to_input_schema(field),
+                                outputs=convert_field_output_to_output_schema(field),
+                                tool_call_template=mut_call_template,
                             )
                         )
 
                 # Subscriptions (listed for completeness)
                 if hasattr(schema, "subscription_type") and schema.subscription_type:
+                    sub_call_template = (
+                        manual_call_template
+                        if manual_call_template.operation_type == "subscription"
+                        else manual_call_template.model_copy(update={"operation_type": "subscription"})
+                    )
                     for name, field in schema.subscription_type.fields.items():
                         tools.append(
                             Tool(
                                 name=name,
                                 description=getattr(field, "description", "") or "",
-                                inputs=JsonSchema(type="object"),
-                                outputs=JsonSchema(type="object"),
-                                tool_call_template=manual_call_template,
+                                inputs=convert_field_args_to_input_schema(field),
+                                outputs=convert_field_output_to_output_schema(field),
+                                tool_call_template=sub_call_template,
                             )
                         )
 
@@ -226,35 +248,95 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
         headers = await self._prepare_headers(tool_call_template, tool_args)
         transport = _SecureAIOHTTPTransport(url=tool_call_template.url, headers=headers)
         async with GqlClient(transport=transport, fetch_schema_from_transport=True) as session:
-            # Filter out header fields from GraphQL variables; these are sent via HTTP headers
+            schema = session.client.schema
+
+            # Filter out header fields and selection controls from tool_args
             header_fields = tool_call_template.header_fields or []
-            filtered_args = {k: v for k, v in tool_args.items() if k not in header_fields}
+            special_fields = {"_fields", "_selection"}
+            filtered_args = {
+                k: v for k, v in tool_args.items()
+                if k not in header_fields and k not in special_fields
+            }
+
+            base_tool_name = tool_name.split(".", 1)[-1] if "." in tool_name else tool_name
+
+            # Look up field definition from schema for exact variable typing, selection, and operation type
+            field_def = None
+            op_type = getattr(tool_call_template, "operation_type", "query")
+            if schema:
+                root_types = {
+                    "query": getattr(schema, "query_type", None),
+                    "mutation": getattr(schema, "mutation_type", None),
+                    "subscription": getattr(schema, "subscription_type", None),
+                }
+                root_type = root_types.get(op_type)
+                if root_type and hasattr(root_type, "fields") and base_tool_name in root_type.fields:
+                    field_def = root_type.fields[base_tool_name]
+                else:
+                    remaining_roots = [k for k in ("mutation", "subscription", "query") if k != op_type]
+                    for candidate_op_type in remaining_roots:
+                        candidate_type = root_types.get(candidate_op_type)
+                        if candidate_type and hasattr(candidate_type, "fields") and base_tool_name in candidate_type.fields:
+                            op_type = candidate_op_type
+                            field_def = candidate_type.fields[base_tool_name]
+                            break
 
             # Use custom query if provided (highest flexibility for agents)
             if tool_call_template.query:
                 gql_str = tool_call_template.query
             else:
-                # Auto-generate query - use variable_types for proper typing
-                op_type = getattr(tool_call_template, "operation_type", "query")
-                base_tool_name = tool_name.split(".", 1)[-1] if "." in tool_name else tool_name
                 variable_types = tool_call_template.variable_types or {}
 
-                # Build variable definitions with proper types (default to String)
-                arg_str = ", ".join(
-                    f"${k}: {variable_types.get(k, 'String')}"
-                    for k in filtered_args.keys()
-                )
-                var_defs = f"({arg_str})" if arg_str else ""
+                # Determine variable types from schema if available, falling back to template or String
+                var_type_strs = []
+                for k in filtered_args.keys():
+                    if k in variable_types:
+                        vtype = variable_types[k]
+                    elif field_def and k in field_def.args:
+                        vtype = format_graphql_type_string(field_def.args[k].type)
+                    else:
+                        vtype = "String"
+                    var_type_strs.append(f"${k}: {vtype}")
+
+                var_defs = f"({', '.join(var_type_strs)})" if var_type_strs else ""
                 arg_pass = ", ".join(f"{k}: ${k}" for k in filtered_args.keys())
                 arg_pass = f"({arg_pass})" if arg_pass else ""
 
-                # Note: Auto-generated queries for object-returning fields will still fail
-                # without a selection set. Use the `query` field for full control.
-                gql_str = f"{op_type} {var_defs} {{ {base_tool_name}{arg_pass} }}"
+                # Build selection set for object-returning fields
+                selection_set = ""
+                if "_selection" in tool_args:
+                    sel = str(tool_args["_selection"]).strip()
+                    if sel and not sel.startswith("{"):
+                        sel = f"{{ {sel} }}"
+                    selection_set = sel
+                elif "_fields" in tool_args and isinstance(tool_args["_fields"], list):
+                    selection_set = "{ " + " ".join(tool_args["_fields"]) + " }"
+                elif getattr(tool_call_template, "auto_generate_selection_set", True) and field_def:
+                    depth = getattr(tool_call_template, "selection_depth", 2)
+                    selection_set = generate_default_selection_set(field_def.type, max_depth=depth)
+
+                selection_clause = f" {selection_set}" if selection_set else ""
+                gql_str = f"{op_type} {var_defs} {{ {base_tool_name}{arg_pass}{selection_clause} }}"
                 logger.debug(f"Auto-generated GraphQL: {gql_str}")
 
             document = gql_query(gql_str)
-            result = await session.execute(document, variable_values=filtered_args)
+            request_obj = None
+            try:
+                from gql import GraphQLRequest
+
+                sig = inspect.signature(session.execute)
+                params = list(sig.parameters.keys())
+                if "document" in params and "request" not in params:
+                    request_obj = None
+                else:
+                    request_obj = GraphQLRequest(document, variable_values=filtered_args)
+            except (ImportError, TypeError, ValueError):
+                request_obj = None
+
+            if request_obj is not None:
+                result = await session.execute(request_obj)
+            else:
+                result = await session.execute(document, variable_values=filtered_args)
             return result
 
     async def call_tool_streaming(
