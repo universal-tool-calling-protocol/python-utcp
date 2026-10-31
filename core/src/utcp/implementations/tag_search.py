@@ -39,7 +39,7 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
         Args:
             tool_repository: The tool repository to search in.
             query: The query to search for.
-            limit: The maximum number of results to return.
+            limit: The maximum number of results to return. Use 0 for no limit.
             any_of_tags_required: A list of tags that must be present in the tool.
 
         Returns:
@@ -91,8 +91,8 @@ class TagAndDescriptionWordMatchStrategy(ToolSearchStrategy):
         # Sort tools by score in descending order
         sorted_tools = [tool for tool, score in sorted(tool_scores, key=lambda x: x[1], reverse=True)]
         
-        # Return up to 'limit' tools
-        return sorted_tools[:limit]
+        # Return up to 'limit' tools (0 for no limit)
+        return sorted_tools[:limit] if limit > 0 else sorted_tools
 
 class TagAndDescriptionWordMatchStrategyConfigSerializer(Serializer[TagAndDescriptionWordMatchStrategy]):
     """REQUIRED
