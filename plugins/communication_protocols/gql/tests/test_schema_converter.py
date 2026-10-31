@@ -322,7 +322,7 @@ def test_json_scalar_unconstrained_types():
 
 
 def test_union_output_schema_one_of():
-    """Finding 9: Union return schemas are represented using member-specific oneOf schemas."""
+    """Finding 9: Union return schemas are represented using member-specific oneOf schemas with __typename const discriminator."""
     Dog = GraphQLObjectType("Dog", {"name": GraphQLField(GraphQLString), "bark": GraphQLField(GraphQLString)})
     Cat = GraphQLObjectType("Cat", {"name": GraphQLField(GraphQLString), "meow": GraphQLField(GraphQLString)})
     Pet = GraphQLUnionType("Pet", types=[Dog, Cat])
@@ -332,6 +332,14 @@ def test_union_output_schema_one_of():
     assert schema_nullable.oneOf is not None
     assert len(schema_nullable.oneOf) == 3  # Dog, Cat, null
     assert any(s.type == "null" for s in schema_nullable.oneOf)
+
+    # Verify __typename discriminator prevents overlap between Dog and Cat
+    dog_schema = next(s for s in schema_nullable.oneOf if s.properties and "__typename" in s.properties and s.properties["__typename"].const == "Dog")
+    cat_schema = next(s for s in schema_nullable.oneOf if s.properties and "__typename" in s.properties and s.properties["__typename"].const == "Cat")
+    assert "__typename" in dog_schema.required
+    assert "__typename" in cat_schema.required
+    assert dog_schema.properties["__typename"].const == "Dog"
+    assert cat_schema.properties["__typename"].const == "Cat"
 
     # Non-null union
     schema_nn = convert_graphql_type_to_json_schema(GraphQLNonNull(Pet))

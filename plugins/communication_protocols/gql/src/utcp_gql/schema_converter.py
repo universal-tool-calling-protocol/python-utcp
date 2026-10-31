@@ -193,16 +193,24 @@ def convert_graphql_type_to_json_schema(
     # Union types
     if is_union_type(gql_type):
         desc = description or getattr(gql_type, "description", None)
-        member_schemas = [
-            convert_graphql_type_to_json_schema(
+        member_schemas = []
+        for member in gql_type.types:
+            m_schema = convert_graphql_type_to_json_schema(
                 member,
                 visited=visited,
                 depth=depth + 1,
                 max_depth=max_depth,
                 nullable=False,
             )
-            for member in gql_type.types
-        ]
+            # Add required __typename const discriminator to make member schemas mutually exclusive
+            m_props = dict(m_schema.properties) if m_schema.properties else {}
+            m_props["__typename"] = JsonSchema(type="string", const=member.name)
+            m_req = list(m_schema.required) if m_schema.required else []
+            if "__typename" not in m_req:
+                m_req.append("__typename")
+            member_schemas.append(
+                m_schema.model_copy(update={"properties": m_props, "required": m_req})
+            )
         if nullable:
             member_schemas.append(JsonSchema(type="null"))
         return JsonSchema(
