@@ -73,6 +73,7 @@ class GraphQLCallTemplate(CallTemplate):
     )
     selection_depth: int = Field(
         default=2,
+        ge=1,
         description="Maximum depth of subfields to include when auto-generating selection sets."
     )
 

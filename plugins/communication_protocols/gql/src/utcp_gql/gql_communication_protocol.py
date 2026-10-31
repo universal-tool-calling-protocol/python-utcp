@@ -1,3 +1,4 @@
+import inspect
 import logging
 from typing import Dict, Any, List, Optional, AsyncGenerator, TYPE_CHECKING
 
@@ -263,16 +264,22 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
             field_def = None
             op_type = getattr(tool_call_template, "operation_type", "query")
             if schema:
-                # Detect the real operation type from the schema definition
-                if hasattr(schema, "mutation_type") and schema.mutation_type and base_tool_name in schema.mutation_type.fields:
-                    op_type = "mutation"
-                    field_def = schema.mutation_type.fields[base_tool_name]
-                elif hasattr(schema, "subscription_type") and schema.subscription_type and base_tool_name in schema.subscription_type.fields:
-                    op_type = "subscription"
-                    field_def = schema.subscription_type.fields[base_tool_name]
-                elif hasattr(schema, "query_type") and schema.query_type and base_tool_name in schema.query_type.fields:
-                    op_type = "query"
-                    field_def = schema.query_type.fields[base_tool_name]
+                root_types = {
+                    "query": getattr(schema, "query_type", None),
+                    "mutation": getattr(schema, "mutation_type", None),
+                    "subscription": getattr(schema, "subscription_type", None),
+                }
+                root_type = root_types.get(op_type)
+                if root_type and hasattr(root_type, "fields") and base_tool_name in root_type.fields:
+                    field_def = root_type.fields[base_tool_name]
+                else:
+                    remaining_roots = [k for k in ("mutation", "subscription", "query") if k != op_type]
+                    for candidate_op_type in remaining_roots:
+                        candidate_type = root_types.get(candidate_op_type)
+                        if candidate_type and hasattr(candidate_type, "fields") and base_tool_name in candidate_type.fields:
+                            op_type = candidate_op_type
+                            field_def = candidate_type.fields[base_tool_name]
+                            break
 
             # Use custom query if provided (highest flexibility for agents)
             if tool_call_template.query:
@@ -313,11 +320,22 @@ class GraphQLCommunicationProtocol(CommunicationProtocol):
                 logger.debug(f"Auto-generated GraphQL: {gql_str}")
 
             document = gql_query(gql_str)
+            request_obj = None
             try:
                 from gql import GraphQLRequest
-                request = GraphQLRequest(document, variable_values=filtered_args)
-                result = await session.execute(request)
-            except (ImportError, TypeError):
+
+                sig = inspect.signature(session.execute)
+                params = list(sig.parameters.keys())
+                if "document" in params and "request" not in params:
+                    request_obj = None
+                else:
+                    request_obj = GraphQLRequest(document, variable_values=filtered_args)
+            except (ImportError, TypeError, ValueError):
+                request_obj = None
+
+            if request_obj is not None:
+                result = await session.execute(request_obj)
+            else:
                 result = await session.execute(document, variable_values=filtered_args)
             return result
 
