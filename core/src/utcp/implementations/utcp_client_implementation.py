@@ -442,7 +442,7 @@ class UtcpClientImplementation(UtcpClient):
 
         Args:
             query: The query to search for.
-            limit: The maximum number of results to return.
+            limit: The maximum number of results to return. 0 for no limit.
             any_of_tags_required: A list of tags that must be present in the tool.
 
         Returns:
