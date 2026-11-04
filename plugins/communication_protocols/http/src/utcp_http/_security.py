@@ -658,17 +658,21 @@ def encode_query_params(params: Dict[str, Any]) -> Dict[str, Any]:
     - Preserves primitive values (str, int, float).
     - Serializes booleans as 'true'/'false'.
     - Serializes sets into JSON arrays with sorted elements for deterministic output.
-    - Serializes dictionaries as compact JSON objects.
+    - Serializes dictionaries as compact JSON objects with string-normalized keys.
     - Preserves top-level lists and tuples so aiohttp generates repeated query
       parameters (?key=v1&key=v2), while recursively encoding nested sequences
       or objects within list items into JSON (omitting None items).
-    - Non-JSON types (like sets or custom objects) nested inside dicts or lists
-      are safely handled via a default serializer fallback.
+    - Non-JSON types (like sets or custom objects) and non-string mapping keys
+      nested inside dicts or lists are safely normalized before dumping.
     """
-    def _json_default(obj: Any) -> Any:
+    def _normalize(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {str(k): _normalize(v) for k, v in obj.items()}
         if isinstance(obj, (set, frozenset)):
-            return sorted(obj, key=str)
-        return str(obj)
+            return [_normalize(x) for x in sorted(obj, key=str)]
+        if isinstance(obj, (list, tuple)):
+            return [_normalize(x) for x in obj]
+        return obj
 
     def _encode_item(item: Any) -> Optional[Any]:
         if item is None:
@@ -678,24 +682,26 @@ def encode_query_params(params: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(item, (int, float, str)):
             return item
         if isinstance(item, (set, frozenset)):
-            return json.dumps(sorted(item, key=str), default=_json_default, separators=(",", ":"))
+            return json.dumps([_normalize(x) for x in sorted(item, key=str)], default=str, separators=(",", ":"))
         if isinstance(item, (dict, list, tuple)):
-            return json.dumps(item, default=_json_default, separators=(",", ":"))
+            return json.dumps(_normalize(item), default=str, separators=(",", ":"))
         return str(item)
 
     result: Dict[str, Any] = {}
     for k, v in params.items():
         if v is None:
             continue
+        key_str = str(k)
         if isinstance(v, (list, tuple)):
             encoded_items = [_encode_item(sub) for sub in v if sub is not None]
-            result[k] = encoded_items
+            result[key_str] = encoded_items
         else:
             encoded_val = _encode_item(v)
             if encoded_val is not None:
-                result[k] = encoded_val
+                result[key_str] = encoded_val
 
     return result
+
 
 
 

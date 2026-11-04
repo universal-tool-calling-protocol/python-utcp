@@ -908,7 +908,7 @@ async def test_call_tool_encodes_object_and_list_query_parameters(http_transport
         http_method="GET",
     )
     tool_args = {
-        "filter": {"status": "open", "nested": {"key": 1}, "tags": {"python", "async"}},
+        "filter": {"status": "open", "nested": {100: "numeric_key"}, "tags": {"python", "async"}},
         "tags": ["alpha", "beta"],
         "active": True,
         "count": 42,
@@ -917,13 +917,14 @@ async def test_call_tool_encodes_object_and_list_query_parameters(http_transport
         "optional_unset": None,
     }
     result = await http_transport.call_tool(None, "echo_tool", tool_args, call_template)
-    assert result["query"]["filter"] == '{"status":"open","nested":{"key":1},"tags":["async","python"]}'
+    assert result["query"]["filter"] == '{"status":"open","nested":{"100":"numeric_key"},"tags":["async","python"]}'
     assert result["query"]["active"] == "true"
     assert result["query"]["count"] == "42"
     assert result["query"]["categories"] == '["books","electronics"]'
     assert "optional_unset" not in result["query"]
     assert result["multi_query"]["tags"] == ["alpha", "beta"]
     assert result["multi_query"]["matrix"] == ["[1,2]", "[3,4]"]
+
 
 
 
