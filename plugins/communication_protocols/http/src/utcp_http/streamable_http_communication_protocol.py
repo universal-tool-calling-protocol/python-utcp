@@ -21,6 +21,7 @@ from utcp_http._security import (
     ensure_loopback_was_declared,
     safe_request_with_redirects,
     reject_remote_loopback_tool_urls,
+    encode_query_params,
 )
 import logging
 
@@ -251,7 +252,7 @@ class StreamableHttpCommunicationProtocol(CommunicationProtocol):
         ensure_loopback_was_declared(tool_call_template.url, url, context="tool invocation")
 
         # The rest of the arguments are query parameters
-        query_params = remaining_args
+        query_params = encode_query_params(remaining_args)
 
         # Handle authentication
         # ``auth_header_names`` unused here -- streaming handshake uses

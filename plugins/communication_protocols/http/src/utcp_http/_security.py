@@ -9,6 +9,7 @@ explicit ``ensure_secure_url`` to call before every aiohttp request.
 
 from __future__ import annotations
 
+import json
 import re
 import socket
 from contextlib import asynccontextmanager
@@ -648,3 +649,67 @@ def reject_remote_loopback_tool_urls(
                 "allowed to route the client-credentials POST at the agent's "
                 "own loopback interface."
             )
+
+
+def encode_query_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Encode query parameter values for HTTP/SSE/Streamable HTTP requests.
+
+    - Drops None values so optional unset arguments are omitted from query strings.
+    - Preserves primitive values (str, int, float).
+    - Serializes booleans as 'true'/'false'.
+    - Serializes sets into JSON arrays with sorted elements for deterministic output.
+    - Serializes dictionaries as compact JSON objects with string-normalized keys.
+    - Preserves top-level lists and tuples so aiohttp generates repeated query
+      parameters (?key=v1&key=v2), while recursively encoding nested sequences
+      or objects within list items into JSON (omitting None items).
+    - Non-JSON types (like sets or custom objects) and non-string mapping keys
+      nested inside dicts or lists are safely normalized before dumping.
+    """
+    def _normalize(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            normalized: Dict[str, Any] = {}
+            for k, v in obj.items():
+                key_str = str(k)
+                if key_str in normalized:
+                    raise ValueError(
+                        f"Query parameter dictionary key collision: conflicting key {k!r} maps to existing {key_str!r}"
+                    )
+                normalized[key_str] = _normalize(v)
+            return normalized
+        if isinstance(obj, (set, frozenset)):
+            return [_normalize(x) for x in sorted(obj, key=str)]
+        if isinstance(obj, (list, tuple)):
+            return [_normalize(x) for x in obj]
+        return obj
+
+    def _encode_item(item: Any) -> Optional[Any]:
+        if item is None:
+            return None
+        if isinstance(item, bool):
+            return "true" if item else "false"
+        if isinstance(item, (int, float, str)):
+            return item
+        if isinstance(item, (set, frozenset)):
+            return json.dumps([_normalize(x) for x in sorted(item, key=str)], default=str, separators=(",", ":"))
+        if isinstance(item, (dict, list, tuple)):
+            return json.dumps(_normalize(item), default=str, separators=(",", ":"))
+        return str(item)
+
+    result: Dict[str, Any] = {}
+    for k, v in params.items():
+        if v is None:
+            continue
+        key_str = str(k)
+        if isinstance(v, (list, tuple)):
+            encoded_items = [_encode_item(sub) for sub in v if sub is not None]
+            result[key_str] = encoded_items
+        else:
+            encoded_val = _encode_item(v)
+            if encoded_val is not None:
+                result[key_str] = encoded_val
+
+    return result
+
+
+
+
