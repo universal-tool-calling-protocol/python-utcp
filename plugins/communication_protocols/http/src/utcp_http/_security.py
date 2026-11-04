@@ -662,7 +662,14 @@ def encode_query_params(params: Dict[str, Any]) -> Dict[str, Any]:
     - Preserves top-level lists and tuples so aiohttp generates repeated query
       parameters (?key=v1&key=v2), while recursively encoding nested sequences
       or objects within list items into JSON (omitting None items).
+    - Non-JSON types (like sets or custom objects) nested inside dicts or lists
+      are safely handled via a default serializer fallback.
     """
+    def _json_default(obj: Any) -> Any:
+        if isinstance(obj, (set, frozenset)):
+            return sorted(obj, key=str)
+        return str(obj)
+
     def _encode_item(item: Any) -> Optional[Any]:
         if item is None:
             return None
@@ -670,10 +677,10 @@ def encode_query_params(params: Dict[str, Any]) -> Dict[str, Any]:
             return "true" if item else "false"
         if isinstance(item, (int, float, str)):
             return item
-        if isinstance(item, set):
-            return json.dumps(sorted(item, key=str), separators=(",", ":"))
+        if isinstance(item, (set, frozenset)):
+            return json.dumps(sorted(item, key=str), default=_json_default, separators=(",", ":"))
         if isinstance(item, (dict, list, tuple)):
-            return json.dumps(item, separators=(",", ":"))
+            return json.dumps(item, default=_json_default, separators=(",", ":"))
         return str(item)
 
     result: Dict[str, Any] = {}
@@ -689,5 +696,6 @@ def encode_query_params(params: Dict[str, Any]) -> Dict[str, Any]:
                 result[k] = encoded_val
 
     return result
+
 
 
