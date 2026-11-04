@@ -163,6 +163,15 @@ async def app():
         return web.Response(status=403, text="x" * (1024 * 1024))
 
     app.router.add_route('*', '/forbidden-object-then-message', forbidden_object_then_message_handler)
+
+    # Echo query parameters endpoint for testing serialization
+    async def echo_query_handler(request):
+        return web.json_response({
+            "query": dict(request.query),
+            "multi_query": {k: request.query.getall(k) for k in request.query.keys()},
+        })
+
+    app.router.add_get('/echo-query', echo_query_handler)
     app.router.add_route('*', '/forbidden-huge', forbidden_huge_handler)
 
     # No Content-Type at all, so no charset to decode with.
@@ -887,3 +896,26 @@ async def test_deeply_nested_error_body_still_raises_client_response_error(http_
 def test_error_detail_collapses_control_characters():
     from utcp_http._errors import error_detail_from_body
     assert error_detail_from_body('{"error": "line one\\nline two\\u001b[31m"}') == "line one line two [31m"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_encodes_object_and_list_query_parameters(http_transport, aiohttp_client, app):
+    """Verify dicts and sets are JSON-encoded and sequences are properly passed without TypeError (#107)."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(
+        name="echo_tool",
+        url=f"http://localhost:{client.port}/echo-query",
+        http_method="GET",
+    )
+    tool_args = {
+        "filter": {"status": "open", "nested": {"key": 1}},
+        "tags": ["alpha", "beta"],
+        "active": True,
+        "count": 42,
+    }
+    result = await http_transport.call_tool(None, "echo_tool", tool_args, call_template)
+    assert result["query"]["filter"] == '{"status":"open","nested":{"key":1}}'
+    assert result["query"]["active"] == "true"
+    assert result["query"]["count"] == "42"
+    assert result["multi_query"]["tags"] == ["alpha", "beta"]
+

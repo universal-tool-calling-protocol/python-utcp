@@ -246,7 +246,7 @@ class SseCommunicationProtocol(CommunicationProtocol):
         ensure_loopback_was_declared(tool_call_template.url, url, context="tool invocation")
 
         # The rest of the arguments are query parameters
-        query_params = remaining_args
+        query_params = self._encode_query_params(remaining_args)
 
         # Handle authentication
         # ``auth_header_names`` unused in the streaming path because
@@ -534,6 +534,30 @@ class SseCommunicationProtocol(CommunicationProtocol):
                 logger.error(f"OAuth2 with header failed: {e}")
                 raise e
     
+    def _encode_query_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """REQUIRED
+        Encode query parameter values for HTTP requests.
+
+        Primitives (str, int, float) are preserved. Booleans are serialized
+        as 'true'/'false'. Lists and tuples are recursively encoded so aiohttp
+        can send repeated query parameters. Dicts, sets, and other composite objects
+        are JSON-encoded to prevent aiohttp from raising a TypeError.
+        """
+        def _encode_val(val: Any) -> Any:
+            if val is None:
+                return ""
+            if isinstance(val, bool):
+                return "true" if val else "false"
+            if isinstance(val, (int, float, str)):
+                return val
+            if isinstance(val, (list, tuple)):
+                return [_encode_val(item) for item in val]
+            if isinstance(val, (dict, set)):
+                return json.dumps(val, separators=(",", ":"))
+            return str(val)
+
+        return {k: _encode_val(v) for k, v in params.items()}
+
     def _build_url_with_path_params(self, url_template: str, tool_args: Dict[str, Any]) -> str:
         """Build URL by substituting path parameters from arguments.
         
