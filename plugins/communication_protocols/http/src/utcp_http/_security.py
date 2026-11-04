@@ -9,6 +9,7 @@ explicit ``ensure_secure_url`` to call before every aiohttp request.
 
 from __future__ import annotations
 
+import json
 import re
 import socket
 from contextlib import asynccontextmanager
@@ -648,3 +649,36 @@ def reject_remote_loopback_tool_urls(
                 "allowed to route the client-credentials POST at the agent's "
                 "own loopback interface."
             )
+
+
+def encode_query_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Encode query parameter values for HTTP/SSE/Streamable HTTP requests.
+
+    - Preserves primitive values (str, int, float).
+    - Serializes booleans as 'true'/'false'.
+    - Serializes sets into JSON arrays with sorted elements for deterministic output.
+    - Serializes dictionaries as compact JSON objects.
+    - Preserves top-level lists and tuples so aiohttp generates repeated query
+      parameters (?key=v1&key=v2), while recursively encoding nested sequences
+      or objects within list items into JSON.
+    """
+    def _encode_item(item: Any) -> Any:
+        if item is None:
+            return ""
+        if isinstance(item, bool):
+            return "true" if item else "false"
+        if isinstance(item, (int, float, str)):
+            return item
+        if isinstance(item, set):
+            return json.dumps(sorted(item, key=str), separators=(",", ":"))
+        if isinstance(item, (dict, list, tuple)):
+            return json.dumps(item, separators=(",", ":"))
+        return str(item)
+
+    def _encode_top(val: Any) -> Any:
+        if isinstance(val, (list, tuple)):
+            return [_encode_item(sub) for sub in val]
+        return _encode_item(val)
+
+    return {k: _encode_top(v) for k, v in params.items()}
+

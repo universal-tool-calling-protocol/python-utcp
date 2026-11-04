@@ -900,7 +900,7 @@ def test_error_detail_collapses_control_characters():
 
 @pytest.mark.asyncio
 async def test_call_tool_encodes_object_and_list_query_parameters(http_transport, aiohttp_client, app):
-    """Verify dicts and sets are JSON-encoded and sequences are properly passed without TypeError (#107)."""
+    """Verify dicts, sets, nested sequences, and primitives are properly encoded without TypeError (#107)."""
     client = await aiohttp_client(app)
     call_template = HttpCallTemplate(
         name="echo_tool",
@@ -912,10 +912,15 @@ async def test_call_tool_encodes_object_and_list_query_parameters(http_transport
         "tags": ["alpha", "beta"],
         "active": True,
         "count": 42,
+        "categories": {"electronics", "books"},
+        "matrix": [[1, 2], [3, 4]],
     }
     result = await http_transport.call_tool(None, "echo_tool", tool_args, call_template)
     assert result["query"]["filter"] == '{"status":"open","nested":{"key":1}}'
     assert result["query"]["active"] == "true"
     assert result["query"]["count"] == "42"
+    assert result["query"]["categories"] == '["books","electronics"]'
     assert result["multi_query"]["tags"] == ["alpha", "beta"]
+    assert result["multi_query"]["matrix"] == ["[1,2]", "[3,4]"]
+
 
