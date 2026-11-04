@@ -926,6 +926,23 @@ async def test_call_tool_encodes_object_and_list_query_parameters(http_transport
     assert result["multi_query"]["matrix"] == ["[1,2]", "[3,4]"]
 
 
+@pytest.mark.asyncio
+async def test_call_tool_detects_nested_dictionary_key_collision(http_transport, aiohttp_client, app):
+    """Verify that distinct dictionary keys that map to the same string raise ValueError instead of silently overwriting."""
+    client = await aiohttp_client(app)
+    call_template = HttpCallTemplate(
+        name="echo_tool",
+        url=f"http://localhost:{client.port}/echo-query",
+        http_method="GET",
+    )
+    tool_args = {
+        "filter": {100: "first", "100": "second"}
+    }
+    with pytest.raises(ValueError, match="Query parameter dictionary key collision"):
+        await http_transport.call_tool(None, "echo_tool", tool_args, call_template)
+
+
+
 
 
 

@@ -667,7 +667,15 @@ def encode_query_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     def _normalize(obj: Any) -> Any:
         if isinstance(obj, dict):
-            return {str(k): _normalize(v) for k, v in obj.items()}
+            normalized: Dict[str, Any] = {}
+            for k, v in obj.items():
+                key_str = str(k)
+                if key_str in normalized:
+                    raise ValueError(
+                        f"Query parameter dictionary key collision: conflicting key {k!r} maps to existing {key_str!r}"
+                    )
+                normalized[key_str] = _normalize(v)
+            return normalized
         if isinstance(obj, (set, frozenset)):
             return [_normalize(x) for x in sorted(obj, key=str)]
         if isinstance(obj, (list, tuple)):
